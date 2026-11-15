@@ -1,0 +1,12 @@
+{{define "content"}}
+{{template "flash" .}}
+<section class="tv-card tv-empty tv-error-card">
+  {{with .Data}}
+  <div class="tv-error-code">{{.Status}}</div>
+  <h1>{{$.T .Key}}</h1>
+  {{if .Detail}}<p class="tv-muted">{{.Detail}}</p>{{end}}
+  {{if .Ref}}<p class="tv-muted tv-small">{{$.T "errors.reference"}}: <code>{{.Ref}}</code></p>{{end}}
+  {{end}}
+  <p><a class="tv-btn tv-btn-primary" href="/">{{.T "errors.home"}}</a></p>
+</section>
+{{end}}

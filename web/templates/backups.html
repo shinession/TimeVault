@@ -1,0 +1,138 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<h1 class="tv-page-title">{{template "icon" "backup"}} {{$.T "backups.title"}}</h1>
+
+{{if not .Sources}}
+<section class="tv-card tv-empty">
+  {{template "icon" "folder"}}
+  <h2>{{$.T "backups.no_sources_title"}}</h2>
+  <p class="tv-muted">{{$.T "backups.no_sources_text"}}</p>
+</section>
+{{end}}
+
+{{range .Sources}}
+<section class="tv-card tv-source">
+  <div class="tv-card-head">
+    <div>
+      <h2>{{template "icon" "folder"}} {{.Name}}</h2>
+      <p class="tv-muted tv-path"><code>{{.RootPath}}</code></p>
+    </div>
+    <div class="tv-actions">
+      <form method="post" action="/backups/run" class="tv-inline-form">
+        {{template "csrf" $}}
+        <input type="hidden" name="source_id" value="{{.ID}}">
+        <button class="tv-btn tv-btn-primary" type="submit"{{if .Active}} disabled{{end}}>{{template "icon" "backup"}} {{$.T "backups.run"}}</button>
+      </form>
+      <form method="post" action="/backups/run" class="tv-inline-form">
+        {{template "csrf" $}}
+        <input type="hidden" name="source_id" value="{{.ID}}">
+        <input type="hidden" name="rehash" value="1">
+        <button class="tv-btn" type="submit"{{if .Active}} disabled{{end}} title="{{$.T "backups.rehash_hint"}}">{{$.T "backups.run_rehash"}}</button>
+      </form>
+    </div>
+  </div>
+
+  {{if .Active}}
+  <div class="tv-job-inline" data-job-id="{{.Active.Job.ID}}" data-job-active="1">
+    <a href="/jobs/{{.Active.Job.ID}}">{{$.T "backups.running_job" .Active.Job.ID}}</a>
+    <span class="tv-chip tv-chip-{{.Active.Job.State}}" data-job-field="state">{{$.StateLabel .Active.Job.State}}</span>
+    <span class="tv-muted" data-job-field="phase">{{$.PhaseLabel .Active.Phase}}</span>
+    <progress class="tv-progress" max="100"></progress>
+  </div>
+  {{end}}
+
+  <dl class="tv-facts">
+    <div><dt>{{$.T "backups.latest"}}</dt>
+      <dd>{{if .Latest}}<time datetime="{{iso .Latest.CapturedAt}}">{{$.Time .Latest.CapturedAt}}</time> · #{{.Latest.Seq}}{{else}}{{$.T "backups.never"}}{{end}}</dd></div>
+    <div><dt>{{$.T "backups.excludes"}}</dt><dd>{{if .Excludes}}<code>{{join .Excludes ", "}}</code>{{else}}-{{end}}</dd></div>
+  </dl>
+
+  {{if .Attempts}}
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr>
+        <th>#</th><th>{{$.T "points.kind"}}</th><th>{{$.T "points.state"}}</th><th>{{$.T "points.captured"}}</th>
+        <th class="num">{{$.T "points.files"}}</th><th class="num">{{$.T "points.size"}}</th><th>{{$.T "points.changes"}}</th>
+        <th class="num">{{$.T "points.not_captured"}}</th><th>{{$.T "points.integrity"}}</th><th></th>
+      </tr></thead>
+      <tbody>
+        {{range .Attempts}}
+        <tr>
+          <td>{{.Seq}}</td>
+          <td>{{$.KindLabel .Kind}}</td>
+          <td><span class="tv-chip tv-chip-{{.State}}" {{if .FailureReason}}title="{{.FailureReason}}"{{end}}>{{$.StateLabel .State}}</span></td>
+          <td>{{$.Time .CapturedAt}}</td>
+          <td class="num">{{if eq .State "committed"}}{{.FileCount}}{{else}}-{{end}}</td>
+          <td class="num">{{if eq .State "committed"}}{{bytes .TotalBytes}}{{else}}-{{end}}</td>
+          <td>{{if eq .State "committed"}}<span class="tv-delta tv-add">+{{.AddedCount}}</span> <span class="tv-delta tv-mod">~{{.ModifiedCount}}</span> <span class="tv-delta tv-del">-{{.DeletedCount}}</span>{{else}}-{{end}}</td>
+          <td class="num">{{if .SkippedCount}}<span class="tv-chip tv-chip-warn">{{.SkippedCount}}</span>{{else}}0{{end}}</td>
+          <td>{{if eq .State "committed"}}<span class="tv-chip tv-chip-{{.Verification}}">{{$.VerifyLabel .Verification}}</span>{{else}}-{{end}}</td>
+          <td class="tv-actions">
+            {{if eq .State "committed"}}
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
+            <form method="post" action="/backups/verify" class="tv-inline-form">
+              {{template "csrf" $}}
+              <input type="hidden" name="source_id" value="{{.SourceID}}">
+              <input type="hidden" name="point_id" value="{{.ID}}">
+              <input type="hidden" name="deep" value="1">
+              <button class="tv-btn tv-btn-small" type="submit" title="{{$.T "points.verify_hint"}}">{{template "icon" "check"}} {{$.T "points.verify"}}</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</section>
+{{end}}
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2></div>
+  {{with .Form.Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
+  <form method="post" action="/backups/sources" class="tv-form tv-form-grid">
+    {{template "csrf" $}}
+    <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.Form.Name}}" maxlength="100" required></label>
+    <label class="tv-field"><span>{{$.T "backups.field_path"}}</span><input name="root_path" value="{{.Form.RootPath}}" placeholder="D:\Data" required></label>
+    <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.Form.Excludes}}</textarea>
+      <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
+    <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "backups.add"}}</button></div>
+  </form>
+  <p class="tv-muted tv-small">{{$.T "backups.source_rules"}}</p>
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "clock"}} {{$.T "backups.jobs"}}</h2></div>
+  {{if .Jobs}}
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr><th>#</th><th>{{$.T "jobs.kind"}}</th><th>{{$.T "common.source"}}</th><th>{{$.T "jobs.state"}}</th><th>{{$.T "jobs.created"}}</th><th>{{$.T "jobs.duration"}}</th><th>{{$.T "jobs.by"}}</th></tr></thead>
+      <tbody>
+        {{range .Jobs}}
+        <tr data-job-id="{{.Job.ID}}"{{if .Active}} data-job-active="1"{{end}}>
+          <td><a href="/jobs/{{.Job.ID}}">{{.Job.ID}}</a></td>
+          <td>{{$.JobKindLabel .Job.Kind}}</td>
+          <td>{{.SourceName}}</td>
+          <td><span class="tv-chip tv-chip-{{.Job.State}}" data-job-field="state">{{$.StateLabel .Job.State}}</span>
+            {{if .Active}}<span class="tv-muted" data-job-field="phase">{{$.PhaseLabel .Phase}}</span>{{end}}</td>
+          <td>{{$.TimeS .Job.CreatedAt}}</td>
+          <td>{{if .Duration}}{{.Duration}}{{else}}-{{end}}</td>
+          <td>{{.Job.RequestedBy}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}<p class="tv-empty-text">{{$.T "backups.no_jobs"}}</p>{{end}}
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "backups.restore_settings"}}</h2></div>
+  {{if .RestoreEnabled}}<p>{{$.T "backups.restore_root"}}: <code>{{.RestoreRoot}}</code></p>
+  {{else}}<p class="tv-alert tv-alert-warn">{{$.T "history.restore_disabled"}}</p>{{end}}
+  <p class="tv-muted tv-small">{{$.T "backups.restore_hint"}}</p>
+</section>
+{{end}}
+{{end}}

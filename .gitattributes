@@ -1,0 +1,5 @@
+# Go sources and SQL migrations use LF so gofmt output and migration checksums stay stable.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
+migrations/*.sql text eol=lf

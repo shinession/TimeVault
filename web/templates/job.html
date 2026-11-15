@@ -1,0 +1,93 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+  <a class="tv-crumb" href="/backups">{{template "icon" "backup"}}<span>{{$.T "nav.backups"}}</span></a>
+  <span class="tv-crumb-sep" aria-hidden="true">/</span>
+  <span class="tv-crumb is-current" aria-current="page">{{$.T "job.heading" .View.Job.ID}}</span>
+</nav>
+
+<section class="tv-card tv-job" data-job-id="{{.View.Job.ID}}"{{if .View.Active}} data-job-active="1"{{end}} data-job-reload>
+  <div class="tv-card-head">
+    <h1>{{$.JobKindLabel .View.Job.Kind}} <span class="tv-chip tv-chip-{{.View.Job.State}}" data-job-field="state">{{$.StateLabel .View.Job.State}}</span></h1>
+    {{if .View.Active}}
+    <form method="post" action="/jobs/{{.View.Job.ID}}/cancel" class="tv-inline-form">
+      {{template "csrf" $}}
+      <button class="tv-btn" type="submit">{{$.T "job.cancel"}}</button>
+    </form>
+    {{end}}
+  </div>
+
+  <dl class="tv-facts">
+    {{if .Source}}<div><dt>{{$.T "common.source"}}</dt><dd><a href="{{url "/explorer" "source" .Source.ID}}">{{.Source.Name}}</a></dd></div>{{end}}
+    {{if .Point}}<div><dt>{{$.T "job.point"}}</dt><dd><a href="{{url "/history" "source" .Point.SourceID "point" .Point.ID}}">#{{.Point.Seq}} · {{$.Time .Point.CapturedAt}}</a></dd></div>{{end}}
+    <div><dt>{{$.T "jobs.by"}}</dt><dd>{{.View.Job.RequestedBy}}</dd></div>
+    <div><dt>{{$.T "jobs.created"}}</dt><dd>{{$.TimeS .View.Job.CreatedAt}}</dd></div>
+    <div><dt>{{$.T "jobs.duration"}}</dt><dd>{{if .View.Duration}}{{.View.Duration}}{{else}}-{{end}}</dd></div>
+    <div><dt>{{$.T "job.phase"}}</dt><dd data-job-field="phase">{{$.PhaseLabel .View.Phase}}</dd></div>
+  </dl>
+
+  {{if .View.Active}}
+  {{if ge .View.Pct 0}}<progress class="tv-progress" max="100" value="{{.View.Pct}}" data-job-progress></progress>
+  {{else}}<progress class="tv-progress" max="100" data-job-progress></progress>{{end}}
+  {{end}}
+
+  {{if .View.Job.Error}}<div class="tv-alert tv-alert-error" role="alert"><strong>{{$.T "job.error"}}:</strong> <span data-job-field="error">{{.View.Job.Error}}</span></div>{{end}}
+
+  {{if .View.Counters}}
+  <ul class="tv-counters" data-job-counters>
+    {{range .View.Counters}}<li><span class="tv-counter-value">{{if .Bytes}}{{bytes .Value}}{{else}}{{.Value}}{{end}}</span><span class="tv-counter-label">{{$.T .Key}}</span></li>{{end}}
+  </ul>
+  {{end}}
+</section>
+
+{{if .View.Request}}
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "job.restore_details"}}</h2></div>
+  <dl class="tv-facts">
+    <div><dt>{{$.T "restore.destination"}}</dt><dd><code>{{.RestoreAt}}\{{.View.Request.DestName}}</code></dd></div>
+    <div><dt>{{$.T "restore.policy"}}</dt><dd>{{$.PolicyLabel (printf "%s" .View.Request.Policy)}}</dd></div>
+    <div><dt>{{$.T "restore.selection"}}</dt><dd>{{range .View.Request.Paths}}<code>/{{.}}</code> {{end}}</dd></div>
+  </dl>
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head">
+    <h2>{{template "icon" "file"}} {{$.T "job.items"}}</h2>
+    <div class="tv-tabs">
+      <a class="tv-tab{{if eq .Status ""}} is-active{{end}}" href="/jobs/{{.View.Job.ID}}">{{$.T "job.all"}}</a>
+      <a class="tv-tab{{if eq .Status "failed"}} is-active{{end}}" href="{{url (printf "/jobs/%d" .View.Job.ID) "status" "failed"}}">{{$.T "job.failed_only"}}</a>
+    </div>
+  </div>
+  {{if .Items}}
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr><th>{{$.T "list.name"}}</th><th>{{$.T "job.action"}}</th><th>{{$.T "job.result"}}</th><th class="num">{{$.T "list.size"}}</th><th>{{$.T "job.message"}}</th></tr></thead>
+      <tbody>
+        {{range .Items}}
+        <tr>
+          <td>{{if .IsDir}}{{template "icon" "folder"}}{{else}}{{template "icon" "file"}}{{end}} <code>{{.Rel}}</code></td>
+          <td>{{$.ActionLabel .Action}}</td>
+          <td><span class="tv-chip tv-chip-{{.Status}}">{{$.ItemStatusLabel .Status}}</span></td>
+          <td class="num">{{if .IsDir}}-{{else}}{{bytes .Bytes}}{{end}}</td>
+          <td class="tv-small">{{.Message}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{if .ItemsNext}}<a class="tv-btn tv-more" href="{{url (printf "/jobs/%d" .View.Job.ID) "status" .Status "after" .ItemsNext}}">{{$.T "common.load_more"}}</a>{{end}}
+  {{else}}<p class="tv-empty-text">{{$.T "job.no_items"}}</p>{{end}}
+</section>
+{{end}}
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "clock"}} {{$.T "job.log"}}</h2></div>
+  {{if .Events}}
+  <ol class="tv-log" data-job-log data-last-event="{{(index .Events (add (len .Events) -1)).ID}}">
+    {{range .Events}}<li class="tv-log-{{.Level}}"><time>{{$.TimeS .At}}</time> <span>{{.Message}}</span></li>{{end}}
+  </ol>
+  {{else}}<ol class="tv-log" data-job-log data-last-event="0"></ol><p class="tv-empty-text" data-job-log-empty>{{$.T "job.no_log"}}</p>{{end}}
+</section>
+{{end}}
+{{end}}

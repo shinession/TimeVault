@@ -1,0 +1,26 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<h1 class="tv-page-title">{{template "icon" "check"}} {{$.T "status.title"}}</h1>
+<section class="tv-card">
+  <p class="tv-muted">{{$.T "status.checked"}} {{$.TimeS .CheckedAt}}</p>
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr><th>{{$.T "status.component"}}</th><th>{{$.T "status.state"}}</th><th>{{$.T "status.detail"}}</th></tr></thead>
+      <tbody>
+        {{range .Components}}
+        <tr>
+          <td>{{$.ComponentLabel .Name}}</td>
+          <td><span class="tv-chip tv-chip-status-{{.State}}">{{$.ComponentStateLabel .State}}</span></td>
+          <td class="tv-small">{{$.ComponentDetail .}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="tv-card">
+  <p class="tv-muted">{{$.T "status.mvp_note"}}</p>
+</section>
+{{end}}
+{{end}}

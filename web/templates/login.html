@@ -1,0 +1,20 @@
+{{define "content"}}
+<section class="tv-login">
+  <div class="tv-card tv-login-card">
+    <img class="tv-login-logo" src="/static/img/logo.svg" alt="" width="56" height="56">
+    <h1>{{.T "login.heading"}}</h1>
+    <p class="tv-muted">{{.T "login.subtitle"}}</p>
+    {{with .Data}}
+    {{with .Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
+    <form method="post" action="/login" class="tv-form">
+      <input type="hidden" name="next" value="{{.Next}}">
+      <label class="tv-field"><span>{{$.T "login.username"}}</span>
+        <input name="username" value="{{.Username}}" autocomplete="username" required autofocus></label>
+      <label class="tv-field"><span>{{$.T "login.password"}}</span>
+        <input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="tv-btn tv-btn-primary" type="submit">{{$.T "login.submit"}}</button>
+    </form>
+    {{end}}
+  </div>
+</section>
+{{end}}

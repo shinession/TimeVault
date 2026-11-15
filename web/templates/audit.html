@@ -1,0 +1,37 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<h1 class="tv-page-title">{{template "icon" "audit"}} {{$.T "audit.title"}}</h1>
+<section class="tv-card">
+  <form method="get" action="/audit" class="tv-toolbar" data-autosubmit>
+    <label class="tv-sr-only" for="audit-action">{{$.T "audit.filter"}}</label>
+    <select id="audit-action" name="action" class="tv-select">
+      <option value="">{{$.T "audit.all_actions"}}</option>
+      {{range .Actions}}<option value="{{.}}"{{if eq . $.Data.Action}} selected{{end}}>{{$.AuditActionLabel .}}</option>{{end}}
+    </select>
+    <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
+  </form>
+  {{if .Events}}
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr><th>{{$.T "audit.when"}}</th><th>{{$.T "audit.actor"}}</th><th>{{$.T "audit.action"}}</th><th>{{$.T "audit.target"}}</th><th>{{$.T "audit.result"}}</th><th>{{$.T "audit.from"}}</th><th>{{$.T "audit.details"}}</th></tr></thead>
+      <tbody>
+        {{range .Events}}
+        <tr>
+          <td>{{$.TimeS .At}}</td>
+          <td>{{.Actor}}</td>
+          <td>{{$.AuditActionLabel .Action}}</td>
+          <td>{{if .TargetType}}{{.TargetType}} {{.TargetID}}{{else}}-{{end}}</td>
+          <td><span class="tv-chip tv-chip-audit-{{.Result}}">{{$.AuditResultLabel .Result}}</span></td>
+          <td>{{.RemoteAddr}}</td>
+          <td class="tv-small"><code>{{.DetailText}}</code></td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{if .NextURL}}<a class="tv-btn tv-more" href="{{.NextURL}}">{{$.T "common.load_more"}}</a>{{end}}
+  {{else}}<p class="tv-empty-text">{{$.T "audit.empty"}}</p>{{end}}
+</section>
+{{end}}
+{{end}}

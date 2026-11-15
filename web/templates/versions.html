@@ -1,0 +1,63 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+  <a class="tv-crumb" href="{{url "/explorer" "source" .Source.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
+  {{range .Crumbs}}
+  <span class="tv-crumb-sep" aria-hidden="true">/</span>
+  {{if .Last}}<span class="tv-crumb is-current" aria-current="page">{{.Name}}</span>
+  {{else}}<a class="tv-crumb" href="{{url "/explorer" "source" $.Data.Source.ID "path" .Rel}}">{{.Name}}</a>{{end}}
+  {{end}}
+</nav>
+
+<section class="tv-card">
+  <div class="tv-card-head">
+    <h1>{{template "icon" "file"}} {{.Hist.Name}}</h1>
+    <a class="tv-btn tv-btn-ghost" href="{{.BackURL}}">{{$.T "common.back"}}</a>
+  </div>
+  <p class="tv-muted">{{$.T "versions.intro" (len .Hist.Versions)}}</p>
+
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead>
+        <tr>
+          <th>{{$.T "versions.captured"}}</th><th>{{$.T "versions.until"}}</th><th class="num">{{$.T "list.size"}}</th>
+          <th>{{$.T "list.modified"}}</th><th>{{$.T "versions.checksum"}}</th><th>{{$.T "versions.state"}}</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .Hist.Versions}}
+        <tr>
+          <td><time datetime="{{iso .FirstAt}}">{{$.Time .FirstAt}}</time></td>
+          <td>{{if .StillCurrent}}<span class="tv-chip tv-chip-same">{{$.T "versions.current"}}</span>{{else}}{{$.TimeP .LastAt}}{{end}}</td>
+          <td class="num">{{if .IsDir}}-{{else}}{{bytes .Size}}{{end}}</td>
+          <td>{{if .MTimeNS}}{{$.Time .ModTime}}{{else}}-{{end}}</td>
+          <td><code title="{{hex .SHA256}}">{{shortHash .SHA256}}</code></td>
+          <td>
+            {{if .IsDir}}<span class="tv-chip">{{$.T "versions.folder"}}</span>
+            {{else if eq .State "skipped"}}<span class="tv-chip tv-chip-warn" title="{{.SkipReason}}">{{$.T "live.not_captured"}}</span>
+            {{else if not (index $.Data.Hist.Present (hex .SHA256))}}<span class="tv-chip tv-chip-failed">{{$.T "versions.content_missing"}}</span>
+            {{else}}<span class="tv-chip tv-chip-validated tv-chip-available">{{$.T "versions.available"}}</span>{{end}}
+          </td>
+          <td class="tv-actions">
+            {{if and $.Data.RestoreEnabled (eq .State "ok")}}
+            <form method="post" action="/restore/preview" class="tv-inline-form">
+              {{template "csrf" $}}
+              <input type="hidden" name="source_id" value="{{$.Data.Source.ID}}">
+              <input type="hidden" name="point_id" value="{{.FirstPointID}}">
+              <input type="hidden" name="paths" value="{{$.Data.Hist.Rel}}">
+              <input type="hidden" name="dest_name" value="{{$.Data.DefaultDest}}">
+              <button class="tv-btn tv-btn-small" type="submit">{{template "icon" "restore"}} {{$.T "versions.restore"}}</button>
+            </form>
+            {{end}}
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" $.Data.Source.ID "point" .FirstPointID "path" $.Data.ParentRel}}">{{$.T "versions.browse_point"}}</a>
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{if not .RestoreEnabled}}<p class="tv-muted tv-small">{{$.T "history.restore_disabled"}}</p>{{end}}
+</section>
+{{end}}
+{{end}}

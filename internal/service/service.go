@@ -1,0 +1,683 @@
+// Package service is the application layer shared by the JSON API and the web
+// UI: it orchestrates the catalog, backup engine, restore manager, job queue,
+// search provider and audit trail, so both front ends behave identically.
+package service
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"timevault/internal/audit"
+	"timevault/internal/backup"
+	"timevault/internal/catalog"
+	"timevault/internal/jobs"
+	"timevault/internal/pathutil"
+	"timevault/internal/repository"
+	"timevault/internal/restore"
+	"timevault/internal/search"
+)
+
+// ErrNotFound is returned for unknown sources, points, jobs and paths.
+var ErrNotFound = errors.New("not found")
+
+// Actor identifies who performs an operation, for the audit trail.
+type Actor struct {
+	User   string
+	Remote string
+}
+
+// Config wires a Service.
+type Config struct {
+	Pool    *pgxpool.Pool
+	Catalog *catalog.Store
+	Repo    *repository.Store
+	Engine  *backup.Engine
+	Restore *restore.Manager
+	Jobs    *jobs.Runner
+	Audit   *audit.Logger
+	Search  search.Provider
+	Logger  *slog.Logger
+}
+
+// Service is the application facade.
+type Service struct {
+	pool    *pgxpool.Pool
+	cat     *catalog.Store
+	repo    *repository.Store
+	engine  *backup.Engine
+	restore *restore.Manager
+	jobs    *jobs.Runner
+	audit   *audit.Logger
+	search  search.Provider
+	log     *slog.Logger
+}
+
+// New builds a Service and registers the job handlers on the runner.
+func New(cfg Config) *Service {
+	s := &Service{
+		pool: cfg.Pool, cat: cfg.Catalog, repo: cfg.Repo, engine: cfg.Engine, restore: cfg.Restore,
+		jobs: cfg.Jobs, audit: cfg.Audit, search: cfg.Search, log: cfg.Logger,
+	}
+	if s.search == nil {
+		s.search = search.NewDisabled()
+	}
+	if s.log == nil {
+		s.log = slog.New(slog.DiscardHandler)
+	}
+	s.jobs.Handle(jobs.KindBackup, s.runBackup)
+	s.jobs.Handle(jobs.KindVerify, s.runVerify)
+	s.jobs.Handle(jobs.KindRestore, s.runRestore)
+	return s
+}
+
+// Catalog exposes the catalog for read-only queries by the front ends.
+func (s *Service) Catalog() *catalog.Store { return s.cat }
+
+// RestoreEnabled reports whether a restore folder is configured.
+func (s *Service) RestoreEnabled() bool { return s.restore.Enabled() }
+
+// RestoreRoot is the folder restores are written below.
+func (s *Service) RestoreRoot() string { return s.restore.Root() }
+
+// SearchProvider is the configured search provider.
+func (s *Service) SearchProvider() search.Provider { return s.search }
+
+func (s *Service) record(ctx context.Context, a Actor, action, targetType, targetID string, sourceID *int64, result string, detail map[string]any) error {
+	return s.audit.Record(ctx, audit.Event{
+		Actor: a.User, Action: action, TargetType: targetType, TargetID: targetID,
+		SourceID: sourceID, Result: result, RemoteAddr: a.Remote, Detail: detail,
+	})
+}
+
+// Audit writes an event on behalf of the HTTP layer (sign-ins, denials).
+func (s *Service) Audit(ctx context.Context, e audit.Event) { _ = s.audit.Record(ctx, e) }
+
+// AuditEvents lists audit events newest first.
+func (s *Service) AuditEvents(ctx context.Context, f audit.Filter) ([]audit.Event, error) {
+	return s.audit.List(ctx, f)
+}
+
+// --- Sources -------------------------------------------------------------
+
+// Sources lists the registered sources with their newest recovery point.
+func (s *Service) Sources(ctx context.Context) ([]catalog.SourceSummary, error) {
+	return s.cat.ListSources(ctx)
+}
+
+// Source returns one source.
+func (s *Service) Source(ctx context.Context, id int64) (catalog.Source, error) {
+	src, err := s.cat.GetSource(ctx, id)
+	if errors.Is(err, catalog.ErrNotFound) {
+		return src, ErrNotFound
+	}
+	return src, err
+}
+
+// AddSource validates and registers a source.
+func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceRequest) (catalog.Source, error) {
+	ns, err := s.engine.PrepareSource(ctx, req, a.User)
+	if err != nil {
+		return catalog.Source{}, err
+	}
+	src, err := s.cat.CreateSource(ctx, ns)
+	if err != nil {
+		return catalog.Source{}, err
+	}
+	id := src.ID
+	_ = s.record(ctx, a, audit.ActionSourceCreate, "source", fmt.Sprint(id), &id, audit.ResultOK,
+		map[string]any{"name": src.Name, "root": src.RootPath, "excludes": src.Excludes})
+	return src, nil
+}
+
+// --- Points and browsing ---------------------------------------------------
+
+// Point returns a recovery point of a source and verifies it belongs to it.
+func (s *Service) Point(ctx context.Context, sourceID, pointID int64) (catalog.Point, error) {
+	p, err := s.cat.GetPoint(ctx, pointID)
+	if errors.Is(err, catalog.ErrNotFound) || (err == nil && p.SourceID != sourceID) {
+		return catalog.Point{}, ErrNotFound
+	}
+	return p, err
+}
+
+// Points lists committed recovery points, newest first.
+func (s *Service) Points(ctx context.Context, sourceID int64, limit, beforeSeq int) ([]catalog.Point, error) {
+	return s.cat.ListPoints(ctx, sourceID, limit, beforeSeq)
+}
+
+// Attempts lists backup attempts in any state, newest first.
+func (s *Service) Attempts(ctx context.Context, sourceID int64, limit int) ([]catalog.Point, error) {
+	return s.cat.ListAttempts(ctx, sourceID, limit)
+}
+
+// LatestPoint returns the newest committed point, or ErrNotFound.
+func (s *Service) LatestPoint(ctx context.Context, sourceID int64) (catalog.Point, error) {
+	p, err := s.cat.LatestCommitted(ctx, sourceID)
+	if errors.Is(err, catalog.ErrNotFound) {
+		return p, ErrNotFound
+	}
+	return p, err
+}
+
+// HistoryListing is one page of a folder at a recovery point.
+type HistoryListing struct {
+	Point   catalog.Point
+	Latest  catalog.Point
+	Rel     string
+	Entries []catalog.Entry
+	Next    string
+}
+
+// BrowseHistory lists a folder as it existed at a recovery point. Each entry
+// carries its status relative to the newest point.
+func (s *Service) BrowseHistory(ctx context.Context, src catalog.Source, point catalog.Point, rel, cursor string, limit int) (HistoryListing, error) {
+	rel, err := pathutil.CleanRel(rel)
+	if err != nil {
+		return HistoryListing{}, err
+	}
+	latest, err := s.cat.LatestCommitted(ctx, src.ID)
+	if err != nil {
+		return HistoryListing{}, ErrNotFound
+	}
+	dir, err := s.cat.ResolveAt(ctx, src.ID, point.Seq, rel)
+	if errors.Is(err, catalog.ErrNotFound) {
+		return HistoryListing{}, ErrNotFound
+	}
+	if err != nil {
+		return HistoryListing{}, err
+	}
+	if !dir.IsDir {
+		return HistoryListing{}, ErrNotFound
+	}
+	params := catalog.ListParams{Parent: dir.NodeID, Seq: point.Seq, LatestSeq: latest.Seq, Limit: limit}
+	if cursor != "" {
+		c, err := catalog.DecodeCursor(cursor)
+		if err != nil {
+			return HistoryListing{}, err
+		}
+		params.After = &c
+	}
+	page, err := s.cat.ListChildren(ctx, params)
+	if err != nil {
+		return HistoryListing{}, err
+	}
+	out := HistoryListing{Point: point, Latest: latest, Rel: rel, Entries: page.Entries}
+	if page.Next != nil {
+		out.Next = page.Next.Encode()
+	}
+	return out, nil
+}
+
+// FileHistory is every committed version of one path.
+type FileHistory struct {
+	Rel      string
+	Name     string
+	Versions []catalog.VersionInfo
+	Latest   catalog.Point
+	// Present maps a content hash (hex) to whether the repository still has it.
+	Present map[string]bool
+}
+
+// FileVersions lists the versions of a path across all recovery points.
+func (s *Service) FileVersions(ctx context.Context, src catalog.Source, rel string) (FileHistory, error) {
+	rel, err := pathutil.CleanRel(rel)
+	if err != nil {
+		return FileHistory{}, err
+	}
+	latest, err := s.cat.LatestCommitted(ctx, src.ID)
+	if err != nil {
+		return FileHistory{}, ErrNotFound
+	}
+	node, err := s.cat.ResolveNode(ctx, src.ID, rel)
+	if errors.Is(err, catalog.ErrNotFound) {
+		return FileHistory{}, ErrNotFound
+	}
+	if err != nil {
+		return FileHistory{}, err
+	}
+	versions, err := s.cat.Versions(ctx, node, latest.Seq)
+	if err != nil {
+		return FileHistory{}, err
+	}
+	if len(versions) == 0 {
+		return FileHistory{}, ErrNotFound
+	}
+	h := FileHistory{Rel: rel, Name: pathutil.BaseRel(rel), Versions: versions, Latest: latest, Present: map[string]bool{}}
+	if rel == "" {
+		h.Name = src.Name
+	}
+	for _, v := range versions {
+		if len(v.SHA256) == 0 {
+			continue
+		}
+		key := fmt.Sprintf("%x", v.SHA256)
+		if _, done := h.Present[key]; done {
+			continue
+		}
+		hash, err := repository.HashFromBytes(v.SHA256)
+		if err != nil {
+			continue
+		}
+		_, statErr := s.repo.Stat(hash)
+		h.Present[key] = statErr == nil
+	}
+	return h, nil
+}
+
+// --- Jobs --------------------------------------------------------------------
+
+type backupParams struct {
+	SourceID int64 `json:"source_id"`
+	Rehash   bool  `json:"rehash"`
+}
+
+type verifyParams struct {
+	PointID int64 `json:"point_id"`
+	Deep    bool  `json:"deep"`
+}
+
+type restoreParams struct {
+	Request restore.Request `json:"request"`
+	Actor   string          `json:"actor"`
+	Remote  string          `json:"remote"`
+	Digest  string          `json:"plan_digest"`
+	Totals  restore.Totals  `json:"plan_totals"`
+}
+
+// StartBackup queues a backup of a source. created is false when one is
+// already queued or running for it.
+func (s *Service) StartBackup(ctx context.Context, a Actor, sourceID int64, rehash bool) (job jobs.Job, created bool, err error) {
+	src, err := s.Source(ctx, sourceID)
+	if err != nil {
+		return jobs.Job{}, false, err
+	}
+	if !src.Enabled {
+		return jobs.Job{}, false, errors.New("the source is disabled")
+	}
+	job, created, err = s.jobs.Enqueue(ctx, jobs.NewJob{
+		Kind: jobs.KindBackup, SourceID: &sourceID, Params: backupParams{SourceID: sourceID, Rehash: rehash}, RequestedBy: a.User,
+	})
+	if err != nil {
+		return job, false, err
+	}
+	if created {
+		_ = s.record(ctx, a, audit.ActionBackupRequest, "source", fmt.Sprint(sourceID), &sourceID, audit.ResultOK,
+			map[string]any{"job": job.ID, "rehash": rehash})
+	}
+	return job, created, nil
+}
+
+// StartVerify queues an integrity check of a recovery point.
+func (s *Service) StartVerify(ctx context.Context, a Actor, sourceID, pointID int64, deep bool) (job jobs.Job, created bool, err error) {
+	p, err := s.Point(ctx, sourceID, pointID)
+	if err != nil {
+		return jobs.Job{}, false, err
+	}
+	if p.State != catalog.StateCommitted {
+		return jobs.Job{}, false, errors.New("only committed recovery points can be verified")
+	}
+	job, created, err = s.jobs.Enqueue(ctx, jobs.NewJob{
+		Kind: jobs.KindVerify, SourceID: &sourceID, PointID: &pointID,
+		Params: verifyParams{PointID: pointID, Deep: deep}, RequestedBy: a.User,
+	})
+	if err != nil {
+		return job, false, err
+	}
+	if created {
+		_ = s.record(ctx, a, audit.ActionVerifyRequest, "point", fmt.Sprint(pointID), &sourceID, audit.ResultOK,
+			map[string]any{"job": job.ID, "deep": deep, "seq": p.Seq})
+	}
+	return job, created, nil
+}
+
+// CancelJob asks a job to stop.
+func (s *Service) CancelJob(ctx context.Context, a Actor, jobID int64) (bool, error) {
+	ok, err := s.jobs.Cancel(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
+	if ok {
+		_ = s.record(ctx, a, audit.ActionJobCancel, "job", fmt.Sprint(jobID), nil, audit.ResultOK, nil)
+	}
+	return ok, nil
+}
+
+// Job returns one job.
+func (s *Service) Job(ctx context.Context, id int64) (jobs.Job, error) {
+	j, err := jobs.Get(ctx, s.pool, id)
+	if errors.Is(err, jobs.ErrNotFound) {
+		return j, ErrNotFound
+	}
+	return j, err
+}
+
+// Jobs lists recent jobs.
+func (s *Service) Jobs(ctx context.Context, sourceID *int64, kind string, limit int) ([]jobs.Job, error) {
+	return jobs.List(ctx, s.pool, jobs.Filter{SourceID: sourceID, Kind: kind, Limit: limit})
+}
+
+// JobEvents returns a job's log lines after afterID.
+func (s *Service) JobEvents(ctx context.Context, jobID, afterID int64, limit int) ([]jobs.Event, error) {
+	return jobs.Events(ctx, s.pool, jobID, afterID, limit)
+}
+
+type backupReporter struct{ rep *jobs.Reporter }
+
+func (r backupReporter) Phase(name string)           { r.rep.SetPhase(name) }
+func (r backupReporter) Progress(p backup.Progress)  { r.rep.SetProgress(p) }
+func (r backupReporter) Event(level, message string) { r.rep.Event(level, message) }
+
+type restoreReporter struct{ rep *jobs.Reporter }
+
+func (r restoreReporter) Phase(name string)           { r.rep.SetPhase(name) }
+func (r restoreReporter) Progress(p restore.Progress) { r.rep.SetProgress(p) }
+func (r restoreReporter) Event(level, message string) { r.rep.Event(level, message) }
+
+func (s *Service) runBackup(ctx context.Context, job jobs.Job, rep *jobs.Reporter) error {
+	var p backupParams
+	if err := json.Unmarshal(job.Params, &p); err != nil {
+		return fmt.Errorf("invalid job parameters: %w", err)
+	}
+	point, err := s.engine.Run(ctx, p.SourceID, backup.RunOptions{Rehash: p.Rehash}, backupReporter{rep})
+	actor := Actor{User: job.RequestedBy}
+	sourceID := p.SourceID
+	if err != nil {
+		_ = s.record(ctx, actor, audit.ActionBackupFinish, "source", fmt.Sprint(sourceID), &sourceID, audit.ResultFailed,
+			map[string]any{"job": job.ID, "error": truncate(err.Error(), 300)})
+		return err
+	}
+	if _, err := s.pool.Exec(context.WithoutCancel(ctx), `UPDATE jobs SET point_id = $2 WHERE id = $1`, job.ID, point.ID); err != nil {
+		s.log.Warn("link job to its recovery point", "job", job.ID, "error", err)
+	}
+	_ = s.record(ctx, actor, audit.ActionBackupFinish, "point", fmt.Sprint(point.ID), &sourceID, audit.ResultOK,
+		map[string]any{"job": job.ID, "seq": point.Seq, "files": point.FileCount, "added": point.AddedCount,
+			"modified": point.ModifiedCount, "deleted": point.DeletedCount, "skipped": point.SkippedCount})
+	return nil
+}
+
+func (s *Service) runVerify(ctx context.Context, job jobs.Job, rep *jobs.Reporter) error {
+	var p verifyParams
+	if err := json.Unmarshal(job.Params, &p); err != nil {
+		return fmt.Errorf("invalid job parameters: %w", err)
+	}
+	res, err := s.engine.Verify(ctx, p.PointID, p.Deep, backupReporter{rep})
+	actor := Actor{User: job.RequestedBy}
+	if err != nil {
+		_ = s.record(ctx, actor, audit.ActionVerifyFinish, "point", fmt.Sprint(p.PointID), job.SourceID, audit.ResultFailed,
+			map[string]any{"job": job.ID, "error": truncate(err.Error(), 300)})
+		return err
+	}
+	for _, problem := range res.Problems {
+		rep.Event("error", problem)
+	}
+	rep.Event("info", fmt.Sprintf("checked %d object(s): %d missing, %d corrupt, catalog manifest %s",
+		res.Objects, res.Missing, res.Corrupt, choose(res.ManifestOK, "matches", "DOES NOT MATCH")))
+	result := audit.ResultOK
+	if !res.OK() {
+		result = audit.ResultFailed
+	}
+	_ = s.record(ctx, actor, audit.ActionVerifyFinish, "point", fmt.Sprint(p.PointID), job.SourceID, result,
+		map[string]any{"job": job.ID, "deep": p.Deep, "objects": res.Objects, "missing": res.Missing, "corrupt": res.Corrupt, "manifest_ok": res.ManifestOK})
+	if !res.OK() {
+		return fmt.Errorf("integrity check failed: %d missing, %d corrupt object(s)%s", res.Missing, res.Corrupt,
+			choose(res.ManifestOK, "", ", catalog manifest mismatch"))
+	}
+	return nil
+}
+
+func choose(cond bool, yes, no string) string {
+	if cond {
+		return yes
+	}
+	return no
+}
+
+// --- Restore -----------------------------------------------------------------
+
+// PreviewRestore builds the dry-run plan and the confirmation token for it.
+func (s *Service) PreviewRestore(ctx context.Context, a Actor, req restore.Request) (restore.Plan, string, error) {
+	plan, err := s.restore.Preview(ctx, req)
+	if err != nil {
+		return plan, "", err
+	}
+	sourceID := req.SourceID
+	_ = s.record(ctx, a, audit.ActionRestorePreview, "point", fmt.Sprint(req.PointID), &sourceID, audit.ResultOK,
+		map[string]any{"paths": plan.Request.Paths, "dest": plan.Request.DestName, "items": plan.Totals.Items,
+			"blocked": plan.Totals.Blocked, "overwrite": plan.Totals.Overwrite})
+	return plan, s.restore.IssueToken(plan, a.User), nil
+}
+
+// StartRestore queues a confirmed restore. Without a valid token for exactly
+// this plan, or without an explicit overwrite confirmation when files would be
+// replaced, nothing is queued. The audit record is written first: a restore
+// that cannot be audited does not run.
+func (s *Service) StartRestore(ctx context.Context, a Actor, req restore.Request, token, idempotencyKey string, confirmOverwrite bool) (jobs.Job, error) {
+	// A repeated submission (double click, retry) returns the job it created the first
+	// time. By then the destination has changed, so re-checking the preview would only fail.
+	if idempotencyKey != "" {
+		existing, found, err := s.jobs.FindByKey(ctx, jobs.KindRestore, idempotencyKey)
+		if err != nil {
+			return jobs.Job{}, err
+		}
+		if found && existing.RequestedBy == a.User {
+			return existing, nil
+		}
+	}
+	plan, err := s.restore.Confirm(ctx, req, token, a.User)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	if plan.Totals.Overwrite > 0 && !confirmOverwrite {
+		return jobs.Job{}, fmt.Errorf("%w: replacing %d existing file(s) must be confirmed explicitly", restore.ErrNotConfirmed, plan.Totals.Overwrite)
+	}
+	if plan.Totals.Blocked > 0 && !plan.Request.AllowPartial {
+		return jobs.Job{}, fmt.Errorf("%w: %d item(s) cannot be restored", restore.ErrBlocked, plan.Totals.Blocked)
+	}
+	sourceID, pointID := plan.Request.SourceID, plan.Request.PointID
+	params := restoreParams{Request: plan.Request, Actor: a.User, Remote: a.Remote, Digest: plan.Digest, Totals: plan.Totals}
+	if err := s.record(ctx, a, audit.ActionRestoreRequest, "point", fmt.Sprint(pointID), &sourceID, audit.ResultOK,
+		map[string]any{"paths": plan.Request.Paths, "dest": plan.DestDir, "policy": plan.Request.Policy, "items": plan.Totals.Items,
+			"bytes": plan.Totals.Bytes, "overwrite": plan.Totals.Overwrite, "blocked": plan.Totals.Blocked,
+			"partial_allowed": plan.Request.AllowPartial, "overwrite_confirmed": confirmOverwrite, "plan_digest": plan.Digest}); err != nil {
+		return jobs.Job{}, errors.New("the restore was not started because it could not be recorded in the audit log")
+	}
+	job, _, err := s.jobs.Enqueue(ctx, jobs.NewJob{
+		Kind: jobs.KindRestore, SourceID: &sourceID, PointID: &pointID, Params: params,
+		RequestedBy: a.User, IdempotencyKey: idempotencyKey,
+	})
+	return job, err
+}
+
+func (s *Service) runRestore(ctx context.Context, job jobs.Job, rep *jobs.Reporter) error {
+	var p restoreParams
+	if err := json.Unmarshal(job.Params, &p); err != nil {
+		return fmt.Errorf("invalid job parameters: %w", err)
+	}
+	res, err := s.restore.Execute(ctx, job.ID, p.Request, restoreReporter{rep})
+	actor := Actor{User: p.Actor, Remote: p.Remote}
+	result := audit.ResultOK
+	detail := map[string]any{"job": job.ID, "dest": p.Request.DestName, "created": res.Created, "overwritten": res.Overwritten,
+		"renamed": res.Renamed, "skipped": res.Skipped, "failed": res.Failed, "bytes": res.Bytes}
+	if err != nil {
+		result = audit.ResultFailed
+		detail["error"] = truncate(err.Error(), 300)
+	}
+	sourceID := p.Request.SourceID
+	_ = s.record(ctx, actor, audit.ActionRestoreFinish, "point", fmt.Sprint(p.Request.PointID), &sourceID, result, detail)
+	return err
+}
+
+// RestoreItems lists the stored per-item outcomes of a restore job.
+func (s *Service) RestoreItems(ctx context.Context, jobID int64, status string, afterID int64, limit int) ([]restore.StoredItem, error) {
+	return s.restore.ListItems(ctx, jobID, status, afterID, limit)
+}
+
+// RestoreJobRequest decodes the request a restore job was started with.
+func (s *Service) RestoreJobRequest(job jobs.Job) (restore.Request, restore.Totals, bool) {
+	var p restoreParams
+	if job.Kind != jobs.KindRestore || json.Unmarshal(job.Params, &p) != nil {
+		return restore.Request{}, restore.Totals{}, false
+	}
+	return p.Request, p.Totals, true
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
+}
+
+// --- Search ------------------------------------------------------------------
+
+// SearchHit is one search result relative to a source.
+type SearchHit struct {
+	Name    string
+	Rel     string
+	DirRel  string
+	IsDir   bool
+	Size    int64
+	ModTime time.Time
+}
+
+// SearchPage is one page of search results.
+type SearchPage struct {
+	Hits       []SearchHit
+	Total      int
+	NextOffset int
+	Dropped    int
+	Health     search.Health
+}
+
+// ErrSearchUnavailable is returned when the engine is disabled or unreachable;
+// the UI then shows a degraded state and browsing keeps working.
+var ErrSearchUnavailable = errors.New("search is unavailable")
+
+// Search runs a bounded search confined to a source.
+func (s *Service) Search(ctx context.Context, src catalog.Source, text string, offset, limit int) (SearchPage, error) {
+	page, err := s.search.Search(ctx, search.Query{Text: text, Root: src.RootPath, Offset: offset, Limit: limit})
+	if err != nil {
+		health := s.search.Health(ctx)
+		switch {
+		case errors.Is(err, search.ErrBadQuery):
+			return SearchPage{Health: health}, err
+		default:
+			return SearchPage{Health: health}, fmt.Errorf("%w: %v", ErrSearchUnavailable, err)
+		}
+	}
+	out := SearchPage{Total: page.Total, NextOffset: page.NextOffset, Dropped: page.Dropped, Health: search.Health{State: search.StateOK, CheckedAt: time.Now()}}
+	for _, r := range page.Items {
+		rel, ok := relativeTo(src.RootPath, r.Path)
+		if !ok {
+			out.Dropped++
+			continue
+		}
+		hit := SearchHit{Name: r.Name, Rel: rel, DirRel: pathutil.ParentRel(rel), IsDir: r.IsDir, Size: r.Size, ModTime: r.ModTime}
+		out.Hits = append(out.Hits, hit)
+	}
+	return out, nil
+}
+
+func relativeTo(root, full string) (string, bool) {
+	if !pathutil.Within(root, full) {
+		return "", false
+	}
+	trimmed := strings.TrimPrefix(strings.TrimPrefix(full[len(strings.TrimRight(root, `\/`)):], `\`), `/`)
+	rel, err := pathutil.CleanRel(trimmed)
+	if err != nil {
+		return "", false
+	}
+	return rel, true
+}
+
+// --- Health ------------------------------------------------------------------
+
+// Component is the status of one dependency. Detail is English text for the
+// API; the web UI shows the translation of Key (with Args) when Key is set.
+type Component struct {
+	Name   string
+	State  string // ok | degraded | disabled | failed
+	Detail string
+	Key    string
+	Args   []any
+}
+
+// HealthReport is the overall service status.
+type HealthReport struct {
+	Components []Component
+	Queued     int
+	Running    int
+	CheckedAt  time.Time
+}
+
+// OK reports whether nothing is failed.
+func (h HealthReport) OK() bool {
+	for _, c := range h.Components {
+		if c.State == "failed" {
+			return false
+		}
+	}
+	return true
+}
+
+// Health checks every dependency; it never fails, problems are reported in the result.
+func (s *Service) Health(ctx context.Context) HealthReport {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	rep := HealthReport{CheckedAt: time.Now()}
+	add := func(name, state, detail, key string, args ...any) {
+		rep.Components = append(rep.Components, Component{Name: name, State: state, Detail: detail, Key: key, Args: args})
+	}
+
+	if err := s.pool.Ping(ctx); err != nil {
+		add("database", "failed", "the database does not answer", "db_down")
+	} else {
+		add("database", "ok", "", "")
+	}
+
+	if h := s.repo.Health(); h.OK {
+		detail, key, args := h.Path, "", []any(nil)
+		if h.TotalBytes > 0 {
+			free := int(float64(h.FreeBytes) / float64(h.TotalBytes) * 100)
+			detail, key, args = fmt.Sprintf("%s — %d%% free", h.Path, free), "repo_free", []any{h.Path, free}
+		}
+		state := "ok"
+		if h.TotalBytes > 0 && float64(h.FreeBytes)/float64(h.TotalBytes) < 0.05 {
+			state = "degraded"
+		}
+		add("repository", state, detail, key, args...)
+	} else {
+		add("repository", "failed", h.Detail, "")
+	}
+
+	sh := s.search.Health(ctx)
+	switch sh.State {
+	case search.StateOK:
+		add("search", "ok", fmt.Sprintf("%s, %d ms", s.search.Name(), sh.Latency.Milliseconds()), "")
+	case search.StateDisabled:
+		add("search", "disabled", sh.Detail, "search_disabled")
+	default:
+		add("search", "degraded", sh.Detail, "")
+	}
+
+	if s.restore.Enabled() {
+		add("restore", "ok", s.restore.Root(), "")
+	} else {
+		add("restore", "disabled", "no restore folder configured", "restore_disabled")
+	}
+	add("vss", "disabled", "not implemented in the MVP: recovery points are live scans of the file system", "vss_disabled")
+	add("usn", "disabled", "not implemented in the MVP: every backup walks the whole source", "usn_disabled")
+
+	var queued, running int
+	_ = s.pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'queued'), count(*) FILTER (WHERE state = 'running') FROM jobs`).Scan(&queued, &running)
+	rep.Queued, rep.Running = queued, running
+	add("jobs", "ok", fmt.Sprintf("%d running, %d queued", running, queued), "jobs_detail", running, queued)
+	return rep
+}

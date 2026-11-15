@@ -1,0 +1,56 @@
+config/
+.history/
+.ipynb_checkpoints/
+.vscode/
+.pytest_cache/
+__pycache__/
+.github/
+backups/
+build/
+cim/
+confg/
+data/
+logs/
+dist/
+file_system_backend/
+file_system_store/
+obsolete/
+static/hr/
+static/mqpd/
+static/pipe/
+static/qaqc/
+static/sga/
+static/upload/
+static/lc/
+static/lcs/
+static/lcsReport/
+static/progressMGMT/
+static/intro/
+static/measureLink/
+wwwroot/
+modules/
+plugin/
+config.*
+*.ipynb
+*.spec
+test.*
+*.pyw
+dump.rdb
+*.db
+.venv/
+.python-version
+2.1.0
+pyproject.toml
+uv.lock
+
+# --- TimeVault (Go) -----------------------------------------------------------
+# The rules above were inherited from another project. `config/` and `config.*`
+# would hide the planned `internal/config` package, so re-include it.
+!internal/config/
+!internal/config/**
+# Build output and local runtime state (data/ is already ignored above).
+*.exe
+*.test
+*.out
+/bin/
+coverage.*

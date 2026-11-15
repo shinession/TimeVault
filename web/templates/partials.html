@@ -1,0 +1,7 @@
+{{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="/static/img/icons.svg#{{.}}"></use></svg>{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
+
+{{define "flash"}}{{with .Flash}}<div class="tv-alert tv-alert-{{.Kind}}" role="status">{{.Message}}</div>{{end}}{{end}}
+
+{{define "chip-verify"}}<span class="tv-chip tv-chip-{{.State}}" title="{{.Label}}">{{.Label}}</span>{{end}}

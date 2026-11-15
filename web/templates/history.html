@@ -1,0 +1,117 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+{{if .NoSources}}
+<section class="tv-card tv-empty">
+  {{template "icon" "history"}}
+  <h2>{{$.T "explorer.no_sources_title"}}</h2>
+  <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
+  <a class="tv-btn tv-btn-primary" href="/backups">{{$.T "explorer.go_backups"}}</a>
+</section>
+{{else}}
+<div class="tv-toolbar">
+  <form class="tv-source-form" method="get" action="/history" data-autosubmit>
+    <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
+    <select id="source-select" name="source" class="tv-select">
+      {{range .Sources}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+    </select>
+    <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
+  </form>
+</div>
+
+{{if .NoPoints}}
+<section class="tv-card tv-empty">
+  {{template "icon" "history"}}
+  <h2>{{$.T "history.no_points_title"}}</h2>
+  <p class="tv-muted">{{$.T "history.no_points_text"}}</p>
+  <a class="tv-btn tv-btn-primary" href="/backups">{{$.T "explorer.go_backups"}}</a>
+</section>
+{{else}}
+<section class="tv-timeline" aria-label="{{$.T "history.timeline"}}">
+  <div class="tv-timeline-track" data-timeline>
+    {{range .Chips}}
+    <a class="tv-point{{if .Selected}} is-selected{{end}}{{if not .Point.Restorable}} is-warning{{end}}"
+       href="{{url "/history" "source" $.Data.Source.ID "point" .Point.ID "path" $.Data.Rel}}"
+       {{if .Selected}}aria-current="true" data-selected{{end}}
+       title="{{$.T "history.point_title" .Point.Seq (printf "%d" .Point.FileCount) (bytes .Point.TotalBytes)}}">
+      <span class="tv-point-dot"></span>
+      <span class="tv-point-time">{{$.Time .Point.CapturedAt}}</span>
+      <span class="tv-point-meta">#{{.Point.Seq}} · {{$.VerifyLabel .Point.Verification}}</span>
+    </a>
+    {{end}}
+    <a class="tv-point tv-point-now" href="{{url "/explorer" "source" $.Data.Source.ID "path" $.Data.Rel}}">
+      <span class="tv-point-dot"></span>
+      <span class="tv-point-time">{{$.T "history.now"}}</span>
+      <span class="tv-point-meta">{{$.T "history.now_hint"}}</span>
+    </a>
+  </div>
+</section>
+
+<div class="tv-banner tv-banner-history">
+  {{template "icon" "history"}}
+  <span>{{$.T "history.viewing" .Point.Seq ($.Time .Point.CapturedAt)}}</span>
+  <span class="tv-chip tv-chip-live" title="{{$.T "history.live_scan_hint"}}">{{$.T "consistency.live_scan"}}</span>
+  <span class="tv-chip tv-chip-{{.Point.Verification}}">{{$.VerifyLabel .Point.Verification}}</span>
+  {{if not .IsLatest}}<span class="tv-chip tv-chip-old">{{$.T "history.older_point"}}</span>{{end}}
+  {{if not .Point.Restorable}}<span class="tv-chip tv-chip-failed">{{$.T "history.not_restorable"}}</span>{{end}}
+</div>
+
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+  <a class="tv-crumb" href="{{url "/history" "source" .Source.ID "point" .Point.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
+  {{range .Crumbs}}
+  <span class="tv-crumb-sep" aria-hidden="true">/</span>
+  {{if .Last}}<span class="tv-crumb is-current" aria-current="page">{{.Name}}</span>
+  {{else}}<a class="tv-crumb" href="{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" .Rel}}">{{.Name}}</a>{{end}}
+  {{end}}
+</nav>
+
+<form class="tv-restore-form" method="post" action="/restore/preview" data-selection-form>
+  {{template "csrf" $}}
+  <input type="hidden" name="source_id" value="{{.Source.ID}}">
+  <input type="hidden" name="point_id" value="{{.Point.ID}}">
+  <input type="hidden" name="dest_name" value="{{.DefaultDest}}">
+  <input type="hidden" name="current_path" value="{{.Rel}}">
+
+  <div class="tv-actionbar">
+    {{if and .RestoreEnabled .Point.Restorable}}
+    <button class="tv-btn tv-btn-primary" type="submit" name="scope" value="selected" data-needs-selection disabled>{{template "icon" "restore"}} {{$.T "history.restore_selected"}} <span class="tv-count" data-selection-count>0</span></button>
+    <button class="tv-btn" type="submit" name="scope" value="folder">{{template "icon" "restore"}} {{if .Rel}}{{$.T "history.restore_folder"}}{{else}}{{$.T "history.restore_all"}}{{end}}</button>
+    {{else if not .RestoreEnabled}}<span class="tv-muted tv-small">{{$.T "history.restore_disabled"}}</span>
+    {{end}}
+  </div>
+
+  <section class="tv-card">
+    {{if .Listing.Entries}}
+    <div class="tv-list" role="list" data-sortable>
+      <div class="tv-list-head" role="row">
+        <label class="c-check"><input type="checkbox" data-select-all aria-label="{{$.T "common.select_all"}}"></label>
+        <button type="button" class="c-name tv-sort" data-sort="name">{{$.T "list.name"}}</button>
+        <span class="c-status">{{$.T "list.vs_now"}}</span>
+        <button type="button" class="c-size tv-sort" data-sort="size">{{$.T "list.size"}}</button>
+        <button type="button" class="c-time tv-sort" data-sort="mtime">{{$.T "list.modified"}}</button>
+      </div>
+      <div id="list-rows">
+      {{range .Listing.Entries}}
+      <div class="tv-row tv-row-select" role="listitem" data-name="{{lower .Name}}" data-size="{{.Size}}" data-mtime="{{.ModTime.Unix}}" data-dir="{{if .IsDir}}1{{else}}0{{end}}">
+        <label class="c-check"><input type="checkbox" name="paths" value="{{joinRel $.Data.Rel .Name}}" data-select-item aria-label="{{.Name}}"></label>
+        <a class="c-name" href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name) "back" (url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" $.Data.Rel)}}{{end}}">
+          {{if .IsDir}}{{template "icon" "folder"}}{{else if eq .State "skipped"}}{{template "icon" "alert"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span>
+        </a>
+        <span class="c-status">
+          {{if eq .State "skipped"}}<span class="tv-chip tv-chip-warn" title="{{.SkipReason}}">{{$.T "live.not_captured"}}</span>
+          {{else}}<span class="tv-chip tv-chip-{{.Now}}">{{$.NowLabel .Now}}</span>{{end}}
+        </span>
+        <span class="c-size">{{if .IsDir}}-{{else}}{{bytes .Size}}{{end}}</span>
+        <span class="c-time">{{if .MTimeNS}}{{$.Time .ModTime}}{{else}}-{{end}}</span>
+      </div>
+      {{end}}
+      </div>
+    </div>
+    {{else}}<p class="tv-empty-text">{{$.T "explorer.empty_folder"}}</p>{{end}}
+    {{if .NextURL}}<a class="tv-btn tv-more" href="{{.NextURL}}" data-load-more>{{$.T "common.load_more"}}</a>{{end}}
+  </section>
+</form>
+{{end}}
+{{end}}
+{{end}}
+{{end}}

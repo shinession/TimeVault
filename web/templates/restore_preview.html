@@ -1,0 +1,111 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+  <a class="tv-crumb" href="{{.BackURL}}">{{template "icon" "history"}}<span>{{$.T "nav.history"}}</span></a>
+  <span class="tv-crumb-sep" aria-hidden="true">/</span>
+  <span class="tv-crumb is-current" aria-current="page">{{$.T "restore.title"}}</span>
+</nav>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h1>{{template "icon" "restore"}} {{$.T "restore.title"}}</h1></div>
+  <p class="tv-muted">{{$.T "restore.intro"}}</p>
+  <dl class="tv-facts">
+    <div><dt>{{$.T "common.source"}}</dt><dd>{{.Plan.Source.Name}}</dd></div>
+    <div><dt>{{$.T "job.point"}}</dt><dd>#{{.Plan.Point.Seq}} · {{$.Time .Plan.Point.CapturedAt}}
+      <span class="tv-chip tv-chip-{{.Plan.Point.Verification}}">{{$.VerifyLabel .Plan.Point.Verification}}</span></dd></div>
+    <div><dt>{{$.T "restore.selection"}}</dt><dd>{{range .Paths}}<code>/{{.}}</code> {{end}}</dd></div>
+    <div><dt>{{$.T "restore.destination"}}</dt><dd><code>{{.Plan.DestDir}}</code></dd></div>
+  </dl>
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{$.T "restore.summary"}}</h2></div>
+  <ul class="tv-counters">
+    <li><span class="tv-counter-value">{{.Plan.Totals.Files}}</span><span class="tv-counter-label">{{$.T "restore.files"}}</span></li>
+    <li><span class="tv-counter-value">{{.Plan.Totals.Dirs}}</span><span class="tv-counter-label">{{$.T "restore.folders"}}</span></li>
+    <li><span class="tv-counter-value">{{bytes .Plan.Totals.Bytes}}</span><span class="tv-counter-label">{{$.T "restore.total_size"}}</span></li>
+    <li><span class="tv-counter-value">{{.Plan.Totals.Create}}</span><span class="tv-counter-label">{{$.T "action.create"}}</span></li>
+    <li><span class="tv-counter-value">{{.Plan.Totals.Overwrite}}</span><span class="tv-counter-label">{{$.T "action.overwrite"}}</span></li>
+    <li><span class="tv-counter-value">{{.Plan.Totals.Rename}}</span><span class="tv-counter-label">{{$.T "action.rename"}}</span></li>
+    <li><span class="tv-counter-value">{{add (int .Plan.Totals.SkipSame) (int .Plan.Totals.SkipExists)}}</span><span class="tv-counter-label">{{$.T "restore.skipped"}}</span></li>
+    <li class="{{if .Plan.Totals.Blocked}}is-bad{{end}}"><span class="tv-counter-value">{{.Plan.Totals.Blocked}}</span><span class="tv-counter-label">{{$.T "restore.blocked"}}</span></li>
+  </ul>
+
+  {{if .Plan.Totals.Missing}}<div class="tv-alert tv-alert-error" role="alert">{{template "icon" "alert"}} {{$.T "restore.missing_objects" .Plan.Totals.Missing}}</div>{{end}}
+  {{if .Plan.Totals.NotCaptured}}<div class="tv-alert tv-alert-warn">{{template "icon" "alert"}} {{$.T "restore.not_captured" .Plan.Totals.NotCaptured}}</div>{{end}}
+  {{if .Plan.Totals.Overwrite}}<div class="tv-alert tv-alert-warn">{{template "icon" "alert"}} {{$.T "restore.overwrite_warning" .Plan.Totals.Overwrite}}</div>{{end}}
+
+  {{if .Plan.Problems}}
+  <details class="tv-details" open>
+    <summary>{{$.T "restore.problems"}} ({{len .Plan.Problems}}{{if gt .Plan.Totals.Blocked (len .Plan.Problems)}}+{{end}})</summary>
+    <ul class="tv-problems">{{range .Plan.Problems}}<li><code>{{.Rel}}</code> — {{.Problem}}</li>{{end}}</ul>
+  </details>
+  {{end}}
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{$.T "restore.options"}}</h2></div>
+  <form method="post" action="/restore/preview" class="tv-form tv-form-grid">
+    {{template "csrf" $}}
+    <input type="hidden" name="source_id" value="{{.Plan.Request.SourceID}}">
+    <input type="hidden" name="point_id" value="{{.Plan.Request.PointID}}">
+    {{range .Paths}}<input type="hidden" name="paths" value="{{.}}">{{end}}
+    <label class="tv-field"><span>{{$.T "restore.dest_name"}}</span>
+      <input name="dest_name" value="{{.Plan.Request.DestName}}" maxlength="100" required>
+      <small class="tv-muted">{{$.T "restore.dest_hint"}}</small></label>
+    <label class="tv-field"><span>{{$.T "restore.policy"}}</span>
+      <select name="policy" class="tv-select">
+        <option value="skip"{{if eq .Policy "skip"}} selected{{end}}>{{$.T "policy.skip"}}</option>
+        <option value="rename"{{if eq .Policy "rename"}} selected{{end}}>{{$.T "policy.rename"}}</option>
+        <option value="overwrite"{{if eq .Policy "overwrite"}} selected{{end}}>{{$.T "policy.overwrite"}}</option>
+      </select></label>
+    <label class="tv-check tv-field-wide"><input type="checkbox" name="allow_partial" value="1"{{if .Partial}} checked{{end}}> <span>{{$.T "restore.allow_partial"}}</span></label>
+    <div class="tv-form-actions"><button class="tv-btn" type="submit">{{template "icon" "refresh"}} {{$.T "restore.update_preview"}}</button></div>
+  </form>
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{$.T "restore.changes"}}</h2><span class="tv-muted tv-small">{{$.T "restore.sample_hint" (len .Plan.Sample)}}</span></div>
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr><th>{{$.T "list.name"}}</th><th>{{$.T "job.action"}}</th><th class="num">{{$.T "list.size"}}</th></tr></thead>
+      <tbody>
+        {{range .Plan.Sample}}
+        <tr>
+          <td>{{if .IsDir}}{{template "icon" "folder"}}{{else}}{{template "icon" "file"}}{{end}} <code>{{.Rel}}</code>{{if .Target}} → <code>{{.Target}}</code>{{end}}</td>
+          <td><span class="tv-chip tv-chip-action-{{.Action}}">{{$.ActionLabel (printf "%s" .Action)}}</span></td>
+          <td class="num">{{if .IsDir}}-{{else}}{{bytes .Size}}{{end}}</td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="tv-card tv-confirm">
+  <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "restore.confirm_title"}}</h2></div>
+  <form method="post" action="/restore/start" class="tv-form">
+    {{template "csrf" $}}
+    <input type="hidden" name="source_id" value="{{.Plan.Request.SourceID}}">
+    <input type="hidden" name="point_id" value="{{.Plan.Request.PointID}}">
+    {{range .Paths}}<input type="hidden" name="paths" value="{{.}}">{{end}}
+    <input type="hidden" name="dest_name" value="{{.Plan.Request.DestName}}">
+    <input type="hidden" name="policy" value="{{.Policy}}">
+    {{if .Partial}}<input type="hidden" name="allow_partial" value="1">{{end}}
+    <input type="hidden" name="token" value="{{.Token}}">
+    <input type="hidden" name="idem" value="{{.Idem}}">
+    <p>{{$.T "restore.confirm_text" .Plan.Totals.Files .Plan.Totals.Dirs (bytes .Plan.Totals.Bytes)}}</p>
+    {{if .Plan.Totals.Overwrite}}
+    <label class="tv-check tv-check-danger"><input type="checkbox" name="confirm_overwrite" value="1" required>
+      <span>{{$.T "restore.confirm_overwrite" .Plan.Totals.Overwrite}}</span></label>
+    {{end}}
+    <div class="tv-form-actions">
+      <button class="tv-btn tv-btn-primary" type="submit"{{if not .CanStart}} disabled{{end}}>{{template "icon" "restore"}} {{$.T "restore.start"}}</button>
+      <a class="tv-btn tv-btn-ghost" href="{{.BackURL}}">{{$.T "common.cancel"}}</a>
+    </div>
+    {{if not .CanStart}}<p class="tv-alert tv-alert-error">{{$.T "restore.cannot_start"}}</p>{{end}}
+  </form>
+</section>
+{{end}}
+{{end}}
