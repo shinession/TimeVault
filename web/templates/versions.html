@@ -40,7 +40,7 @@
             {{else}}<span class="tv-chip tv-chip-validated tv-chip-available">{{$.T "versions.available"}}</span>{{end}}
           </td>
           <td class="tv-actions">
-            {{if and $.Data.RestoreEnabled (eq .State "ok")}}
+            {{if and $.CanRestore $.Data.RestoreEnabled (eq .State "ok")}}
             <form method="post" action="/restore/preview" class="tv-inline-form">
               {{template "csrf" $}}
               <input type="hidden" name="source_id" value="{{$.Data.Source.ID}}">
@@ -57,7 +57,7 @@
       </tbody>
     </table>
   </div>
-  {{if not .RestoreEnabled}}<p class="tv-muted tv-small">{{$.T "history.restore_disabled"}}</p>{{end}}
+  {{if and $.CanRestore (not .RestoreEnabled)}}<p class="tv-muted tv-small">{{$.T "history.restore_disabled"}}</p>{{end}}
 </section>
 {{end}}
 {{end}}

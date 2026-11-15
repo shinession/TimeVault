@@ -3,6 +3,8 @@ package db_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -36,14 +38,24 @@ func TestMigrateAppliesOnceAndDetectsChanges(t *testing.T) {
 		t.Fatalf("Migrate with a modified migration = %v, want a changed-migration error", err)
 	}
 
-	ahead := fstest.MapFS{
-		"0001_init.sql": &fstest.MapFile{Data: original},
-		"0002_next.sql": &fstest.MapFile{Data: []byte("CREATE TABLE migration_probe (id int);")},
+	ahead := fstest.MapFS{}
+	entries, err := fs.ReadDir(migrations.FS, ".")
+	if err != nil {
+		t.Fatal(err)
 	}
+	for _, e := range entries {
+		data, err := migrations.FS.ReadFile(e.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		ahead[e.Name()] = &fstest.MapFile{Data: data}
+	}
+	probe := fmt.Sprintf("%04d_next.sql", want+1)
+	ahead[probe] = &fstest.MapFile{Data: []byte("CREATE TABLE migration_probe (id int);")}
 	if err := db.CheckSchema(ctx, pool, ahead); err == nil {
 		t.Fatal("CheckSchema must report pending migrations")
 	}
-	if applied, err := db.Migrate(ctx, pool, ahead); err != nil || len(applied) != 1 || applied[0] != "0002_next.sql" {
+	if applied, err := db.Migrate(ctx, pool, ahead); err != nil || len(applied) != 1 || applied[0] != probe {
 		t.Fatalf("Migrate ahead = %v, %v", applied, err)
 	}
 }

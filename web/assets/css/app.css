@@ -490,6 +490,8 @@ input[type="checkbox"]:checked::before,
 input[type="checkbox"]:indeterminate::before { transform: scale(1); }
 input[type="checkbox"]:indeterminate::before { clip-path: polygon(0 38%, 100% 38%, 100% 62%, 0 62%); }
 input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
+/* A checkbox inside a .tv-field must not take the size and padding of the text inputs. */
+.tv-field input[type="checkbox"] { width: 1.2rem; min-height: 0; padding: 0; }
 
 .tv-check { display: flex; align-items: flex-start; gap: .65rem; line-height: 1.45; cursor: pointer; }
 .tv-check input { margin-top: .15rem; }
@@ -672,6 +674,9 @@ a.tv-crumb:active { transform: scale(.95); }
   transition: transform .2s;
 }
 .tv-details[open] > summary::before { transform: rotate(45deg); }
+.tv-details-body { display: flex; flex-direction: column; gap: 1rem; padding: 0 1rem 1rem; }
+.tv-field .tv-schedule { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.tv-field .tv-schedule input { width: 7rem; }
 .tv-problems {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -37,36 +38,58 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ip := clientIP(r)
-	user := strings.TrimSpace(r.PostFormValue("username"))
+	login := strings.TrimSpace(r.PostFormValue("username"))
 	next := safeNext(r.PostFormValue("next"))
 
 	again := func(status int, key string) {
 		p := s.newPage(r, auth.Session{}, "login.title", "")
 		p.Bare = true
-		p.Data = loginData{Next: next, Username: user, Error: p.T(key)}
+		p.Data = loginData{Next: next, Username: login, Error: p.T(key)}
 		p.RequestURI = buildURL("/login", "next", next)
 		s.render(w, r, "login", status, p)
 	}
-	if wait, ok := s.auth.Allow(ip); !ok {
-		s.svc.Audit(r.Context(), audit.Event{Actor: user, Action: audit.ActionLoginFailed, Result: audit.ResultDenied, RemoteAddr: ip,
-			Detail: map[string]any{"reason": "throttled", "retry_after_s": int(wait.Seconds())}})
-		w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+	// A person may type a password into the name field by mistake, so the audit trail keeps only the start of it.
+	typed := truncate(login, 64)
+	failed := func(reason string, extra map[string]any) {
+		detail := map[string]any{"reason": reason}
+		for k, v := range extra {
+			detail[k] = v
+		}
+		s.svc.Audit(r.Context(), audit.Event{Actor: typed, Action: audit.ActionLoginFailed, Result: audit.ResultDenied, RemoteAddr: ip, Detail: detail})
+	}
+
+	attempt, throttle := s.auth.Begin(ip, login)
+	if throttle != nil {
+		reason := "throttled"
+		if throttle.ByAccount {
+			reason = "account_throttled"
+		}
+		failed(reason, map[string]any{"retry_after_s": int(throttle.Wait.Seconds())})
+		w.Header().Set("Retry-After", strconv.Itoa(int(throttle.Wait.Seconds())+1))
 		again(http.StatusTooManyRequests, "login.throttled")
 		return
 	}
-	if !s.auth.Authenticate(user, r.PostFormValue("password")) {
-		s.auth.Failed(ip)
-		s.svc.Audit(r.Context(), audit.Event{Actor: user, Action: audit.ActionLoginFailed, Result: audit.ResultDenied, RemoteAddr: ip})
+	id, err := s.auth.Login(r.Context(), login, r.PostFormValue("password"))
+	switch {
+	case errors.Is(err, auth.ErrUnavailable):
+		// Not the account's fault, so it does not count against it.
+		attempt.Unavailable()
+		s.log.Warn("sign-in failed: the user directory cannot be reached", "error", err)
+		failed("directory_unavailable", nil)
+		again(http.StatusServiceUnavailable, "login.unavailable")
+		return
+	case err != nil:
+		failed("invalid", nil)
 		again(http.StatusUnauthorized, "login.invalid")
 		return
 	}
-	s.auth.Succeeded(ip)
-	sess, err := s.auth.StartSession(w, user)
+	attempt.Succeeded()
+	sess, err := s.auth.StartSession(w, id)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
-	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogin, RemoteAddr: ip})
+	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogin, RemoteAddr: ip, Detail: map[string]any{"role": string(sess.Role)}})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 

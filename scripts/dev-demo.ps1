@@ -10,10 +10,10 @@
   on disk without a backup so the Explorer shows "changed", "new" and "deleted" items.
 
 .PARAMETER BaseUrl
-  Address of the running server (default http://127.0.0.1:8470).
+  Address of the running server (default http://127.0.0.1:8660).
 #>
 [CmdletBinding()]
-param([string]$BaseUrl = 'http://127.0.0.1:8470')
+param([string]$BaseUrl = 'http://127.0.0.1:8660')
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -101,4 +101,4 @@ Write-Demo 'Projects\Beta\plan.txt' 'Beta plan, edited after the last backup.'
 Write-Demo 'Notes\ideas.txt' 'A brand new file that has not been backed up yet.'
 Remove-Item -LiteralPath (Join-Path $source 'Reports\2026-Q1.txt') -Force
 
-Write-Host "Done. Open $BaseUrl/ and sign in as admin."
+Write-Host "Done. Open $BaseUrl/ (anyone can browse; sign in as admin to back up, restore or change settings)."

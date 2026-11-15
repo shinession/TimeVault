@@ -23,7 +23,10 @@
         <a class="tv-nav-link{{if eq .Nav "explorer"}} is-active{{end}}" data-nav="explorer" href="/explorer">{{template "icon" "folder"}}<span>{{.T "nav.explorer"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "history"}} is-active{{end}}" data-nav="history" href="/history">{{template "icon" "history"}}<span>{{.T "nav.history"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "backups"}} is-active{{end}}" data-nav="backups" href="/backups">{{template "icon" "backup"}}<span>{{.T "nav.backups"}}</span></a>
+        {{if .CanAudit}}
         <a class="tv-nav-link{{if eq .Nav "audit"}} is-active{{end}}" data-nav="audit" href="/audit">{{template "icon" "audit"}}<span>{{.T "nav.audit"}}</span></a>
+        <a class="tv-nav-link{{if eq .Nav "settings"}} is-active{{end}}" data-nav="settings" href="/settings">{{template "icon" "settings"}}<span>{{.T "nav.settings"}}</span></a>
+        {{end}}
       </nav>
       {{end}}
       <div class="tv-tools">
@@ -34,12 +37,14 @@
           <a class="tv-lang-link{{if not .IsZh}} is-active{{end}}" data-no-boost lang="en" href="{{url "/lang" "set" "en" "next" .RequestURI}}">EN</a>
           <a class="tv-lang-link{{if .IsZh}} is-active{{end}}" data-no-boost lang="zh" href="{{url "/lang" "set" "zh" "next" .RequestURI}}">中文</a>
         </div>
-        {{if and (not .Bare) .User}}
+        {{if and (not .Bare) .SignedIn}}
         <form class="tv-userbox" method="post" action="/logout">
           {{template "csrf" .}}
-          <span class="tv-user" title="{{.User}}">{{template "icon" "user"}}<span>{{.User}}</span></span>
+          <span class="tv-user" title="{{.Name}} ({{.User}})">{{template "icon" "user"}}<span>{{.Name}}</span></span>
           {{if not .AuthDisabled}}<button class="tv-iconbtn" type="submit" title="{{.T "nav.logout"}}" aria-label="{{.T "nav.logout"}}">{{template "icon" "logout"}}</button>{{end}}
         </form>
+        {{else if not .Bare}}
+        <a class="tv-btn tv-btn-small tv-signin" data-no-boost href="{{url "/login" "next" .RequestURI}}">{{template "icon" "user"}} {{.T "nav.login"}}</a>
         {{end}}
       </div>
     </div>
@@ -51,8 +56,10 @@
 
   <footer class="tv-footer">
     <span>{{.T "footer.powered"}}</span>
+    {{if .CanAudit}}
     <span class="tv-sep">|</span>
     <a href="/status">{{.T "nav.status"}}</a>
+    {{end}}
     <span class="tv-sep">|</span>
     <span>v{{.Version}}</span>
   </footer>

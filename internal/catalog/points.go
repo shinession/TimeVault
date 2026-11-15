@@ -54,6 +54,16 @@ func (s *Store) LatestCommitted(ctx context.Context, sourceID int64) (Point, err
 	return p, nil
 }
 
+// HasPoints reports whether the source has any recovery point, in any state.
+func (s *Store) HasPoints(ctx context.Context, sourceID int64) (bool, error) {
+	var has bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM recovery_points WHERE source_id = $1)`, sourceID).Scan(&has); err != nil {
+		return false, fmt.Errorf("catalog: has points: %w", err)
+	}
+	return has, nil
+}
+
 // ListPoints returns committed points, newest first. beforeSeq > 0 continues after a previous page.
 func (s *Store) ListPoints(ctx context.Context, sourceID int64, limit, beforeSeq int) ([]Point, error) {
 	rows, err := s.pool.Query(ctx,
@@ -263,6 +273,29 @@ func (s *Store) FailPoint(ctx context.Context, lock *SourceLock, p Point, state,
 	}
 	if err := cleanupUncommitted(ctx, tx, lock.sourceID); err != nil {
 		return fmt.Errorf("catalog: clean up failed point: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// DiscardPoint removes a building point that found nothing to record: its row
+// and whatever the build wrote disappear, so no failed attempt is left behind
+// and the next build reuses the sequence number.
+func (s *Store) DiscardPoint(ctx context.Context, lock *SourceLock, p Point) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("catalog: discard point: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	tag, err := tx.Exec(ctx,
+		`DELETE FROM recovery_points WHERE id = $1 AND source_id = $2 AND state = 'building'`, p.ID, lock.sourceID)
+	if err != nil {
+		return fmt.Errorf("catalog: discard point: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("catalog: point %d is not building", p.ID)
+	}
+	if err := cleanupUncommitted(ctx, tx, lock.sourceID); err != nil {
+		return fmt.Errorf("catalog: clean up discarded point: %w", err)
 	}
 	return tx.Commit(ctx)
 }

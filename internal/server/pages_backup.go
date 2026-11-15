@@ -2,10 +2,8 @@ package server
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"timevault/internal/auth"
@@ -87,25 +85,20 @@ type sourceCard struct {
 	catalog.SourceSummary
 	Active   *jobView
 	Attempts []catalog.Point
-}
-
-type addSourceForm struct {
-	Name     string
-	RootPath string
-	Excludes string
-	Error    string
+	// Minutes is the interval of the schedule; 0 when there is none.
+	Minutes int
+	// NextRun is when the schedule starts the next backup; nil without a schedule or when the source is switched off.
+	NextRun *time.Time
 }
 
 type backupsData struct {
-	Sources         []sourceCard
-	Jobs            []jobView
-	Form            addSourceForm
-	RestoreEnabled  bool
-	RestoreRoot     string
-	DefaultExcludes string
+	Sources        []sourceCard
+	Jobs           []jobView
+	RestoreEnabled bool
+	RestoreRoot    string
 }
 
-func (s *Server) backupsData(r *http.Request, form addSourceForm) (*backupsData, error) {
+func (s *Server) backupsData(r *http.Request, signedIn bool) (*backupsData, error) {
 	ctx := r.Context()
 	sources, err := s.svc.Sources(ctx)
 	if err != nil {
@@ -119,13 +112,13 @@ func (s *Server) backupsData(r *http.Request, form addSourceForm) (*backupsData,
 	if err != nil {
 		return nil, err
 	}
-	d := &backupsData{Form: form, RestoreEnabled: s.svc.RestoreEnabled(), RestoreRoot: s.svc.RestoreRoot(),
-		DefaultExcludes: strings.Join(backup.DefaultExcludes, "\n")}
-	if d.Form.Excludes == "" && d.Form.Name == "" && d.Form.RootPath == "" {
-		d.Form.Excludes = d.DefaultExcludes
-	}
+	d := &backupsData{RestoreEnabled: s.svc.RestoreEnabled(), RestoreRoot: s.svc.RestoreRoot()}
 	active := map[int64]*jobView{}
 	for _, j := range recent {
+		// Restores are for accounts to see, like their job pages.
+		if j.Kind == jobs.KindRestore && !signedIn {
+			continue
+		}
 		v := s.viewJob(j, names)
 		d.Jobs = append(d.Jobs, v)
 		if j.Kind == jobs.KindBackup && j.Active() && j.SourceID != nil {
@@ -135,18 +128,23 @@ func (s *Server) backupsData(r *http.Request, form addSourceForm) (*backupsData,
 			}
 		}
 	}
+	now := time.Now()
 	for _, src := range sources {
 		attempts, err := s.svc.Attempts(ctx, src.ID, 12)
 		if err != nil {
 			return nil, err
 		}
-		d.Sources = append(d.Sources, sourceCard{SourceSummary: src, Active: active[src.ID], Attempts: attempts})
+		card := sourceCard{SourceSummary: src, Active: active[src.ID], Attempts: attempts, NextRun: nextRun(src.Source, now)}
+		if src.ScheduleMinutes != nil {
+			card.Minutes = *src.ScheduleMinutes
+		}
+		d.Sources = append(d.Sources, card)
 	}
 	return d, nil
 }
 
 func (s *Server) handleBackups(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	d, err := s.backupsData(r, addSourceForm{})
+	d, err := s.backupsData(r, sess.SignedIn())
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -154,39 +152,6 @@ func (s *Server) handleBackups(w http.ResponseWriter, r *http.Request, sess auth
 	p := s.newPage(r, sess, "backups.title", "backups")
 	p.Data = d
 	s.render(w, r, "backups", http.StatusOK, p)
-}
-
-func (s *Server) handleAddSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	if err := r.ParseForm(); err != nil {
-		s.fail(w, r, http.StatusBadRequest, "errors.generic")
-		return
-	}
-	form := addSourceForm{Name: r.PostFormValue("name"), RootPath: r.PostFormValue("root_path"), Excludes: r.PostFormValue("excludes")}
-	_, err := s.svc.AddSource(r.Context(), s.actor(r, sess), backup.SourceRequest{
-		Name: form.Name, RootPath: form.RootPath, Excludes: strings.Split(strings.ReplaceAll(form.Excludes, "\r", ""), "\n"),
-	})
-	if err != nil {
-		status, key := classify(err)
-		if status == http.StatusInternalServerError {
-			s.handleErr(w, r, err)
-			return
-		}
-		form.Error = err.Error()
-		if key != "" && !errors.Is(err, backup.ErrInvalidSource) {
-			form.Error = s.newPage(r, sess, "", "").T(key)
-		}
-		d, derr := s.backupsData(r, form)
-		if derr != nil {
-			s.handleErr(w, r, derr)
-			return
-		}
-		p := s.newPage(r, sess, "backups.title", "backups")
-		p.Data = d
-		s.render(w, r, "backups", status, p)
-		return
-	}
-	s.setFlash(w, "ok", "flash.source_added")
-	http.Redirect(w, r, "/backups", http.StatusSeeOther)
 }
 
 func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -200,10 +165,13 @@ func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request, sess au
 		return
 	}
 	if !created {
+		// The job that is already there may be an automatic one that is forgotten when it finds nothing changed,
+		// so its page is not promised; the Backups page shows it for as long as it exists.
 		s.setFlash(w, "info", "flash.backup_already")
-	} else {
-		s.setFlash(w, "ok", "flash.backup_queued")
+		http.Redirect(w, r, "/backups", http.StatusSeeOther)
+		return
 	}
+	s.setFlash(w, "ok", "flash.backup_queued")
 	http.Redirect(w, r, "/jobs/"+strconv.FormatInt(job.ID, 10), http.StatusSeeOther)
 }
 
@@ -250,6 +218,18 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.handleErr(w, r, err)
 		return
 	}
+	// A restore job shows where files were written and why some were not, so it is for accounts only.
+	if job.Kind == jobs.KindRestore {
+		verified, ok := s.requireSignIn(w, r)
+		if !ok {
+			return
+		}
+		sess = verified
+	}
+	// Error texts and the log can name folders and settings of the server; only accounts see them.
+	if !sess.SignedIn() {
+		job.Error = ""
+	}
 	d := &jobData{}
 	names := map[int64]string{}
 	if job.SourceID != nil {
@@ -264,9 +244,11 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 	}
 	d.View = s.viewJob(job, names)
-	if d.Events, err = s.svc.JobEvents(ctx, id, 0, 300); err != nil {
-		s.handleErr(w, r, err)
-		return
+	if sess.SignedIn() {
+		if d.Events, err = s.svc.JobEvents(ctx, id, 0, 300); err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
 	}
 	if job.Kind == jobs.KindRestore {
 		d.Status = r.FormValue("status")

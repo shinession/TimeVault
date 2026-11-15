@@ -59,6 +59,10 @@ type Source struct {
 	Enabled   bool
 	CreatedBy string
 	CreatedAt time.Time
+	// ScheduleMinutes is the interval between automatic backups; nil means manual only.
+	ScheduleMinutes *int
+	// LastRunAt is when the last backup run of the source ended, whatever its outcome.
+	LastRunAt *time.Time
 }
 
 // SourceSummary is a source with its newest committed recovery point.

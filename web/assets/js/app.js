@@ -28,12 +28,25 @@
     });
   }
 
+  // The language links and the sign-in button lead back to the page they were clicked on, so
+  // after an in-page navigation their "next" must name the new page, not the one that was loaded first.
+  function syncReturnLinks(url) {
+    var here = new URL(url, window.location.href);
+    var target = here.pathname + here.search;
+    document.querySelectorAll('a.tv-lang-link, a.tv-signin').forEach(function (a) {
+      var link = new URL(a.getAttribute('href'), window.location.href);
+      link.searchParams.set('next', target);
+      a.setAttribute('href', link.pathname + link.search);
+    });
+  }
+
   function swap(html, res, push) {
     content.innerHTML = html;
     var title = res.headers.get('X-TV-Title');
     document.title = (title ? decodeURIComponent(title) + ' \u00b7 ' : '') + 'TimeVault';
     setNav(res.headers.get('X-TV-Nav') || '');
     if (push) { history.pushState({ tv: 1 }, '', res.url); }
+    syncReturnLinks(res.url);
     init(content);
   }
 
@@ -191,7 +204,11 @@
     function tick() {
       Promise.all(ids.map(function (id) {
         return fetch('/api/v1/jobs/' + encodeURIComponent(id), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
-          .then(function (res) { return res.ok ? res.json() : null; });
+          .then(function (res) {
+            // An automatic backup that finds nothing changed is forgotten: no job any more means it has finished.
+            if (res.status === 404) { return { job: { active: false } }; }
+            return res.ok ? res.json() : null;
+          });
       })).then(function (results) {
         var finished = results.some(function (r) { return r && r.job && !r.job.active; });
         if (finished || reload) {

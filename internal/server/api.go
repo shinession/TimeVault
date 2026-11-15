@@ -20,20 +20,24 @@ import (
 
 func (s *Server) apiRoutes() {
 	m := s.mux
-	m.HandleFunc("GET /api/v1/session", s.authed(s.apiSession))
-	m.HandleFunc("GET /api/v1/health", s.authed(s.apiHealth))
-	m.HandleFunc("GET /api/v1/sources", s.authed(s.apiSources))
-	m.HandleFunc("POST /api/v1/sources", s.authed(s.apiAddSource))
-	m.HandleFunc("GET /api/v1/files", s.authed(s.apiFiles))
-	m.HandleFunc("GET /api/v1/search", s.authed(s.apiSearch))
-	m.HandleFunc("GET /api/v1/recovery-points", s.authed(s.apiPoints))
-	m.HandleFunc("GET /api/v1/history/tree", s.authed(s.apiHistoryTree))
-	m.HandleFunc("GET /api/v1/history/versions", s.authed(s.apiHistoryVersions))
-	m.HandleFunc("POST /api/v1/backups", s.authed(s.apiStartBackup))
-	m.HandleFunc("GET /api/v1/jobs/{id}", s.authed(s.apiJob))
-	m.HandleFunc("POST /api/v1/restores/preview", s.authed(s.apiRestorePreview))
-	m.HandleFunc("POST /api/v1/restores", s.authed(s.apiRestoreStart))
-	m.HandleFunc("GET /api/v1/audit", s.authed(s.apiAudit))
+	// Reading is open to everyone.
+	m.HandleFunc("GET /api/v1/session", s.open(s.apiSession))
+	m.HandleFunc("GET /api/v1/sources", s.openChecked(s.apiSources))
+	m.HandleFunc("GET /api/v1/files", s.open(s.apiFiles))
+	m.HandleFunc("GET /api/v1/search", s.open(s.apiSearch))
+	m.HandleFunc("GET /api/v1/recovery-points", s.open(s.apiPoints))
+	m.HandleFunc("GET /api/v1/history/tree", s.open(s.apiHistoryTree))
+	m.HandleFunc("GET /api/v1/history/versions", s.open(s.apiHistoryVersions))
+	m.HandleFunc("GET /api/v1/jobs/{id}", s.openChecked(s.apiJob))
+	// Everything that works on data, and what reveals the server, needs an account.
+	m.HandleFunc("GET /api/v1/health", s.need(auth.PermAudit, s.apiHealth))
+	m.HandleFunc("GET /api/v1/settings", s.need(auth.PermAudit, s.apiSettings))
+	m.HandleFunc("GET /api/v1/audit", s.need(auth.PermAudit, s.apiAudit))
+	m.HandleFunc("POST /api/v1/backups", s.need(auth.PermBackup, s.apiStartBackup))
+	m.HandleFunc("POST /api/v1/restores/preview", s.need(auth.PermRestore, s.apiRestorePreview))
+	m.HandleFunc("POST /api/v1/restores", s.need(auth.PermRestore, s.apiRestoreStart))
+	m.HandleFunc("POST /api/v1/sources", s.need(auth.PermManage, s.apiAddSource))
+	m.HandleFunc("PATCH /api/v1/sources/{id}", s.need(auth.PermManage, s.apiUpdateSource))
 }
 
 // --- JSON plumbing -------------------------------------------------------------------
@@ -105,13 +109,23 @@ func toAPIPoint(p catalog.Point) apiPoint {
 }
 
 type apiSource struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	RootPath    string    `json:"root_path"`
-	Excludes    []string  `json:"excludes"`
-	Enabled     bool      `json:"enabled"`
-	CreatedAt   time.Time `json:"created_at"`
-	LatestPoint *apiPoint `json:"latest_point,omitempty"`
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+	// RootPath is the folder on the server's disk; anonymous visitors do not get it.
+	RootPath        string     `json:"root_path,omitempty"`
+	Excludes        []string   `json:"excludes"`
+	Enabled         bool       `json:"enabled"`
+	ScheduleMinutes *int       `json:"schedule_minutes"`
+	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	LatestPoint     *apiPoint  `json:"latest_point,omitempty"`
+}
+
+func toAPISource(src catalog.Source) apiSource {
+	return apiSource{
+		ID: src.ID, Name: src.Name, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled,
+		ScheduleMinutes: src.ScheduleMinutes, LastRunAt: src.LastRunAt, CreatedAt: src.CreatedAt,
+	}
 }
 
 type apiEntry struct {
@@ -170,7 +184,23 @@ func toAPIJob(j jobs.Job) apiJob {
 // --- Handlers --------------------------------------------------------------------------------
 
 func (s *Server) apiSession(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	writeJSON(w, http.StatusOK, map[string]any{"user": sess.User, "role": sess.Role, "csrf_token": sess.CSRF, "auth_disabled": sess.AuthDisabled})
+	if !sess.SignedIn() {
+		writeJSON(w, http.StatusOK, map[string]any{"authenticated": false})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"authenticated": true, "user": sess.User, "name": sess.Name, "role": sess.Role, "csrf_token": sess.CSRF, "auth_disabled": sess.AuthDisabled,
+	})
+}
+
+// apiSettings describes the running configuration. It holds no secret.
+func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+	d := s.opts.Deployment
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version": s.opts.Version, "listen": d.ListenAddr, "database": d.Database, "user_directory": d.UserDirectory,
+		"repository": d.RepositoryPath, "restore_root": d.RestoreRoot, "env_file": d.EnvFile, "search": d.SearchHost,
+		"local_admin": d.LocalAdmin != "", "sign_in_disabled": d.AuthDisabled, "session_ttl": d.SessionTTL.String(), "cookie_secure": d.CookieSecure,
+	})
 }
 
 func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request, _ auth.Session) {
@@ -197,7 +227,7 @@ func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 	writeJSON(w, status, out)
 }
 
-func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	sources, err := s.svc.Sources(r.Context())
 	if err != nil {
 		s.handleErr(w, r, err)
@@ -205,7 +235,10 @@ func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, _ auth.Sessi
 	}
 	out := make([]apiSource, 0, len(sources))
 	for _, src := range sources {
-		a := apiSource{ID: src.ID, Name: src.Name, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled, CreatedAt: src.CreatedAt}
+		a := toAPISource(src.Source)
+		if !sess.SignedIn() {
+			a.RootPath = ""
+		}
 		if src.Latest != nil {
 			p := toAPIPoint(*src.Latest)
 			a.LatestPoint = &p
@@ -217,9 +250,10 @@ func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, _ auth.Sessi
 
 func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var body struct {
-		Name     string   `json:"name"`
-		RootPath string   `json:"root_path"`
-		Excludes []string `json:"excludes"`
+		Name            string   `json:"name"`
+		RootPath        string   `json:"root_path"`
+		Excludes        []string `json:"excludes"`
+		ScheduleMinutes *int     `json:"schedule_minutes"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -227,13 +261,82 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.
 	if body.Excludes == nil {
 		body.Excludes = backup.DefaultExcludes
 	}
-	src, err := s.svc.AddSource(r.Context(), s.actor(r, sess), backup.SourceRequest{Name: body.Name, RootPath: body.RootPath, Excludes: body.Excludes})
+	src, err := s.svc.AddSource(r.Context(), s.actor(r, sess), backup.SourceRequest{
+		Name: body.Name, RootPath: body.RootPath, Excludes: body.Excludes, ScheduleMinutes: body.ScheduleMinutes,
+	})
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/sources")
-	writeJSON(w, http.StatusCreated, apiSource{ID: src.ID, Name: src.Name, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled, CreatedAt: src.CreatedAt})
+	writeJSON(w, http.StatusCreated, toAPISource(src))
+}
+
+// optionalInt tells a field that is missing from the JSON from an explicit null.
+type optionalInt struct {
+	Set   bool
+	Value *int
+}
+
+func (o *optionalInt) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var n int
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	o.Value = &n
+	return nil
+}
+
+// apiUpdateSource changes the fields that are present in the body and leaves the others as they are.
+func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		s.handleErr(w, r, service.ErrNotFound)
+		return
+	}
+	cur, err := s.svc.Source(r.Context(), id)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	var body struct {
+		Name            *string     `json:"name"`
+		RootPath        *string     `json:"root_path"`
+		Excludes        *[]string   `json:"excludes"`
+		Enabled         *bool       `json:"enabled"`
+		ScheduleMinutes optionalInt `json:"schedule_minutes"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	req := backup.SourceRequest{Name: cur.Name, RootPath: cur.RootPath, Excludes: cur.Excludes, ScheduleMinutes: cur.ScheduleMinutes}
+	enabled := cur.Enabled
+	if body.Name != nil {
+		req.Name = *body.Name
+	}
+	if body.RootPath != nil {
+		req.RootPath = *body.RootPath
+	}
+	if body.Excludes != nil {
+		req.Excludes = *body.Excludes
+	}
+	if body.Enabled != nil {
+		enabled = *body.Enabled
+	}
+	if body.ScheduleMinutes.Set {
+		req.ScheduleMinutes = body.ScheduleMinutes.Value
+	}
+	src, err := s.svc.UpdateSource(r.Context(), s.actor(r, sess), id, req, enabled)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toAPISource(src))
 }
 
 func (s *Server) sourceFromQuery(w http.ResponseWriter, r *http.Request) (catalog.Source, bool) {
@@ -411,7 +514,7 @@ func (s *Server) apiStartBackup(w http.ResponseWriter, r *http.Request, sess aut
 	writeJSON(w, status, map[string]any{"job": toAPIJob(job), "already_active": !created})
 }
 
-func (s *Server) apiJob(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *Server) apiJob(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		s.handleErr(w, r, service.ErrNotFound)
@@ -422,10 +525,21 @@ func (s *Server) apiJob(w http.ResponseWriter, r *http.Request, _ auth.Session) 
 		s.handleErr(w, r, err)
 		return
 	}
-	events, err := s.svc.JobEvents(r.Context(), id, intParam(r, "after_event"), 200)
-	if err != nil {
-		s.handleErr(w, r, err)
-		return
+	if job.Kind == jobs.KindRestore {
+		if _, ok := s.requireSignIn(w, r); !ok {
+			return
+		}
+	}
+	var events []jobs.Event
+	if sess.SignedIn() {
+		events, err = s.svc.JobEvents(r.Context(), id, intParam(r, "after_event"), 200)
+		if err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
+	} else {
+		// Error texts and the log can name folders and settings of the server; only accounts see them.
+		job.RequestedBy, job.Error = "", ""
 	}
 	type ev struct {
 		ID      int64     `json:"id"`

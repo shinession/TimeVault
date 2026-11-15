@@ -101,7 +101,7 @@ type auditData struct {
 }
 
 var auditActions = []string{
-	audit.ActionLogin, audit.ActionLoginFailed, audit.ActionLogout, audit.ActionSourceCreate,
+	audit.ActionLogin, audit.ActionLoginFailed, audit.ActionLogout, audit.ActionSourceCreate, audit.ActionSourceUpdate,
 	audit.ActionBackupRequest, audit.ActionBackupFinish, audit.ActionVerifyRequest, audit.ActionVerifyFinish,
 	audit.ActionRestorePreview, audit.ActionRestoreRequest, audit.ActionRestoreFinish, audit.ActionJobCancel, audit.ActionAccessDenied,
 }

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -27,10 +28,20 @@ import (
 // ErrNotFound is returned for unknown sources, points, jobs and paths.
 var ErrNotFound = errors.New("not found")
 
+// ErrSourceDisabled is returned when a backup is requested for a monitored folder that is switched off.
+var ErrSourceDisabled = errors.New("the monitored folder is switched off")
+
 // Actor identifies who performs an operation, for the audit trail.
 type Actor struct {
 	User   string
 	Remote string
+}
+
+// DirectoryChecker probes the user directory that sign-ins are checked against.
+type DirectoryChecker interface {
+	Ping(ctx context.Context) error
+	// Addr is the address of the directory server, for display.
+	Addr() string
 }
 
 // Config wires a Service.
@@ -44,19 +55,25 @@ type Config struct {
 	Audit   *audit.Logger
 	Search  search.Provider
 	Logger  *slog.Logger
+	// Directory is optional; without it Health reports no user directory.
+	Directory DirectoryChecker
+	// SchedulerTick is how often RunScheduler looks for due sources; zero means 15 seconds.
+	SchedulerTick time.Duration
 }
 
 // Service is the application facade.
 type Service struct {
-	pool    *pgxpool.Pool
-	cat     *catalog.Store
-	repo    *repository.Store
-	engine  *backup.Engine
-	restore *restore.Manager
-	jobs    *jobs.Runner
-	audit   *audit.Logger
-	search  search.Provider
-	log     *slog.Logger
+	pool          *pgxpool.Pool
+	cat           *catalog.Store
+	repo          *repository.Store
+	engine        *backup.Engine
+	restore       *restore.Manager
+	jobs          *jobs.Runner
+	audit         *audit.Logger
+	search        search.Provider
+	log           *slog.Logger
+	directory     DirectoryChecker
+	schedulerTick time.Duration
 }
 
 // New builds a Service and registers the job handlers on the runner.
@@ -64,6 +81,7 @@ func New(cfg Config) *Service {
 	s := &Service{
 		pool: cfg.Pool, cat: cfg.Catalog, repo: cfg.Repo, engine: cfg.Engine, restore: cfg.Restore,
 		jobs: cfg.Jobs, audit: cfg.Audit, search: cfg.Search, log: cfg.Logger,
+		directory: cfg.Directory, schedulerTick: cfg.SchedulerTick,
 	}
 	if s.search == nil {
 		s.search = search.NewDisabled()
@@ -131,9 +149,81 @@ func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceReque
 		return catalog.Source{}, err
 	}
 	id := src.ID
-	_ = s.record(ctx, a, audit.ActionSourceCreate, "source", fmt.Sprint(id), &id, audit.ResultOK,
-		map[string]any{"name": src.Name, "root": src.RootPath, "excludes": src.Excludes})
+	detail := map[string]any{"name": src.Name, "root": src.RootPath, "excludes": src.Excludes}
+	if src.ScheduleMinutes != nil {
+		detail["schedule_minutes"] = *src.ScheduleMinutes
+	}
+	_ = s.record(ctx, a, audit.ActionSourceCreate, "source", fmt.Sprint(id), &id, audit.ResultOK, detail)
 	return src, nil
+}
+
+// UpdateSource replaces the name, folder, exclude patterns, schedule and enabled
+// flag of a source. The folder of a source that already has recovery points is
+// fixed, because its history describes that folder. An update that changes
+// nothing succeeds without an audit record; otherwise the record lists only the
+// fields that changed, with their old and new values.
+func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backup.SourceRequest, enabled bool) (catalog.Source, error) {
+	cur, err := s.Source(ctx, id)
+	if err != nil {
+		return catalog.Source{}, err
+	}
+	ns, err := s.engine.PrepareSourceUpdate(ctx, cur, req)
+	if err != nil {
+		return catalog.Source{}, err
+	}
+	if catalog.RootKey(ns.RootPath) != catalog.RootKey(cur.RootPath) {
+		// A backup that starts while the folder is being changed would record the files of the old folder for the
+		// new one. The writer lock of the source is held from this check until the change is stored; it is busy
+		// (ErrBusy) while a backup of the source runs.
+		lock, err := s.cat.LockSource(ctx, id)
+		if err != nil {
+			return catalog.Source{}, err
+		}
+		defer lock.Unlock()
+		has, err := s.cat.HasPoints(ctx, id)
+		if err != nil {
+			return catalog.Source{}, err
+		}
+		if has {
+			return catalog.Source{}, fmt.Errorf("%w: the folder of a source that already has backups cannot be changed; disable it and add the new folder as a new source", backup.ErrInvalidSource)
+		}
+	}
+	src, err := s.cat.UpdateSource(ctx, id, catalog.SourceUpdate{
+		Name: ns.Name, RootPath: ns.RootPath, Excludes: ns.Excludes, Enabled: enabled, ScheduleMinutes: ns.ScheduleMinutes,
+	})
+	if errors.Is(err, catalog.ErrNotFound) {
+		return catalog.Source{}, ErrNotFound
+	}
+	if err != nil {
+		return catalog.Source{}, err
+	}
+	if changes := sourceChanges(cur, src); len(changes) > 0 {
+		_ = s.record(ctx, a, audit.ActionSourceUpdate, "source", fmt.Sprint(id), &id, audit.ResultOK, changes)
+	}
+	return src, nil
+}
+
+// sourceChanges describes what an edit changed, as old and new values per field.
+func sourceChanges(before, after catalog.Source) map[string]any {
+	changes := map[string]any{}
+	change := func(field string, from, to any) { changes[field] = map[string]any{"old": from, "new": to} }
+	if before.Name != after.Name {
+		change("name", before.Name, after.Name)
+	}
+	if before.RootPath != after.RootPath {
+		change("root", before.RootPath, after.RootPath)
+	}
+	if !slices.Equal(before.Excludes, after.Excludes) {
+		change("excludes", before.Excludes, after.Excludes)
+	}
+	if before.Enabled != after.Enabled {
+		change("enabled", before.Enabled, after.Enabled)
+	}
+	if (before.ScheduleMinutes == nil) != (after.ScheduleMinutes == nil) ||
+		(before.ScheduleMinutes != nil && *before.ScheduleMinutes != *after.ScheduleMinutes) {
+		change("schedule_minutes", before.ScheduleMinutes, after.ScheduleMinutes)
+	}
+	return changes
 }
 
 // --- Points and browsing ---------------------------------------------------
@@ -276,6 +366,9 @@ func (s *Service) FileVersions(ctx context.Context, src catalog.Source, rel stri
 type backupParams struct {
 	SourceID int64 `json:"source_id"`
 	Rehash   bool  `json:"rehash"`
+	// Scheduled marks a run started by the scheduler; it records nothing when
+	// the source has not changed since the last recovery point.
+	Scheduled bool `json:"scheduled"`
 }
 
 type verifyParams struct {
@@ -299,7 +392,7 @@ func (s *Service) StartBackup(ctx context.Context, a Actor, sourceID int64, reha
 		return jobs.Job{}, false, err
 	}
 	if !src.Enabled {
-		return jobs.Job{}, false, errors.New("the source is disabled")
+		return jobs.Job{}, false, ErrSourceDisabled
 	}
 	job, created, err = s.jobs.Enqueue(ctx, jobs.NewJob{
 		Kind: jobs.KindBackup, SourceID: &sourceID, Params: backupParams{SourceID: sourceID, Rehash: rehash}, RequestedBy: a.User,
@@ -385,7 +478,11 @@ func (s *Service) runBackup(ctx context.Context, job jobs.Job, rep *jobs.Reporte
 	if err := json.Unmarshal(job.Params, &p); err != nil {
 		return fmt.Errorf("invalid job parameters: %w", err)
 	}
-	point, err := s.engine.Run(ctx, p.SourceID, backup.RunOptions{Rehash: p.Rehash}, backupReporter{rep})
+	point, err := s.engine.Run(ctx, p.SourceID, backup.RunOptions{Rehash: p.Rehash, SkipUnchanged: p.Scheduled}, backupReporter{rep})
+	s.markRun(ctx, p.SourceID)
+	if errors.Is(err, backup.ErrUnchanged) {
+		return jobs.ErrForget
+	}
 	actor := Actor{User: job.RequestedBy}
 	sourceID := p.SourceID
 	if err != nil {
@@ -627,6 +724,15 @@ func (h HealthReport) OK() bool {
 	return true
 }
 
+// directoryTimeout bounds one reachability check of the user directory.
+const directoryTimeout = 3 * time.Second
+
+func (s *Service) pingDirectory(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, directoryTimeout)
+	defer cancel()
+	return s.directory.Ping(ctx)
+}
+
 // Health checks every dependency; it never fails, problems are reported in the result.
 func (s *Service) Health(ctx context.Context) HealthReport {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
@@ -665,6 +771,21 @@ func (s *Service) Health(ctx context.Context) HealthReport {
 		add("search", "disabled", sh.Detail, "search_disabled")
 	default:
 		add("search", "degraded", sh.Detail, "")
+	}
+
+	// Browsing and the local administrator work without the directory, so a silent
+	// one is degraded, not failed. The error text stays out of the detail: it can
+	// carry connection settings.
+	if s.directory == nil {
+		add("directory", "disabled", "no user directory configured", "directory_off")
+	} else {
+		addr := s.directory.Addr()
+		if err := s.pingDirectory(ctx); err != nil {
+			s.log.Debug("user directory check failed", "error", err)
+			add("directory", "degraded", "the user directory does not answer", "directory_down")
+		} else {
+			add("directory", "ok", addr, "directory_ok", addr)
+		}
 	}
 
 	if s.restore.Enabled() {

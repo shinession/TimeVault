@@ -2,7 +2,7 @@
 
 ## Architecture decision records
 
-Decisions that shape the TimeVault MVP, with their alternatives and consequences. Each file is bilingual (English first, then Simplified Chinese). plan.md P0 asks for ADRs on snapshot semantics, the data model, the content object format and the service privilege boundary; the table says where each is covered.
+Decisions that shape TimeVault, with their alternatives and consequences. Each file is bilingual (English first, then Simplified Chinese). plan.md P0 asks for ADRs on snapshot semantics, the data model, the content object format and the service privilege boundary; the table says where each is covered. 0005 and 0006 were added for version 0.1.1.
 
 | ADR | Decision | Covers (plan.md P0) |
 |---|---|---|
@@ -10,8 +10,10 @@ Decisions that shape the TimeVault MVP, with their alternatives and consequences
 | [0002](./0002-content-addressed-repository.md) | One content-addressed object per file in a separate repository folder | Content object format |
 | [0003](./0003-live-scan-without-vss-and-usn.md) | Live scan instead of VSS and USN in the MVP (a deliberate deviation from plan.md) | Snapshot semantics (provisional) |
 | [0004](./0004-restore-safety-and-privileges.md) | Restore only below the restore root, with preview, token and confinement; single unprivileged process | Service privilege boundary; restore safety |
+| [0005](./0005-redis-user-directory-and-open-browsing.md) | Anyone can browse; company accounts from the Redis user directory sign in to do anything else; roles `user` and `admin` (a deliberate exception to plan.md's "no Redis") | Role model (first version) |
+| [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) | Deployment settings in `.env` or the environment, monitored folders in the database, automatic backups every N minutes that record nothing when nothing changed | Configuration; scheduling (first version) |
 
-Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, chunking and packs, retention and garbage collection, role model and Windows SSO.
+Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, chunking and packs, retention and garbage collection, per-source permissions, Windows SSO.
 
 ---
 
@@ -19,7 +21,7 @@ Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, ch
 
 ## 架构决策记录
 
-塑造 TimeVault MVP 的各项决定，包括备选方案和影响。每个文件都是双语的（先英文，后简体中文）。plan.md P0 要求为快照语义、数据模型、内容对象格式和服务权限边界编写 ADR；下表说明各项分别在哪里覆盖。
+塑造 TimeVault 的各项决定，包括备选方案和影响。每个文件都是双语的（先英文，后简体中文）。plan.md P0 要求为快照语义、数据模型、内容对象格式和服务权限边界编写 ADR；下表说明各项分别在哪里覆盖。0005 和 0006 是为 0.1.1 版本新增的。
 
 | ADR | 决定 | 覆盖的内容（plan.md P0） |
 |---|---|---|
@@ -27,5 +29,7 @@ Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, ch
 | [0002](./0002-content-addressed-repository.md) | 在独立的仓库文件夹中，每个文件对应一个内容寻址对象 | 内容对象格式 |
 | [0003](./0003-live-scan-without-vss-and-usn.md) | MVP 采用实时扫描，而不是 VSS 和 USN（有意偏离 plan.md） | 快照语义（暂定） |
 | [0004](./0004-restore-safety-and-privileges.md) | 只恢复到恢复根目录之下，需要预览、令牌和约束；单个非特权进程 | 服务权限边界；恢复安全 |
+| [0005](./0005-redis-user-directory-and-open-browsing.md) | 任何人都可以浏览；其他操作需要用 Redis 用户目录中的公司账号登录；角色为 `user` 和 `admin`（有意偏离 plan.md 的"不引入 Redis"） | 角色模型（第一版） |
+| [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) | 部署设置放在 `.env` 或环境变量中，监控文件夹放在数据库中，每 N 分钟自动备份，没有变化时不记录任何内容 | 配置；计划任务（第一版） |
 
-尚未决定的内容（因为没有做验证）：VSS 的使用、USN 检查点、分块与 Pack、保留策略与垃圾回收、角色模型与 Windows SSO。
+尚未决定的内容（因为没有做验证）：VSS 的使用、USN 检查点、分块与 Pack、保留策略与垃圾回收、按备份源的权限、Windows SSO。

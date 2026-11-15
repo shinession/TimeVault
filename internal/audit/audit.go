@@ -18,6 +18,7 @@ const (
 	ActionLoginFailed    = "auth.login_failed"
 	ActionLogout         = "auth.logout"
 	ActionSourceCreate   = "source.create"
+	ActionSourceUpdate   = "source.update"
 	ActionBackupRequest  = "backup.request"
 	ActionBackupFinish   = "backup.finish"
 	ActionVerifyRequest  = "verify.request"

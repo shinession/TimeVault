@@ -10,7 +10,7 @@
 <section class="tv-card tv-job" data-job-id="{{.View.Job.ID}}"{{if .View.Active}} data-job-active="1"{{end}} data-job-reload>
   <div class="tv-card-head">
     <h1>{{$.JobKindLabel .View.Job.Kind}} <span class="tv-chip tv-chip-{{.View.Job.State}}" data-job-field="state">{{$.StateLabel .View.Job.State}}</span></h1>
-    {{if .View.Active}}
+    {{if and .View.Active $.CanBackup}}
     <form method="post" action="/jobs/{{.View.Job.ID}}/cancel" class="tv-inline-form">
       {{template "csrf" $}}
       <button class="tv-btn" type="submit">{{$.T "job.cancel"}}</button>
@@ -21,7 +21,7 @@
   <dl class="tv-facts">
     {{if .Source}}<div><dt>{{$.T "common.source"}}</dt><dd><a href="{{url "/explorer" "source" .Source.ID}}">{{.Source.Name}}</a></dd></div>{{end}}
     {{if .Point}}<div><dt>{{$.T "job.point"}}</dt><dd><a href="{{url "/history" "source" .Point.SourceID "point" .Point.ID}}">#{{.Point.Seq}} · {{$.Time .Point.CapturedAt}}</a></dd></div>{{end}}
-    <div><dt>{{$.T "jobs.by"}}</dt><dd>{{.View.Job.RequestedBy}}</dd></div>
+    <div><dt>{{$.T "jobs.by"}}</dt><dd>{{if $.SignedIn}}{{.View.Job.RequestedBy}}{{else}}-{{end}}</dd></div>
     <div><dt>{{$.T "jobs.created"}}</dt><dd>{{$.TimeS .View.Job.CreatedAt}}</dd></div>
     <div><dt>{{$.T "jobs.duration"}}</dt><dd>{{if .View.Duration}}{{.View.Duration}}{{else}}-{{end}}</dd></div>
     <div><dt>{{$.T "job.phase"}}</dt><dd data-job-field="phase">{{$.PhaseLabel .View.Phase}}</dd></div>
@@ -32,7 +32,8 @@
   {{else}}<progress class="tv-progress" max="100" data-job-progress></progress>{{end}}
   {{end}}
 
-  {{if .View.Job.Error}}<div class="tv-alert tv-alert-error" role="alert"><strong>{{$.T "job.error"}}:</strong> <span data-job-field="error">{{.View.Job.Error}}</span></div>{{end}}
+  {{if .View.Job.Error}}<div class="tv-alert tv-alert-error" role="alert"><strong>{{$.T "job.error"}}:</strong> <span data-job-field="error">{{.View.Job.Error}}</span></div>
+  {{else if and (not $.SignedIn) (eq .View.Job.State "failed")}}<div class="tv-alert tv-alert-info" role="note">{{$.T "job.sign_in_for_details"}}</div>{{end}}
 
   {{if .View.Counters}}
   <ul class="tv-counters" data-job-counters>
@@ -81,6 +82,7 @@
 </section>
 {{end}}
 
+{{if $.SignedIn}}
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "clock"}} {{$.T "job.log"}}</h2></div>
   {{if .Events}}
@@ -89,5 +91,6 @@
   </ol>
   {{else}}<ol class="tv-log" data-job-log data-last-event="0"></ol><p class="tv-empty-text" data-job-log-empty>{{$.T "job.no_log"}}</p>{{end}}
 </section>
+{{end}}
 {{end}}
 {{end}}

@@ -15,11 +15,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"timevault/internal/audit"
 	"timevault/internal/auth"
+	"timevault/internal/config"
 	"timevault/internal/jobs"
 	"timevault/internal/search"
 	"timevault/internal/server"
@@ -54,7 +56,14 @@ type harness struct {
 	client *http.Client
 	search *swappable
 	csrf   string
+	// addr is the address this browser appears to come from; empty means the real loopback address.
+	addr string
+	// dir stands in for the company user accounts, clock for the time the sign-in manager sees.
+	dir   *fakeDirectory
+	clock *testClock
 }
+
+var visitorSeq atomic.Int32
 
 // swappable lets a test replace the search provider after the server is built.
 type swappable struct {
@@ -86,9 +95,10 @@ func newHarness(t *testing.T) *harness {
 	log := slog.New(slog.DiscardHandler)
 	runner := jobs.NewRunner(env.Pool, log, 2)
 	provider := &swappable{p: search.NewDisabled()}
+	dir, clock := newFakeDirectory(), &testClock{now: time.Now()}
 	svc := service.New(service.Config{
 		Pool: env.Pool, Catalog: env.Cat, Repo: env.Repo, Engine: env.Eng, Restore: env.Restore,
-		Jobs: runner, Audit: audit.New(env.Pool, log), Search: provider, Logger: log,
+		Jobs: runner, Audit: audit.New(env.Pool, log), Search: provider, Logger: log, Directory: dir,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	runner.Start(ctx)
@@ -98,19 +108,40 @@ func newHarness(t *testing.T) *harness {
 		defer stop()
 		runner.Shutdown(stopCtx)
 	})
-	am, err := auth.NewManager(auth.Options{AdminUser: "admin", AdminPasswordHash: passwordHash(t), SessionKey: []byte(strings.Repeat("k", 32)), TTL: time.Hour})
+	am, err := auth.NewManager(auth.Options{
+		AdminUser: "admin", AdminPasswordHash: passwordHash(t), Directory: dir,
+		SessionKey: []byte(strings.Repeat("k", 32)), TTL: time.Hour, Now: clock.Now,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := server.New(svc, am, web.FS, server.Options{Version: "test", Location: time.UTC}, log)
+	deployment := config.Deployment{
+		ListenAddr: "127.0.0.1:8660", Database: "db.test:5432/TimeVault", UserDirectory: dir.Addr() + "/0",
+		RepositoryPath: env.Repo.Root(), RestoreRoot: env.RestoreRoot, EnvFile: "test.env", LocalAdmin: "admin", SessionTTL: time.Hour,
+	}
+	s, err := server.New(svc, am, web.FS, server.Options{Version: "test", Location: time.UTC, Deployment: deployment}, log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(s.Handler())
+	ts := httptest.NewServer(forwarded(s.Handler()))
 	t.Cleanup(ts.Close)
+	h := &harness{t: t, env: env, srv: ts, search: provider, dir: dir, clock: clock}
+	h.client = h.newBrowser()
+	return h
+}
+
+func (h *harness) newBrowser() *http.Client {
 	jar, _ := cookiejar.New(nil)
-	client := &http.Client{Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &harness{t: t, env: env, srv: ts, client: client, search: provider}
+	return &http.Client{Jar: jar, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+}
+
+// visitor is another browser talking to the same server: its own cookies, its own CSRF token and its own address.
+func (h *harness) visitor() *harness {
+	v := *h
+	v.client, v.csrf = h.newBrowser(), ""
+	n := int(visitorSeq.Add(1))
+	v.addr = "10.8." + strconv.Itoa(n/250) + "." + strconv.Itoa(n%250+1)
+	return &v
 }
 
 func (h *harness) do(method, path string, body io.Reader, hdr map[string]string) (*http.Response, string) {
@@ -118,6 +149,9 @@ func (h *harness) do(method, path string, body io.Reader, hdr map[string]string)
 	req, err := http.NewRequest(method, h.srv.URL+path, body)
 	if err != nil {
 		h.t.Fatal(err)
+	}
+	if h.addr != "" {
+		req.Header.Set("X-Test-Client", h.addr)
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
@@ -157,11 +191,13 @@ func (h *harness) postForm(path string, v url.Values, hdr ...map[string]string) 
 	return h.do(http.MethodPost, path, strings.NewReader(v.Encode()), m)
 }
 
-func (h *harness) login() {
+// signIn posts the sign-in form and, when it succeeds, remembers the CSRF token of the new session.
+func (h *harness) signIn(login, pw string) int {
 	h.t.Helper()
-	res, _ := h.postForm("/login", url.Values{"username": {"admin"}, "password": {password}, "next": {"/"}})
+	h.csrf = ""
+	res, _ := h.postForm("/login", url.Values{"username": {login}, "password": {pw}, "next": {"/"}})
 	if res.StatusCode != http.StatusSeeOther {
-		h.t.Fatalf("login status = %d", res.StatusCode)
+		return res.StatusCode
 	}
 	_, body := h.get("/api/v1/session")
 	var s struct {
@@ -171,6 +207,23 @@ func (h *harness) login() {
 		h.t.Fatalf("session: %q %v", body, err)
 	}
 	h.csrf = s.Csrf
+	return res.StatusCode
+}
+
+// login signs in as the local administrator, who may do everything.
+func (h *harness) login() {
+	h.t.Helper()
+	if status := h.signIn("admin", password); status != http.StatusSeeOther {
+		h.t.Fatalf("login status = %d", status)
+	}
+}
+
+// loginAs signs in with a company account of the fake directory.
+func (h *harness) loginAs(login string) {
+	h.t.Helper()
+	if status := h.signIn(login, h.dir.password(login)); status != http.StatusSeeOther {
+		h.t.Fatalf("sign-in of %s = %d", login, status)
+	}
 }
 
 func (h *harness) api(method, path string, payload any) (int, map[string]any) {
@@ -256,12 +309,16 @@ func assertCSPClean(t *testing.T, what, html string) {
 func TestSignInAndGuards(t *testing.T) {
 	h := newHarness(t)
 
-	res, _ := h.get("/explorer")
-	if res.StatusCode != http.StatusSeeOther || !strings.HasPrefix(res.Header.Get("Location"), "/login?next=") {
-		t.Fatalf("anonymous /explorer = %d %q", res.StatusCode, res.Header.Get("Location"))
+	// Browsing needs no account; what is not browsing leads to the sign-in form.
+	if res, _ := h.get("/backups"); res.StatusCode != http.StatusOK {
+		t.Fatalf("anonymous /backups = %d, want 200", res.StatusCode)
 	}
-	if res, body := h.get("/api/v1/sources"); res.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "unauthorized") {
-		t.Fatalf("anonymous API = %d %s", res.StatusCode, body)
+	res, _ := h.get("/audit")
+	if res.StatusCode != http.StatusSeeOther || !strings.HasPrefix(res.Header.Get("Location"), "/login?next=") {
+		t.Fatalf("anonymous /audit = %d %q", res.StatusCode, res.Header.Get("Location"))
+	}
+	if res, body := h.get("/api/v1/audit"); res.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "unauthorized") {
+		t.Fatalf("anonymous protected API = %d %s", res.StatusCode, body)
 	}
 	if res, _ := h.get("/healthz"); res.StatusCode != 200 {
 		t.Fatalf("healthz = %d", res.StatusCode)
@@ -275,7 +332,7 @@ func TestSignInAndGuards(t *testing.T) {
 
 	for i := 0; i < 5; i++ {
 		res, body := h.postForm("/login", url.Values{"username": {"admin"}, "password": {"wrong"}})
-		if res.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "Invalid username or password") {
+		if res.StatusCode != http.StatusUnauthorized || !strings.Contains(body, "Invalid account or password") {
 			t.Fatalf("failed login %d = %d", i, res.StatusCode)
 		}
 	}
@@ -336,8 +393,8 @@ func TestCSRFAndSecurityHeaders(t *testing.T) {
 	if res, _ := h.postForm("/logout", nil); res.StatusCode != http.StatusSeeOther {
 		t.Fatalf("logout = %d", res.StatusCode)
 	}
-	if res, _ := h.get("/explorer"); res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("after logout /explorer = %d, want redirect to login", res.StatusCode)
+	if res, _ := h.get("/audit"); res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("after logout /audit = %d, want redirect to login", res.StatusCode)
 	}
 
 	// Denied attempts are in the audit trail.
@@ -537,14 +594,14 @@ func TestPagesShowRealDataInBothLanguages(t *testing.T) {
 	assertCSPClean(t, "versions", body)
 
 	_, body = h.get("/backups")
-	for _, want := range []string{"Team Files", "Back up now", "Incremental", "Full", "Add a source"} {
+	for _, want := range []string{"Team Files", "Back up now", "Incremental", "Full", "Manage monitored folders"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("backups page is missing %q", want)
 		}
 	}
 	assertCSPClean(t, "backups", body)
 
-	for _, page := range []string{"/audit", "/status", "/explorer?source=999"} {
+	for _, page := range []string{"/audit", "/status", "/settings", "/explorer?source=999"} {
 		_, body = h.get(page)
 		assertCSPClean(t, page, body)
 	}
@@ -859,22 +916,24 @@ func TestSourceRegistrationThroughTheForm(t *testing.T) {
 	h.login()
 	other := t.TempDir()
 
-	res, _ := h.postForm("/backups/sources", url.Values{"name": {"Second"}, "root_path": {other}, "excludes": {"*.tmp\n"}})
-	if res.StatusCode != http.StatusSeeOther {
-		t.Fatalf("add source = %d", res.StatusCode)
+	res, _ := h.postForm("/settings/sources", url.Values{"name": {"Second"}, "root_path": {other}, "excludes": {"*.tmp\n"}})
+	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/settings" {
+		t.Fatalf("add source = %d %q", res.StatusCode, res.Header.Get("Location"))
 	}
-	_, body := h.get("/backups")
-	if !strings.Contains(body, "Second") || !strings.Contains(body, other) || !strings.Contains(body, "Source added.") {
-		t.Fatalf("backups page after adding:\n%s", body)
+	_, body := h.get("/settings")
+	if !strings.Contains(body, "Second") || !strings.Contains(body, other) || !strings.Contains(body, "Monitored folder added.") {
+		t.Fatalf("settings page after adding:\n%s", body)
 	}
 
 	for name, v := range map[string]url.Values{
-		"overlaps the repository": {"name": {"Bad"}, "root_path": {h.env.Repo.Root()}},
-		"relative path":           {"name": {"Bad"}, "root_path": {`data\x`}},
-		"missing folder":          {"name": {"Bad"}, "root_path": {filepath.Join(other, "missing")}},
-		"duplicate name":          {"name": {"Second"}, "root_path": {t.TempDir()}},
+		"overlaps the repository":  {"name": {"Bad"}, "root_path": {h.env.Repo.Root()}},
+		"relative path":            {"name": {"Bad"}, "root_path": {`data\x`}},
+		"missing folder":           {"name": {"Bad"}, "root_path": {filepath.Join(other, "missing")}},
+		"duplicate name":           {"name": {"Second"}, "root_path": {t.TempDir()}},
+		"interval is not a number": {"name": {"Bad"}, "root_path": {t.TempDir()}, "schedule": {"1"}, "schedule_minutes": {"often"}},
+		"interval is too short":    {"name": {"Bad"}, "root_path": {t.TempDir()}, "schedule": {"1"}, "schedule_minutes": {"0"}},
 	} {
-		res, body := h.postForm("/backups/sources", v)
+		res, body := h.postForm("/settings/sources", v)
 		if res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusConflict {
 			t.Errorf("%s: status %d", name, res.StatusCode)
 			continue

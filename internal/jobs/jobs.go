@@ -45,6 +45,11 @@ const (
 // ErrNotFound means the job does not exist.
 var ErrNotFound = errors.New("jobs: not found")
 
+// ErrForget is returned by a handler whose job turned out to have nothing worth
+// recording, such as a scheduled backup that found no change. The runner then
+// deletes the job instead of recording a result.
+var ErrForget = errors.New("jobs: nothing worth recording")
+
 // Job is one unit of background work.
 type Job struct {
 	ID             int64
@@ -84,7 +89,7 @@ type Event struct {
 	Message string
 }
 
-// Handler runs one job. A nil return marks it succeeded.
+// Handler runs one job. A nil return marks it succeeded; ErrForget deletes it.
 type Handler func(ctx context.Context, job Job, rep *Reporter) error
 
 const jobColumns = `id, kind, source_id, point_id, state, phase, params, progress, error, requested_by,
@@ -347,6 +352,14 @@ func (r *Runner) run(parent, ctx context.Context, cancel context.CancelFunc, job
 	}
 	rep.Flush()
 
+	if errors.Is(runErr, ErrForget) {
+		if r.forget(parent, job) {
+			return
+		}
+		// The row could not be deleted; the work itself did succeed.
+		runErr = nil
+	}
+
 	state, msg := StateSucceeded, ""
 	if runErr != nil {
 		state, msg = StateFailed, runErr.Error()
@@ -377,6 +390,19 @@ func (r *Runner) run(parent, ctx context.Context, cancel context.CancelFunc, job
 	} else {
 		r.log.Info("job finished", "job", job.ID, "kind", job.Kind)
 	}
+}
+
+// forget deletes a job that has nothing worth recording, together with its log
+// lines and stored restore items. It reports whether the job is gone.
+func (r *Runner) forget(parent context.Context, job Job) bool {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)
+	defer cancel()
+	if _, err := r.pool.Exec(ctx, `DELETE FROM jobs WHERE id = $1`, job.ID); err != nil {
+		r.log.Error("delete job without result", "job", job.ID, "kind", job.Kind, "error", err)
+		return false
+	}
+	r.log.Debug("job dropped, nothing worth recording", "job", job.ID, "kind", job.Kind)
+	return true
 }
 
 // Reporter lets a handler publish phase, progress and log lines of its job.

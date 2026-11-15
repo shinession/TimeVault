@@ -1,8 +1,10 @@
-// Package config loads TimeVault's settings from environment variables.
+// Package config loads TimeVault's settings from environment variables, with a
+// .env file as a fallback (see LoadEnv).
 //
-// Every setting has the TIMEVAULT_ prefix. Secrets (database URL, password
-// hash, session key, Everything credentials) are only ever read from the
-// environment and are redacted when the configuration is logged.
+// Every setting has the TIMEVAULT_ prefix. Secrets (database URL, Redis URL,
+// password hash, session key, Everything credentials) are only ever read from
+// the environment or the .env file and are redacted when the configuration is
+// logged or shown.
 package config
 
 import (
@@ -14,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +42,11 @@ type Config struct {
 	SessionTTL        time.Duration
 	CookieSecure      bool
 
+	// The company accounts live in Redis as app_user_* hashes (see internal/redisuser).
+	RedisURL       string
+	RedisKeyPrefix string
+	RedisTimeout   time.Duration
+
 	EverythingURL      string
 	EverythingUsername string
 	EverythingPassword string
@@ -49,6 +57,9 @@ type Config struct {
 
 	LogLevel slog.Level
 	LogJSON  bool
+
+	// EnvFile is the .env file the settings were read from, if any. It is set by the caller of LoadEnv.
+	EnvFile string
 }
 
 // Lookup resolves one environment variable.
@@ -62,7 +73,7 @@ func OSLookup(key string) (string, bool) { return os.LookupEnv(key) }
 func Load(lookup Lookup) (Config, error) {
 	l := loader{lookup: lookup}
 	c := Config{
-		ListenAddr:         l.str("TIMEVAULT_LISTEN_ADDR", "127.0.0.1:8470"),
+		ListenAddr:         l.str("TIMEVAULT_LISTEN_ADDR", "127.0.0.1:8660"),
 		AllowNonLoopback:   l.boolean("TIMEVAULT_ALLOW_NON_LOOPBACK", false),
 		DatabaseURL:        l.str("TIMEVAULT_DATABASE_URL", ""),
 		AutoMigrate:        l.boolean("TIMEVAULT_AUTO_MIGRATE", false),
@@ -73,6 +84,9 @@ func Load(lookup Lookup) (Config, error) {
 		AdminPasswordHash:  l.str("TIMEVAULT_ADMIN_PASSWORD_HASH", ""),
 		SessionTTL:         l.duration("TIMEVAULT_SESSION_TTL", 8*time.Hour),
 		CookieSecure:       l.boolean("TIMEVAULT_COOKIE_SECURE", false),
+		RedisURL:           l.str("TIMEVAULT_REDIS_URL", ""),
+		RedisKeyPrefix:     l.str("TIMEVAULT_REDIS_KEY_PREFIX", "app_user_"),
+		RedisTimeout:       l.duration("TIMEVAULT_REDIS_TIMEOUT", 3*time.Second),
 		EverythingURL:      l.str("TIMEVAULT_EVERYTHING_URL", ""),
 		EverythingUsername: l.str("TIMEVAULT_EVERYTHING_USERNAME", ""),
 		EverythingPassword: l.str("TIMEVAULT_EVERYTHING_PASSWORD", ""),
@@ -113,6 +127,14 @@ func Load(lookup Lookup) (Config, error) {
 	if c.EverythingTimeout < 100*time.Millisecond || c.EverythingTimeout > 30*time.Second {
 		l.errs = append(l.errs, errors.New("TIMEVAULT_EVERYTHING_TIMEOUT must be between 100ms and 30s"))
 	}
+	if c.RedisTimeout < 100*time.Millisecond || c.RedisTimeout > 30*time.Second {
+		l.errs = append(l.errs, errors.New("TIMEVAULT_REDIS_TIMEOUT must be between 100ms and 30s"))
+	}
+	if c.RedisURL != "" {
+		if u, err := url.Parse(c.RedisURL); err != nil || (u.Scheme != "redis" && u.Scheme != "rediss") || u.Host == "" {
+			l.errs = append(l.errs, errors.New("TIMEVAULT_REDIS_URL must look like redis://[:password@]host:port/db (or rediss:// for TLS)"))
+		}
+	}
 	if err := c.validateListen(); err != nil {
 		l.errs = append(l.errs, err)
 	}
@@ -131,8 +153,8 @@ func (c Config) ValidateServe() error {
 	if c.RepositoryPath == "" {
 		errs = append(errs, errors.New("TIMEVAULT_REPOSITORY_PATH is required"))
 	}
-	if !c.AuthDisabled && c.AdminPasswordHash == "" {
-		errs = append(errs, errors.New("TIMEVAULT_ADMIN_PASSWORD_HASH is required (create one with: timevault-server hash-password)"))
+	if !c.AuthDisabled && c.AdminPasswordHash == "" && c.RedisURL == "" {
+		errs = append(errs, errors.New("no way to sign in: set TIMEVAULT_REDIS_URL (company accounts) and/or TIMEVAULT_ADMIN_PASSWORD_HASH (local administrator, create one with: timevault-server hash-password)"))
 	}
 	if c.RepositoryPath != "" && c.RestoreRoot != "" {
 		if err := checkApart(c.RepositoryPath, c.RestoreRoot); err != nil {
@@ -191,20 +213,80 @@ func (c Config) IsLoopbackListen(host string) bool {
 
 // LogAttrs describes the configuration for the startup log without secrets.
 func (c Config) LogAttrs() []any {
+	d := c.Describe()
 	return []any{
 		"listen", c.ListenAddr,
 		"database", redactURL(c.DatabaseURL),
+		"user_directory", d.UserDirectory,
+		"env_file", c.EnvFile,
 		"auto_migrate", c.AutoMigrate,
 		"repository", c.RepositoryPath,
 		"restore_root", c.RestoreRoot,
 		"auth_disabled", c.AuthDisabled,
-		"admin_user", c.AdminUser,
+		"local_admin", d.LocalAdmin,
 		"session_ttl", c.SessionTTL.String(),
 		"cookie_secure", c.CookieSecure,
 		"everything_configured", c.EverythingURL != "",
 		"job_workers", c.JobWorkers,
 		"hash_workers", c.HashWorkers,
 	}
+}
+
+// Deployment is what the Settings page shows about the running configuration. It holds no secret.
+type Deployment struct {
+	ListenAddr     string
+	Database       string // host:port/name
+	UserDirectory  string // host:port/db of Redis, empty when company accounts are not configured
+	RepositoryPath string
+	RestoreRoot    string
+	EnvFile        string
+	SearchHost     string // host:port of the Everything server, empty when search is off
+	LocalAdmin     string // name of the local administrator, empty when there is none
+	AuthDisabled   bool
+	SessionTTL     time.Duration
+	CookieSecure   bool
+}
+
+// Describe summarises the configuration for display.
+func (c Config) Describe() Deployment {
+	d := Deployment{
+		ListenAddr:     c.ListenAddr,
+		Database:       describeURL(c.DatabaseURL, "postgres", "postgresql"),
+		UserDirectory:  describeURL(c.RedisURL, "redis", "rediss"),
+		RepositoryPath: c.RepositoryPath,
+		RestoreRoot:    c.RestoreRoot,
+		EnvFile:        c.EnvFile,
+		AuthDisabled:   c.AuthDisabled,
+		SessionTTL:     c.SessionTTL,
+		CookieSecure:   c.CookieSecure,
+	}
+	if c.AdminPasswordHash != "" {
+		d.LocalAdmin = c.AdminUser
+	}
+	if u, err := url.Parse(c.EverythingURL); err == nil && c.EverythingURL != "" {
+		d.SearchHost = u.Host
+	}
+	return d
+}
+
+// describeURL names the server and database of a connection URL for display,
+// without the user, the password or any setting.
+func describeURL(raw string, schemes ...string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || !slices.Contains(schemes, u.Scheme) {
+		return "(not shown)"
+	}
+	out := u.Host
+	if db := strings.Trim(u.Path, "/"); db != "" {
+		out += "/" + db
+	}
+	if u.Scheme == "rediss" {
+		out += " (tls)"
+	}
+	return out
 }
 
 // redactURL describes a PostgreSQL URL for the log without anything that could

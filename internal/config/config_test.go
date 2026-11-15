@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,11 +19,14 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.ListenAddr != "127.0.0.1:8470" || c.AdminUser != "admin" {
+	if c.ListenAddr != "127.0.0.1:8660" || c.AdminUser != "admin" {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 	if c.SessionTTL != 8*time.Hour || c.JobWorkers != 2 || c.HashWorkers < 1 {
 		t.Errorf("unexpected numeric defaults: %+v", c)
+	}
+	if c.RedisURL != "" || c.RedisKeyPrefix != "app_user_" || c.RedisTimeout != 3*time.Second {
+		t.Errorf("unexpected Redis defaults: %+v", c)
 	}
 	if c.AutoMigrate || c.AuthDisabled || c.CookieSecure {
 		t.Errorf("risky options must default to off: %+v", c)
@@ -33,9 +37,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 	cases := map[string]map[string]string{
 		"bad listen":          {"TIMEVAULT_LISTEN_ADDR": "not-an-address"},
 		"bad port":            {"TIMEVAULT_LISTEN_ADDR": "127.0.0.1:99999"},
-		"all interfaces":      {"TIMEVAULT_LISTEN_ADDR": ":8470"},
-		"public address":      {"TIMEVAULT_LISTEN_ADDR": "0.0.0.0:8470"},
-		"auth off and public": {"TIMEVAULT_LISTEN_ADDR": "10.0.0.5:8470", "TIMEVAULT_ALLOW_NON_LOOPBACK": "true", "TIMEVAULT_AUTH_DISABLED": "true"},
+		"all interfaces":      {"TIMEVAULT_LISTEN_ADDR": ":8660"},
+		"public address":      {"TIMEVAULT_LISTEN_ADDR": "0.0.0.0:8660"},
+		"auth off and public": {"TIMEVAULT_LISTEN_ADDR": "10.0.0.5:8660", "TIMEVAULT_ALLOW_NON_LOOPBACK": "true", "TIMEVAULT_AUTH_DISABLED": "true"},
 		"bad bool":            {"TIMEVAULT_AUTO_MIGRATE": "maybe"},
 		"bad duration":        {"TIMEVAULT_SESSION_TTL": "soon"},
 		"short ttl":           {"TIMEVAULT_SESSION_TTL": "1s"},
@@ -45,6 +49,9 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"bad level":           {"TIMEVAULT_LOG_LEVEL": "loud"},
 		"bad format":          {"TIMEVAULT_LOG_FORMAT": "xml"},
 		"everything timeout":  {"TIMEVAULT_EVERYTHING_TIMEOUT": "5m"},
+		"redis wrong scheme":  {"TIMEVAULT_REDIS_URL": "http://127.0.0.1:6379/0"},
+		"redis without host":  {"TIMEVAULT_REDIS_URL": "redis:///0"},
+		"redis timeout":       {"TIMEVAULT_REDIS_TIMEOUT": "5m"},
 	}
 	for name, env := range cases {
 		if _, err := Load(lookupFrom(env)); err == nil {
@@ -55,13 +62,13 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 
 func TestLoadAllowsExplicitNonLoopback(t *testing.T) {
 	_, err := Load(lookupFrom(map[string]string{
-		"TIMEVAULT_LISTEN_ADDR":        "10.0.0.5:8470",
+		"TIMEVAULT_LISTEN_ADDR":        "10.0.0.5:8660",
 		"TIMEVAULT_ALLOW_NON_LOOPBACK": "true",
 	}))
 	if err != nil {
 		t.Fatalf("explicit non-loopback should be allowed: %v", err)
 	}
-	for _, addr := range []string{"localhost:1", "[::1]:8470", "127.0.0.2:9"} {
+	for _, addr := range []string{"localhost:1", "[::1]:8660", "127.0.0.2:9"} {
 		if _, err := Load(lookupFrom(map[string]string{"TIMEVAULT_LISTEN_ADDR": addr})); err != nil {
 			t.Errorf("%s should be accepted: %v", addr, err)
 		}
@@ -74,7 +81,7 @@ func TestValidateServe(t *testing.T) {
 	if err == nil {
 		t.Fatal("empty configuration must not be servable")
 	}
-	for _, want := range []string{"DATABASE_URL", "REPOSITORY_PATH", "ADMIN_PASSWORD_HASH"} {
+	for _, want := range []string{"DATABASE_URL", "REPOSITORY_PATH", "REDIS_URL", "ADMIN_PASSWORD_HASH"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q should mention %s", err, want)
 		}
@@ -82,10 +89,21 @@ func TestValidateServe(t *testing.T) {
 
 	c.DatabaseURL = "postgres://u:p@127.0.0.1/db"
 	c.RepositoryPath = t.TempDir()
-	c.AdminPasswordHash = "pbkdf2-sha256$1$AA$AA"
-	if err := c.ValidateServe(); err != nil {
-		t.Fatalf("valid configuration rejected: %v", err)
+	if err := c.ValidateServe(); err == nil || !strings.Contains(err.Error(), "no way to sign in") {
+		t.Fatalf("a service nobody can sign in to must be rejected, got %v", err)
 	}
+	for name, mutate := range map[string]func(*Config){
+		"local administrator": func(c *Config) { c.AdminPasswordHash = "pbkdf2-sha256$1$AA$AA" },
+		"company accounts":    func(c *Config) { c.RedisURL = "redis://:p@127.0.0.1:6379/0" },
+		"sign-in disabled":    func(c *Config) { c.AuthDisabled = true },
+	} {
+		cc := c
+		mutate(&cc)
+		if err := cc.ValidateServe(); err != nil {
+			t.Fatalf("%s: valid configuration rejected: %v", name, err)
+		}
+	}
+	c.AdminPasswordHash = "pbkdf2-sha256$1$AA$AA"
 	c.RestoreRoot = c.RepositoryPath
 	if err := c.ValidateServe(); err == nil {
 		t.Fatal("restore root equal to the repository must be rejected")
@@ -97,6 +115,8 @@ func TestSessionKeyAndRedaction(t *testing.T) {
 	c, err := Load(lookupFrom(map[string]string{
 		"TIMEVAULT_SESSION_KEY":         key,
 		"TIMEVAULT_DATABASE_URL":        "postgres://tv:supersecret@127.0.0.1:5432/tv",
+		"TIMEVAULT_REDIS_URL":           "rediss://dash:redis-secret@10.1.2.3:6379/2",
+		"TIMEVAULT_EVERYTHING_URL":      "http://127.0.0.1:38480/",
 		"TIMEVAULT_EVERYTHING_PASSWORD": "everything-secret",
 		"TIMEVAULT_ADMIN_PASSWORD_HASH": "hash-secret",
 	}))
@@ -106,16 +126,18 @@ func TestSessionKeyAndRedaction(t *testing.T) {
 	if len(c.SessionKey) != 32 {
 		t.Fatalf("session key has %d bytes", len(c.SessionKey))
 	}
-	logged := ""
-	for _, v := range c.LogAttrs() {
-		if s, ok := v.(string); ok {
-			logged += s + " "
+	shown := fmt.Sprintf("%v %+v", c.LogAttrs(), c.Describe())
+	for _, secret := range []string{"supersecret", "redis-secret", "everything-secret", "hash-secret", key, "dash:"} {
+		if strings.Contains(shown, secret) {
+			t.Errorf("the log or the Settings page would leak %q: %s", secret, shown)
 		}
 	}
-	for _, secret := range []string{"supersecret", "everything-secret", "hash-secret", key} {
-		if strings.Contains(logged, secret) {
-			t.Errorf("LogAttrs leaks %q: %s", secret, logged)
-		}
+	d := c.Describe()
+	if d.Database != "127.0.0.1:5432/tv" || d.UserDirectory != "10.1.2.3:6379/2 (tls)" || d.SearchHost != "127.0.0.1:38480" || d.LocalAdmin != "admin" {
+		t.Errorf("Describe = %+v", d)
+	}
+	if c, _ := Load(lookupFrom(nil)); c.Describe().LocalAdmin != "" || c.Describe().UserDirectory != "" {
+		t.Error("nothing configured must describe nothing")
 	}
 }
 

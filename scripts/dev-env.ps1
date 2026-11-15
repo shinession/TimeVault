@@ -3,19 +3,25 @@
   Loads the git-ignored development settings into the current PowerShell session.
 
 .DESCRIPTION
-  Reads KEY=VALUE lines from the env files that the dev-* scripts create under <repo>\data
-  and sets them as environment variables. Dot-source it so the variables stay in your session:
+  Reads KEY=VALUE lines from the env files under <repo>\data and sets them as environment
+  variables. The dev-* scripts create most of the files; data\local.env is yours to create.
+  Dot-source this script so the variables stay in your session:
 
       . .\scripts\dev-env.ps1
 
-  If the Go toolchain is not on PATH, set TIMEVAULT_GO_ROOT to the Go installation folder
-  (for example the folder that contains bin\go.exe) before dot-sourcing and it is added to PATH.
+  If the Go toolchain is not on PATH, TIMEVAULT_GO_ROOT must name the Go installation folder (the
+  one that contains bin\go.exe); <GoRoot>\bin is then added to PATH for the session. To keep that
+  across terminals without changing the system PATH, put this line into data\local.env (git-ignored,
+  loaded last, meant for settings that belong to one machine):
+
+      TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>
 #>
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $envFiles = @(
     (Join-Path $repoRoot 'data\pgdev\db.env'),
     (Join-Path $repoRoot 'data\dev\server.env'),
-    (Join-Path $repoRoot 'data\everything\everything.env')
+    (Join-Path $repoRoot 'data\everything\everything.env'),
+    (Join-Path $repoRoot 'data\local.env')
 )
 
 foreach ($file in $envFiles) {

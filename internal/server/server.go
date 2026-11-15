@@ -23,6 +23,7 @@ import (
 	"timevault/internal/auth"
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
+	"timevault/internal/config"
 	"timevault/internal/pathutil"
 	"timevault/internal/restore"
 	"timevault/internal/search"
@@ -40,6 +41,8 @@ type Options struct {
 	Version      string
 	Location     *time.Location
 	CookieSecure bool
+	// Deployment is shown, without any secret, on the Settings page.
+	Deployment config.Deployment
 }
 
 // Server serves the web UI and the JSON API.
@@ -122,23 +125,28 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /lang", s.handleLang)
 	m.HandleFunc("GET /login", s.handleLoginForm)
 	m.HandleFunc("POST /login", s.handleLogin)
-	m.HandleFunc("POST /logout", s.authed(s.handleLogout))
+	m.HandleFunc("POST /logout", s.need(auth.PermAccount, s.handleLogout))
 
-	m.HandleFunc("GET /{$}", s.authed(s.handleHome))
+	// Anyone may look at what is protected and at its history.
+	m.HandleFunc("GET /{$}", s.open(s.handleHome))
 	m.HandleFunc("/", s.handleNotFound)
-	m.HandleFunc("GET /explorer", s.authed(s.handleExplorer))
-	m.HandleFunc("GET /history", s.authed(s.handleHistory))
-	m.HandleFunc("GET /versions", s.authed(s.handleVersions))
-	m.HandleFunc("GET /backups", s.authed(s.handleBackups))
-	m.HandleFunc("POST /backups/sources", s.authed(s.handleAddSource))
-	m.HandleFunc("POST /backups/run", s.authed(s.handleRunBackup))
-	m.HandleFunc("POST /backups/verify", s.authed(s.handleVerify))
-	m.HandleFunc("GET /jobs/{id}", s.authed(s.handleJob))
-	m.HandleFunc("POST /jobs/{id}/cancel", s.authed(s.handleCancelJob))
-	m.HandleFunc("POST /restore/preview", s.authed(s.handleRestorePreview))
-	m.HandleFunc("POST /restore/start", s.authed(s.handleRestoreStart))
-	m.HandleFunc("GET /audit", s.authed(s.handleAudit))
-	m.HandleFunc("GET /status", s.authed(s.handleStatus))
+	m.HandleFunc("GET /explorer", s.open(s.handleExplorer))
+	m.HandleFunc("GET /history", s.open(s.handleHistory))
+	m.HandleFunc("GET /versions", s.open(s.handleVersions))
+	m.HandleFunc("GET /backups", s.openChecked(s.handleBackups))
+	m.HandleFunc("GET /jobs/{id}", s.openChecked(s.handleJob))
+
+	// Everything that works on data needs an account.
+	m.HandleFunc("POST /backups/run", s.need(auth.PermBackup, s.handleRunBackup))
+	m.HandleFunc("POST /backups/verify", s.need(auth.PermBackup, s.handleVerify))
+	m.HandleFunc("POST /jobs/{id}/cancel", s.need(auth.PermBackup, s.handleCancelJob))
+	m.HandleFunc("POST /restore/preview", s.need(auth.PermRestore, s.handleRestorePreview))
+	m.HandleFunc("POST /restore/start", s.need(auth.PermRestore, s.handleRestoreStart))
+	m.HandleFunc("GET /audit", s.need(auth.PermAudit, s.handleAudit))
+	m.HandleFunc("GET /status", s.need(auth.PermAudit, s.handleStatus))
+	m.HandleFunc("GET /settings", s.need(auth.PermAudit, s.handleSettings))
+	m.HandleFunc("POST /settings/sources", s.need(auth.PermManage, s.handleAddSource))
+	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermManage, s.handleUpdateSource))
 
 	s.apiRoutes()
 }
@@ -199,37 +207,105 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-type authedHandler func(w http.ResponseWriter, r *http.Request, sess auth.Session)
+type sessionHandler func(w http.ResponseWriter, r *http.Request, sess auth.Session)
 
-// authed requires a valid session and, for state-changing methods, a valid CSRF token.
-func (s *Server) authed(next authedHandler) http.HandlerFunc {
+// open serves everyone. The session is the visitor's when they are signed in
+// and the zero Session otherwise. Only the cookie is read, so browsing never
+// depends on the user directory being reachable.
+func (s *Server) open(next sessionHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		sess, ok := s.auth.Session(r)
+		sess, _ := s.auth.Session(r)
+		next(w, r.WithContext(auth.WithSession(r.Context(), sess)), sess)
+	}
+}
+
+// openChecked serves everyone like open, for the pages and endpoints that show
+// more to an account than to a visitor (who requested a job, why it failed, the
+// folders on the server's disk). A visitor who looks signed in is first checked
+// with the user directory, so an account that was deactivated meanwhile sees
+// what anyone sees.
+func (s *Server) openChecked(next sessionHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, _ := s.signedIn(w, r)
+		next(w, r.WithContext(auth.WithSession(r.Context(), sess)), sess)
+	}
+}
+
+// signedIn returns the session of a request after the account has been
+// re-checked against the user directory. A session whose account is gone or
+// deactivated is ended on the spot.
+func (s *Server) signedIn(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
+	sess, ok := s.auth.Session(r)
+	if !ok {
+		return auth.Session{}, false
+	}
+	sess, err := s.auth.Verify(r.Context(), sess)
+	if err != nil {
+		// Only a verdict about the account ends the session; a request that was abandoned says nothing.
+		if errors.Is(err, auth.ErrInvalidCredentials) {
+			s.auth.ClearSession(w)
+		}
+		return auth.Session{}, false
+	}
+	return sess, true
+}
+
+// need runs next only for a signed-in account that may do p, and, for
+// state-changing methods, only with a valid CSRF token.
+func (s *Server) need(p auth.Permission, next sessionHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := s.signedIn(w, r)
 		if !ok {
-			if isAPI(r) {
-				writeJSONError(w, http.StatusUnauthorized, "unauthorized", "sign in first")
-				return
-			}
-			target := "/login"
-			if r.Method == http.MethodGet && r.Header.Get(partialHdr) == "" {
-				target += "?next=" + url.QueryEscape(r.URL.RequestURI())
-			}
-			http.Redirect(w, r, target, http.StatusSeeOther)
+			s.askToSignIn(w, r)
 			return
 		}
 		if err := s.auth.CheckCSRF(r, sess); err != nil {
-			a := s.actor(r, sess)
-			s.svc.Audit(r.Context(), audit.Event{Actor: a.User, Action: audit.ActionAccessDenied, Result: audit.ResultDenied,
-				RemoteAddr: a.Remote, Detail: map[string]any{"reason": "csrf", "method": r.Method, "path": r.URL.Path}})
-			if isAPI(r) {
-				writeJSONError(w, http.StatusForbidden, "csrf", "missing or invalid CSRF token")
-				return
-			}
-			s.fail(w, r, http.StatusForbidden, "errors.csrf")
+			s.denied(w, r, sess, "csrf", "errors.csrf", http.StatusForbidden, "csrf", "missing or invalid CSRF token")
+			return
+		}
+		if !sess.Can(p) {
+			s.denied(w, r, sess, "forbidden", "errors.forbidden", http.StatusForbidden, "forbidden", "you are not allowed to do this")
 			return
 		}
 		next(w, r.WithContext(auth.WithSession(r.Context(), sess)), sess)
 	}
+}
+
+// requireSignIn is for handlers that serve everyone but some of their
+// content only signed-in accounts: it returns the verified session, or asks
+// the visitor to sign in and reports false.
+func (s *Server) requireSignIn(w http.ResponseWriter, r *http.Request) (auth.Session, bool) {
+	sess, ok := s.signedIn(w, r)
+	if !ok {
+		s.askToSignIn(w, r)
+	}
+	return sess, ok
+}
+
+// askToSignIn answers a request that needs an account but has none: the API
+// gets a 401, a page leads to the sign-in form and back again.
+func (s *Server) askToSignIn(w http.ResponseWriter, r *http.Request) {
+	if isAPI(r) {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "sign in first")
+		return
+	}
+	target := "/login"
+	if r.Method == http.MethodGet && r.Header.Get(partialHdr) == "" {
+		target += "?next=" + url.QueryEscape(r.URL.RequestURI())
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// denied audits and answers a request that was understood but refused.
+func (s *Server) denied(w http.ResponseWriter, r *http.Request, sess auth.Session, reason, pageKey string, status int, apiCode, apiMessage string) {
+	a := s.actor(r, sess)
+	s.svc.Audit(r.Context(), audit.Event{Actor: a.User, Action: audit.ActionAccessDenied, Result: audit.ResultDenied,
+		RemoteAddr: a.Remote, Detail: map[string]any{"reason": reason, "method": r.Method, "path": r.URL.Path}})
+	if isAPI(r) {
+		writeJSONError(w, status, apiCode, apiMessage)
+		return
+	}
+	s.fail(w, r, status, pageKey)
 }
 
 func isAPI(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/api/") }
@@ -268,6 +344,14 @@ func (s *Server) staticHandler() http.Handler {
 }
 
 // --- Request helpers -----------------------------------------------------------
+
+// truncate shortens s to at most n runes.
+func truncate(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n])
+	}
+	return s
+}
 
 func intParam(r *http.Request, name string) int64 {
 	v, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue(name)), 10, 64)
@@ -309,8 +393,10 @@ func classify(err error) (int, string) {
 		return http.StatusBadRequest, "errors.bad_path"
 	case errors.Is(err, backup.ErrInvalidSource), errors.Is(err, restore.ErrInvalidRequest), errors.Is(err, search.ErrBadQuery):
 		return http.StatusBadRequest, ""
-	case errors.Is(err, catalog.ErrConflict), errors.Is(err, catalog.ErrBusy):
+	case errors.Is(err, catalog.ErrConflict):
 		return http.StatusConflict, ""
+	case errors.Is(err, catalog.ErrBusy):
+		return http.StatusConflict, "errors.source_busy"
 	case errors.Is(err, restore.ErrDisabled):
 		return http.StatusConflict, "errors.restore_disabled"
 	case errors.Is(err, restore.ErrNotRestorable):
@@ -323,6 +409,8 @@ func classify(err error) (int, string) {
 		return http.StatusUnprocessableEntity, "errors.blocked"
 	case errors.Is(err, service.ErrSourceUnavailable):
 		return http.StatusServiceUnavailable, "errors.source_unavailable"
+	case errors.Is(err, service.ErrSourceDisabled):
+		return http.StatusConflict, "errors.source_disabled"
 	}
 	return http.StatusInternalServerError, "errors.internal"
 }
@@ -351,10 +439,14 @@ func (s *Server) handleErr(w http.ResponseWriter, r *http.Request, err error) {
 	s.failWithDetail(w, r, status, key, msg)
 }
 
-// publicMessage is the text of an error that is safe to show to a signed-in user.
+// publicMessage is the text of an error that is safe to show to a visitor.
 func publicMessage(err error, key string) string {
-	if key == "errors.internal" {
+	switch {
+	case key == "errors.internal":
 		return "internal error"
+	case errors.Is(err, service.ErrSourceUnavailable):
+		// The error text names the folder and the system's reason; the API is open to everyone.
+		return "the monitored folder cannot be read right now"
 	}
 	return err.Error()
 }

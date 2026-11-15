@@ -1,11 +1,15 @@
 package jobs_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -283,5 +287,83 @@ func TestListAndGet(t *testing.T) {
 	}
 	if _, err := jobs.Get(ctx, pool, 999999); !errors.Is(err, jobs.ErrNotFound) {
 		t.Fatalf("Get unknown = %v", err)
+	}
+}
+
+// lockedBuffer lets the test read what the runner's worker goroutines logged.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func TestErrForgetDeletesTheJobInsteadOfRecordingAResult(t *testing.T) {
+	pool := dbtest.New(t)
+	logs := &lockedBuffer{}
+	r := jobs.NewRunner(pool, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelInfo})), 2)
+	src := addSource(t, pool, "s1")
+	r.Handle(jobs.KindBackup, func(ctx context.Context, j jobs.Job, rep *jobs.Reporter) error {
+		rep.Event("info", "looked and found nothing")
+		return fmt.Errorf("nothing to do: %w", jobs.ErrForget)
+	})
+	r.Handle(jobs.KindVerify, func(context.Context, jobs.Job, *jobs.Reporter) error { return errors.New("disk on fire") })
+	r.Handle(jobs.KindRestore, func(ctx context.Context, j jobs.Job, rep *jobs.Reporter) error {
+		rep.Event("info", "kept")
+		return nil
+	})
+	start(t, r)
+
+	ctx := context.Background()
+	forgotten, _, err := r.Enqueue(ctx, jobs.NewJob{Kind: jobs.KindBackup, SourceID: &src, RequestedBy: "scheduler"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failed, _, _ := r.Enqueue(ctx, jobs.NewJob{Kind: jobs.KindVerify, RequestedBy: "a"})
+	kept, _, _ := r.Enqueue(ctx, jobs.NewJob{Kind: jobs.KindRestore, RequestedBy: "a"})
+
+	if j := wait(t, pool, failed.ID, finished); j.State != jobs.StateFailed || j.Error != "disk on fire" {
+		t.Fatalf("an ordinary failure must still be recorded: %+v", j)
+	}
+	if j := wait(t, pool, kept.ID, finished); j.State != jobs.StateSucceeded {
+		t.Fatalf("a successful job = %+v", j)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if _, err := jobs.Get(ctx, pool, forgotten.ID); errors.Is(err, jobs.ErrNotFound) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the forgotten job was not deleted")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if events, err := jobs.Events(ctx, pool, forgotten.ID, 0, 10); err != nil || len(events) != 0 {
+		t.Fatalf("log lines of the forgotten job = %+v, %v", events, err)
+	}
+	if events, _ := jobs.Events(ctx, pool, kept.ID, 0, 10); len(events) != 1 {
+		t.Fatalf("another job lost its log lines: %+v", events)
+	}
+	all, err := jobs.List(ctx, pool, jobs.Filter{})
+	if err != nil || len(all) != 2 {
+		t.Fatalf("jobs left = %+v, %v; want the failed and the successful one", all, err)
+	}
+	// Nothing about it may be logged above debug level: it is an expected outcome, not a problem.
+	mention := regexp.MustCompile(fmt.Sprintf(`\bjob=%d\b`, forgotten.ID))
+	if mention.MatchString(logs.String()) {
+		t.Fatalf("the forgotten job was logged:\n%s", logs.String())
 	}
 }

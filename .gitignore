@@ -54,3 +54,5 @@ uv.lock
 *.out
 /bin/
 coverage.*
+# The service's own settings file; it holds secrets (see configs/timevault.example.env).
+/.env

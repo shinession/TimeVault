@@ -26,10 +26,12 @@ type Flash struct {
 
 // Page is the data every template receives.
 type Page struct {
-	Title        string
-	Nav          string
-	Lang         string
+	Title string
+	Nav   string
+	Lang  string
+	// User is the sign-in identity and empty for a visitor; Name is what the header shows.
 	User         string
+	Name         string
 	CSRF         string
 	Version      string
 	AssetVer     string
@@ -40,9 +42,18 @@ type Page struct {
 	// RequestURI is where the language links return to; it must be reachable with a GET.
 	RequestURI string
 
-	loc *Locale
-	tz  *time.Location
+	loc  *Locale
+	tz   *time.Location
+	sess auth.Session
 }
+
+// SignedIn reports whether the visitor has signed in. The Can* methods tell
+// the templates which controls to offer; the server enforces the same rules.
+func (p *Page) SignedIn() bool   { return p.sess.SignedIn() }
+func (p *Page) CanBackup() bool  { return p.sess.Can(auth.PermBackup) }
+func (p *Page) CanRestore() bool { return p.sess.Can(auth.PermRestore) }
+func (p *Page) CanAudit() bool   { return p.sess.Can(auth.PermAudit) }
+func (p *Page) CanManage() bool  { return p.sess.Can(auth.PermManage) }
 
 // T translates a message key; extra arguments are formatted into it.
 func (p *Page) T(key string, args ...any) string { return p.loc.T(key, args...) }
@@ -83,6 +94,9 @@ func (p *Page) TimeSP(t *time.Time) string {
 }
 
 func (p *Page) hasFlash() bool { return p.Flash != nil }
+
+// Soon reports whether t is about to arrive, for texts such as "any moment now".
+func (p *Page) Soon(t *time.Time) bool { return t != nil && time.Until(*t) < 30*time.Second }
 
 func (p *Page) label(prefix, v string) string {
 	key := prefix + v
@@ -254,8 +268,11 @@ func returnURI(r *http.Request) string {
 func (s *Server) newPage(r *http.Request, sess auth.Session, titleKey, nav string) *Page {
 	loc := s.locale(r)
 	p := &Page{
-		Nav: nav, Lang: loc.lang, User: sess.User, CSRF: sess.CSRF, Version: s.opts.Version, AssetVer: s.assetVer,
-		AuthDisabled: sess.AuthDisabled, RequestURI: returnURI(r), loc: loc, tz: s.opts.Location,
+		Nav: nav, Lang: loc.lang, User: sess.User, Name: sess.Name, CSRF: sess.CSRF, Version: s.opts.Version, AssetVer: s.assetVer,
+		AuthDisabled: sess.AuthDisabled, RequestURI: returnURI(r), loc: loc, tz: s.opts.Location, sess: sess,
+	}
+	if p.Name == "" {
+		p.Name = p.User
 	}
 	if titleKey != "" {
 		p.Title = loc.T(titleKey)

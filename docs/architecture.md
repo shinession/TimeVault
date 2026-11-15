@@ -2,28 +2,29 @@
 
 ## Overview
 
-The TimeVault MVP is one Go service, `timevault-server` (`cmd/timevault-server`), that hosts the web UI, the JSON API and the background workers. It keeps history in PostgreSQL and file content in a separate, content-addressed repository folder. It reads source folders; it never changes them.
+TimeVault is one Go service, `timevault-server` (`cmd/timevault-server`), that hosts the web UI, the JSON API and the background workers. It keeps history in PostgreSQL and file content in a separate, content-addressed repository folder. It reads source folders; it never changes them. Anyone can browse; company accounts from a Redis user directory sign in to back up, restore or change settings (version 0.1.1; see [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)).
 
-This document describes what is implemented. Items that plan.md describes but the MVP does not do are listed in [mvp-status.md](./mvp-status.md).
+This document describes what is implemented. Items that plan.md describes but TimeVault does not do are listed in [mvp-status.md](./mvp-status.md).
 
 ## Components
 
 | Package | Responsibility |
 |---|---|
-| `internal/config` | Reads and validates the `TIMEVAULT_*` environment variables. |
-| `internal/db`, `migrations/` | pgx connection pool, the embedded, checksummed SQL migrations, and the service-wide instance lock. |
+| `internal/config` | Reads and validates the `TIMEVAULT_*` settings from the environment and the `.env` file (the environment wins), and describes the running configuration for the Settings page without secrets. |
+| `internal/db`, `migrations/` | pgx connection pool, the embedded, checksummed SQL migrations (`0001_init`, `0002_schedule`), and the service-wide instance lock. |
 | `internal/pathutil` | Windows-compatible name validation, source-relative path cleaning, case-insensitive containment, and resolution of a path's real location (junctions and links included). |
 | `internal/platform` | Windows file attributes, disk space, lock detection, real-path resolution and folder flushing behind build tags. |
 | `internal/repository` | Content-addressed object store (whole-file SHA-256), atomic writes, verification. |
-| `internal/catalog` | Sources, recovery points, per-path version history and its queries. |
-| `internal/backup` | Scanner, change detection, content capture, recovery-point state machine, verification. |
+| `internal/catalog` | Monitored folders (sources) with their schedule, recovery points, per-path version history and its queries. |
+| `internal/backup` | Scanner, change detection, content capture, recovery-point state machine, verification, skipping of unchanged automatic runs. |
 | `internal/restore` | Dry-run planner, confirmation tokens, staged and verified restore. |
 | `internal/jobs` | Durable job queue in PostgreSQL with workers, progress and a per-job log. |
 | `internal/search` | Search provider interface, Everything HTTP JSON adapter, mock and disabled providers. |
-| `internal/auth` | PBKDF2 password hashes, signed session cookies, CSRF checks, login throttle. |
+| `internal/auth` | Identities, roles and permissions; PBKDF2 hash of the optional local administrator; signed session cookies; the `Directory` interface and re-checking of signed-in accounts; CSRF checks; sign-in limits. |
+| `internal/redisuser` | The user directory of another application, read-only from Redis: a restricted pickle decoder, the sign-in adapter (`auth.Directory`) and the `check-redis-users` report. |
 | `internal/audit` | Append-only audit trail. |
-| `internal/service` | Application layer shared by the UI and the API (live browsing, history browsing, jobs, restore, health). |
-| `internal/server`, `web/` | HTTP routing, middleware, server-rendered pages (Go templates), JSON API, embedded assets, EN/中文 messages. |
+| `internal/service` | Application layer shared by the UI and the API (live browsing, history browsing, jobs, restore, monitored folders, the scheduler, health). |
+| `internal/server`, `web/` | HTTP routing and access control (`open`, `openChecked`, `need`), middleware, server-rendered pages (Go templates), JSON API, embedded assets, EN/中文 messages. |
 
 ## Data flow
 
@@ -37,13 +38,17 @@ This document describes what is implemented. Items that plan.md describes but th
 
 **Restore.** A restore is previewed first (nothing is written), then confirmed with a token that is bound to the user and to the exact plan, then run as a background job into a folder below the configured restore root. See [Restore flow](#restore-flow).
 
+**Sign-in and access.** Every route is registered with one of three wrappers in `internal/server`: `open` (anyone; reads only the cookie, so browsing never depends on Redis), `openChecked` (anyone, but a visitor with a cookie is first checked with the user directory because the page shows an account more than a visitor) and `need(permission, handler)` (a signed-in, active account with the permission; checks the CSRF token on state-changing methods; audits a refusal as `access.denied`). The permissions are `browse` (everyone), `account` (any signed-in account, for signing out), `backup`, `restore`, `audit` (the audit log, the status and settings pages) for every signed-in account, and `manage` for `admin` accounts only. A sign-in goes through `auth.Manager.Login`: the name of the optional local administrator is checked against its own hash and never looked up elsewhere; any other name is passed to the `auth.Directory`, which `internal/redisuser` implements by finding the `app_user_*` hash (`SCAN`, then `HGETALL`), decoding its fields without executing anything, and comparing the password. The session cookie carries the account, name, role and Redis key; `Manager.Verify` asks the directory again at most once a minute per account and record (`Refresh`), so a deactivation or role change takes effect within a minute, trusts the session as issued for 15 seconds at a time while the directory does not answer, and never takes a request that the visitor abandoned for an outage. Sign-in attempts are counted when they start, per client address and per account name.
+
+**Automatic backups.** `service.RunScheduler` runs in its own goroutine, started after the job runner. Every 15 seconds (and once at start) it asks the catalog for the sources that are due (`enabled`, `schedule_minutes` set, and `last_run_at` empty or at least that many minutes ago), skips a source that already has a queued or running backup, and queues a backup job whose requester is `scheduler`. The backup runs with `SkipUnchanged`: after the scan, when no path was added, modified or deleted and the number of items that could not be read equals that of the newest committed point, the engine discards the recovery point it had begun and returns `ErrUnchanged`; the job runner then deletes the job (`jobs.ErrForget`) and no audit event is written. Whatever the outcome of a run, `last_run_at` is set when it ends, so the next one is due one interval later. The engine takes the source's advisory lock first and reads the source only then; changing the folder of a source takes the same lock and is refused (`ErrBusy`) while a backup of it runs.
+
 ## Data model (PostgreSQL)
 
 History uses validity ranges so a recovery point only stores what changed:
 
 | Table | Meaning |
 |---|---|
-| `sources` | Registered folders, exclude patterns. |
+| `sources` | Monitored folders: name, folder, exclude patterns, `enabled`, `schedule_minutes` (NULL = manual only, otherwise 1 to 43200) and `last_run_at` (when the last backup run ended). |
 | `recovery_points` | One row per backup attempt: sequence number `seq` per source, `state`, `consistency`, counters, manifest digest, `verification`. |
 | `nodes` | One row per path slot, identified by (`parent_id`, exact `name`); `name_key` is the lower-cased name used for sorting and case-insensitive lookup. The root of a source has `parent_id` NULL. |
 | `node_versions` | Each state of a slot: folder or file, size, modification time, attributes, content hash, `state` (`ok` or `skipped` with a reason), valid for the sequence numbers `first_point`..`last_point` (`last_point` NULL while open). |
@@ -100,28 +105,29 @@ Restores only write below `TIMEVAULT_RESTORE_ROOT`, into a folder named by the r
 
 ## 概述
 
-TimeVault MVP 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），同时承载网页界面、JSON API 和后台任务。历史记录保存在 PostgreSQL 中，文件内容保存在独立的、按内容寻址的仓库文件夹中。它只读取备份源文件夹，绝不修改它们。
+TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），同时承载网页界面、JSON API 和后台任务。历史记录保存在 PostgreSQL 中，文件内容保存在独立的、按内容寻址的仓库文件夹中。它只读取备份源文件夹，绝不修改它们。任何人都可以浏览；来自 Redis 用户目录的公司账号登录后才能备份、恢复或修改设置（0.1.1 版；见 [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)）。
 
-本文档描述已经实现的内容。plan.md 中提到但 MVP 尚未实现的部分，见 [mvp-status.md](./mvp-status.md)。
+本文档描述已经实现的内容。plan.md 中提到但 TimeVault 尚未实现的部分，见 [mvp-status.md](./mvp-status.md)。
 
 ## 组件
 
 | 包 | 职责 |
 |---|---|
-| `internal/config` | 读取并校验 `TIMEVAULT_*` 环境变量。 |
-| `internal/db`、`migrations/` | pgx 连接池、内嵌且带校验和的 SQL 迁移，以及服务级的实例锁。 |
+| `internal/config` | 从环境变量和 `.env` 文件读取并校验 `TIMEVAULT_*` 设置（环境变量优先），并为设置页描述当前运行的配置（不含机密信息）。 |
+| `internal/db`、`migrations/` | pgx 连接池、内嵌且带校验和的 SQL 迁移（`0001_init`、`0002_schedule`），以及服务级的实例锁。 |
 | `internal/pathutil` | 兼容 Windows 的名称校验、相对路径清理、不区分大小写的包含判断，以及解析路径真实位置（包括联接点和链接）。 |
 | `internal/platform` | 通过 build tag 隔离的 Windows 文件属性、磁盘空间、文件锁检测、真实路径解析和文件夹刷新。 |
 | `internal/repository` | 内容寻址对象存储（整文件 SHA-256），原子写入，校验。 |
-| `internal/catalog` | 备份源、恢复点、按路径的版本历史及其查询。 |
-| `internal/backup` | 扫描器、变更检测、内容采集、恢复点状态机、完整性校验。 |
+| `internal/catalog` | 监控文件夹（备份源）及其计划、恢复点、按路径的版本历史及其查询。 |
+| `internal/backup` | 扫描器、变更检测、内容采集、恢复点状态机、完整性校验，以及对"无变化的自动备份"的跳过。 |
 | `internal/restore` | 试运行（dry-run）计划、确认令牌、暂存并校验的恢复。 |
 | `internal/jobs` | 存放在 PostgreSQL 中的持久化任务队列，含 worker、进度和任务日志。 |
 | `internal/search` | 搜索提供者接口、Everything HTTP JSON 适配器、mock 与禁用提供者。 |
-| `internal/auth` | PBKDF2 密码哈希、签名会话 Cookie、CSRF 校验、登录限速。 |
+| `internal/auth` | 身份、角色和权限；可选的本地管理员的 PBKDF2 哈希；签名会话 Cookie；`Directory` 接口以及对已登录账号的重新检查；CSRF 校验；登录限制。 |
+| `internal/redisuser` | 另一个应用的用户目录，只读地从 Redis 读取：受限的 pickle 解码器、登录适配器（`auth.Directory`）和 `check-redis-users` 报告。 |
 | `internal/audit` | 只追加的审计记录。 |
-| `internal/service` | 界面与 API 共用的应用层（实时浏览、历史浏览、任务、恢复、健康状态）。 |
-| `internal/server`、`web/` | HTTP 路由、中间件、服务端渲染页面（Go 模板）、JSON API、内嵌静态资源、EN/中文文案。 |
+| `internal/service` | 界面与 API 共用的应用层（实时浏览、历史浏览、任务、恢复、监控文件夹、调度器、健康状态）。 |
+| `internal/server`、`web/` | HTTP 路由与访问控制（`open`、`openChecked`、`need`）、中间件、服务端渲染页面（Go 模板）、JSON API、内嵌静态资源、EN/中文文案。 |
 
 ## 数据流
 
@@ -135,13 +141,17 @@ TimeVault MVP 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`）
 
 **恢复。** 恢复先预览（不写入任何内容），再用与用户和该计划绑定的令牌确认，然后作为后台任务写入所配置恢复根目录下的文件夹。见[恢复流程](#恢复流程)。
 
+**登录与访问控制。** `internal/server` 中的每条路由都用三种包装之一注册：`open`（任何人；只读取 Cookie，所以浏览从不依赖 Redis）、`openChecked`（任何人，但带有 Cookie 的访问者会先向用户目录核实，因为页面对账号展示的内容比对访问者更多）和 `need(权限, 处理函数)`（必须是具有该权限的、已登录且有效的账号；对会改变状态的方法校验 CSRF 令牌；被拒绝时以 `access.denied` 记入审计）。权限有：`browse`（所有人）、`account`（任何已登录的账号，用于退出）、`backup`、`restore`、`audit`（审计日志、状态页和设置页），这三项对每个已登录账号开放，以及仅限 `admin` 账号的 `manage`。登录由 `auth.Manager.Login` 处理：可选的本地管理员的名字只与它自己的哈希比对，绝不去别处查找；其他名字交给 `auth.Directory`，由 `internal/redisuser` 实现，即找到 `app_user_*` 哈希（先 `SCAN`，再 `HGETALL`），在不执行任何内容的前提下解码其字段，再比对密码。会话 Cookie 携带账号、姓名、角色和 Redis 键；`Manager.Verify` 对每个账号和记录最多每分钟向目录再核实一次（`Refresh`），所以停用账号或更改角色在一分钟内生效；目录无应答时，每次按签发时的状态信任会话 15 秒；访问者已放弃的请求不会被当作故障而计入。登录尝试在开始时就按客户端地址和账号名分别计数。
+
+**自动备份。** `service.RunScheduler` 在自己的 goroutine 中运行，在任务运行器之后启动。它每 15 秒（启动时也运行一次）向 catalog 查询到期的备份源（`enabled`、设置了 `schedule_minutes`，且 `last_run_at` 为空或距今至少这么多分钟），跳过已经有排队或运行中备份的备份源，并排入一个请求者为 `scheduler` 的备份任务。备份以 `SkipUnchanged` 运行：扫描之后，如果没有任何路径被新增、修改或删除，且无法读取的项目数量与最新已提交的恢复点相同，引擎会丢弃它已开始创建的恢复点并返回 `ErrUnchanged`；任务运行器随后删除该任务（`jobs.ErrForget`），也不写入审计事件。无论一次运行的结果如何，`last_run_at` 都在其结束时设置，所以下一次在一个间隔之后到期。引擎先取得备份源的 advisory 锁，然后才读取备份源；更改备份源的文件夹要取得同一把锁，并且在它的备份运行期间会被拒绝（`ErrBusy`）。
+
 ## 数据模型（PostgreSQL）
 
 历史使用"有效期区间"模型，因此恢复点只保存发生变化的部分：
 
 | 表 | 含义 |
 |---|---|
-| `sources` | 已登记的文件夹与排除规则。 |
+| `sources` | 监控文件夹：名称、文件夹、排除规则、`enabled`、`schedule_minutes`（NULL 表示仅手动，否则为 1 到 43200）和 `last_run_at`（上一次备份运行结束的时间）。 |
 | `recovery_points` | 每次备份尝试一行：每个备份源内的序号 `seq`、`state`、`consistency`、计数器、清单摘要、`verification`。 |
 | `nodes` | 每个路径位置一行，由（`parent_id`，精确 `name`）标识；`name_key` 是小写化的名称，用于排序和不区分大小写的查找。备份源的根节点 `parent_id` 为 NULL。 |
 | `node_versions` | 路径位置经历的每个状态：文件夹或文件、大小、修改时间、属性、内容哈希、`state`（`ok`，或带原因的 `skipped`），在序号 `first_point`..`last_point` 之间有效（仍然有效时 `last_point` 为 NULL）。 |

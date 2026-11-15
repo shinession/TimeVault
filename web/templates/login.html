@@ -4,6 +4,7 @@
     <img class="tv-login-logo" src="/static/img/logo.svg" alt="" width="56" height="56">
     <h1>{{.T "login.heading"}}</h1>
     <p class="tv-muted">{{.T "login.subtitle"}}</p>
+    <p class="tv-muted tv-small">{{.T "login.hint"}}</p>
     {{with .Data}}
     {{with .Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
     <form method="post" action="/login" class="tv-form">

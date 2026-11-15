@@ -2,16 +2,17 @@
 
 ## Overview
 
-This document lists the security controls that exist in the MVP and the gaps that remain. It describes the implementation, not an intention; where plan.md asks for more, the gap is listed.
+This document lists the security controls that exist in TimeVault (version 0.1.1) and the gaps that remain. It describes the implementation, not an intention; where plan.md asks for more, the gap is listed.
 
 ## Controls that exist
 
 | Area | Control |
 |---|---|
-| Network exposure | The service listens on `127.0.0.1` by default. A non-loopback address is refused unless `TIMEVAULT_ALLOW_NON_LOOPBACK=true`, and sign-in can never be disabled on a non-loopback address. TLS is not terminated by the service: put a reverse proxy with HTTPS in front and set `TIMEVAULT_COOKIE_SECURE=true`. |
-| Sign-in | One administrator whose password hash (`pbkdf2-sha256`, 600,000 iterations, random salt) is read from `TIMEVAULT_ADMIN_PASSWORD_HASH`. Passwords and hashes are compared in constant time and a hash is always computed, so timing does not reveal whether the user exists. |
-| Brute force | At most 5 failed sign-ins per client address in 10 minutes (then `429` with `Retry-After`), even when the right password is then supplied. Failed and throttled attempts are audited. The throttle is in memory and keyed by the connecting address. |
-| Sessions | Stateless, HMAC-signed cookie: `HttpOnly`, `SameSite=Lax`, `Secure` when configured, expiry from `TIMEVAULT_SESSION_TTL`. The signing key comes from `TIMEVAULT_SESSION_KEY` or is random per start (sessions then end on restart). |
+| Network exposure | The service listens on `127.0.0.1` by default (port 8660). A non-loopback address is refused unless `TIMEVAULT_ALLOW_NON_LOOPBACK=true`, and sign-in can never be disabled on a non-loopback address. At start the service logs a warning when it listens beyond this computer. TLS is not terminated by the service: put a reverse proxy with HTTPS in front and set `TIMEVAULT_COOKIE_SECURE=true`. |
+| Open browsing | Without an account a visitor can only look: the browsing pages and the read-only JSON API. They never see the audit log, the status and settings pages, restore jobs, who requested a job, why a job failed or its log, or the folders' paths on the server's disk, and no endpoint serves file contents. A test walks every route with and without an account (`internal/server/access_test.go`). |
+| Sign-in | Company accounts are read from the Redis user directory (`app_user_*` hashes written by another application): read-only, with a restricted pickle decoder that never executes anything and has limits on size and depth; the password is compared in constant time and a record without a password never signs in. An optional local administrator has a hash (`pbkdf2-sha256`, 600,000 iterations, random salt) in `TIMEVAULT_ADMIN_PASSWORD_HASH`; its name, in any case, is never looked up in Redis, and its hash is always computed so timing does not reveal whether the name exists. |
+| Brute force | An attempt is counted when it starts, so guesses that run in parallel cannot all pass before the first failure is known: 5 attempts per client address and 10 failures per account name in 10 minutes, then `429` with `Retry-After`, even with the right password. Names are compared without case and, for an e-mail address, by the part before the `@`, so varying the domain does not make a new account. A successful sign-in gives back its own slot only; it does not wipe the failures of the address. A sign-in that failed because Redis did not answer is not held against the account but counts for the address. Failed and throttled attempts are audited. The counters are in memory, keyed by the connecting address, and bounded. |
+| Sessions | Stateless, HMAC-signed cookie that carries the account, its name and role and the Redis key it was read from (format version 2; cookies of the MVP are rejected): `HttpOnly`, `SameSite=Lax`, `Secure` when configured, expiry from `TIMEVAULT_SESSION_TTL`. The signing key comes from `TIMEVAULT_SESSION_KEY` or is random per start (sessions then end on restart). Every protected request asks Redis again (the answer is trusted for 60 seconds): a deactivated account or a changed role takes effect within a minute and the session is ended on the spot. When Redis does not answer, a session is trusted as issued and Redis is asked again after 15 seconds; a request that the visitor abandons is never taken for an outage. The pages that show an account more than a visitor (Backups, a job page, `GET /api/v1/sources`, `GET /api/v1/jobs/{id}`) check the account first; the other browsing pages read only the cookie. |
 | CSRF | Every state-changing request needs the session's token (header or form field) and is rejected when `Origin` or `Sec-Fetch-Site` shows another site. The sign-in form checks the origin as well. Open redirects through `next` are blocked (only local paths are accepted). |
 | Browser hardening | `Content-Security-Policy: default-src 'self'` with no inline script or style (a test scans every page), `frame-ancestors 'none'`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, `Cache-Control: no-store` for pages. Output is escaped by `html/template`; a test shows names such as `{{7+7}}.txt` and `a&b'c.txt` are displayed literally. |
 | Input validation | Client paths go through `pathutil` (no `..`, drive letters, reserved device names, invalid characters, excessive depth). Request bodies are limited to 1 MiB, JSON is strict (unknown fields rejected). All SQL uses bind parameters. |
@@ -19,14 +20,19 @@ This document lists the security controls that exist in the MVP and the gaps tha
 | Restore | Writes only below `TIMEVAULT_RESTORE_ROOT`, into a folder whose name is validated as a single path component (created when it does not exist; when it already exists, for example for a repeated restore, the conflict policy decides what happens to files that are already there). The destination must be a plain folder (an existing junction or symbolic link is refused) and the restore root is compared with the repository and every source by real location. Preview first; confirmation token bound to user, exact plan and a 15-minute expiry; replacing files needs an explicit extra confirmation; all writes go through `os.Root`; unsafe catalog names (`..`, `:`, `\`, reserved names) are blocked; each file is written to a temporary file, checked against its SHA-256 and size, and only then renamed. The audit record is written before the job is queued, and a restore that cannot be audited does not run. Nothing in a restore deletes source or repository data. |
 | Service instance | Only one service can run against a database: a PostgreSQL advisory lock is taken before start-up recovery, so a second launch cannot mark the first one's running jobs as failed or abort its recovery points. |
 | Everything | Only loopback hosts are accepted for the engine URL, enforced when the connection is made; redirects are not followed; responses are size-limited; optional HTTP Basic credentials come from the environment and are never logged. The user's text is split into words that are all quoted so Everything operators (`|`, `!`, `<>`, `regex:`) are literal, the query is confined to the source root, and every result is checked against the root again. |
-| Audit | `audit_events` is append-only (a database trigger rejects UPDATE and DELETE). Sign-ins, denials, source creation, backup/verify requests and results, restore previews, requests and results and job cancellations are recorded with the user and remote address. |
-| Secrets | Read only from environment variables, redacted when the configuration is logged, never stored in the repository. Development secrets are generated under the git-ignored `data/` folder. |
+| Audit | `audit_events` is append-only (a database trigger rejects UPDATE and DELETE). Sign-ins, failed and throttled sign-ins (with the account name as typed, cut to 64 characters), refused requests (`access.denied`: no permission or a bad CSRF token), source creation and every source change (old and new value per field), backup/verify requests and results, restore previews, requests and results and job cancellations are recorded with the user and remote address. |
+| Secrets | Read only from environment variables or the `.env` file (the environment wins), redacted when the configuration is logged, never stored in the repository. The startup log, the Settings page and the Redis report show the database and Redis as `host:port/name` only; errors from the Redis client have the password of the URL masked. `/.env` is git-ignored. Development secrets are generated under the git-ignored `data/` folder. |
 
 ## Gaps and limits (do not rely on the MVP for these)
 
-- **No per-user or per-path authorization.** There is one administrator role; anyone who can sign in can browse and restore every source. NTFS ACLs and Active Directory groups are not consulted and Windows SSO is not implemented.
-- **Sessions cannot be revoked individually.** They are stateless; changing `TIMEVAULT_SESSION_KEY` ends all of them. Logging out only clears the browser's cookie.
-- **No TLS in the service** and no rate limit beyond the sign-in throttle.
+- **Coarse authorization.** There are two roles. Every active account can back up, verify, cancel any job, restore any source and read the audit log (which holds other people's actions and addresses); only `admin` accounts change the monitored folders. There are no per-source or per-path rights, NTFS ACLs and Active Directory groups are not consulted and Windows SSO is not implemented.
+- **Anonymous browsing exposes metadata.** Anyone who can reach the address sees the names, sizes, modification times and structure of every monitored folder and of its history, the times and counts of recovery points, and the state and schedule of backups, without an account. Not the contents, the folders' paths on the server's disk, who asked for a job or why it failed. Reads are not rate limited. Keep the address on a network where that is acceptable, or put a reverse proxy or firewall in front.
+- **Passwords travel and rest in plain text.** The other application stores the passwords of the company accounts as plain text in Redis, and the sign-in form posts them to TimeVault: without HTTPS anyone on the network path can read them. Redis itself should require a password and not be reachable from the network.
+- **Sign-in limits behind a reverse proxy.** The limits count the address that connects; `X-Forwarded-For` is not trusted, so behind a proxy all visitors share the proxy's address and five attempts lock everybody out for ten minutes. The account limit still applies. Trusting a proxy is not implemented.
+- **Lock-out.** Ten failed attempts at one account name refuse that account for ten minutes, the local administrator included, even with the right password; anyone who knows a name can lock it out. A restart clears the counters.
+- **Sessions cannot be revoked one by one.** They are stateless. Deactivating an account in Redis ends its sessions within a minute; changing its password in the other application does not. Changing `TIMEVAULT_SESSION_KEY` ends all of them. Logging out only clears the browser's cookie.
+- **No TLS in the service** and no rate limit beyond the sign-in limits.
+- **Redis data is trusted.** One live record per employee ID is assumed; a stale record that the other application leaves behind can keep an old role or state for the session that signed in with it (the report of `check-redis-users` counts employee IDs on more than one key). A reply is read whole before it is decoded, and the decoder limits only what it decodes. A sign-in costs a `SCAN` of the database; the per-address limit bounds how often a visitor can cause it. A login that matches more than 200 keys is refused as ambiguous. The browsing pages that only read the cookie keep showing the signed-in header and buttons of a deactivated account until its first request that matters ends the session; what such a request would do is refused.
 - **The repository is not encrypted or tamper-proof.** Objects get the read-only attribute and are verified by hash, but anyone with file-system access to the repository can alter or delete them. There is no retention policy, garbage collection or off-host copy.
 - **Power-loss durability is best effort.** File contents are flushed before an object is published and the folders that received objects are flushed before a recovery point is committed, but this has not been tested against a real power failure. Run a deep integrity check after an unclean shutdown.
 - **Missing repository content is found late.** A normal backup does not re-check the repository objects of files it carries over unchanged. An integrity check (Verify) finds missing or damaged objects, a restore refuses to use them, and a **Full re-read** backup writes missing content again.
@@ -34,10 +40,11 @@ This document lists the security controls that exist in the MVP and the gaps tha
 - **Metadata fidelity.** NTFS ACLs, alternate data streams, ownership, EFS and hard-link relationships are not preserved; restored files take the destination's permissions. Modification time and the common attribute bits are restored.
 - **Privileges.** The service runs as the account that starts it. Run it with the least rights that can read the sources and write the repository and restore folders. A separate privileged worker is not implemented.
 - **Everything instance.** The adapter cannot see how Everything is bound. Keep its "Bind to interfaces" option at `127.0.0.1`, disable "Allow file download", and set a username and password.
-- **Source path check.** The check that refuses network shares only looks for a leading `\\` on the text as typed. `//host/share` and `\\?\UNC\host\share` are not recognized, so the service would contact that SMB server (and send Windows credentials) when such a source is added. Only the single administrator can add sources; use local drive paths.
+- **Source path check.** The check that refuses network shares only looks for a leading `\\` on the text as typed. `//host/share` and `\\?\UNC\host\share` are not recognized, so the service would contact that SMB server (and send Windows credentials) when such a source is added. Only administrators can add monitored folders; use local drive paths.
 - **Restore plan versus execution.** The confirmation covers the plan that was previewed, but the restore job plans again when it runs and does not compare the result with the approved plan. A file that appears in the destination while the job is queued can be replaced under the `overwrite` policy without a new confirmation, and `create` and `rename` items are published with an unconditional rename, so two restores into the same folder at the same time can replace each other's files. Do not run restores into the same folder concurrently.
 - **Restore folder is trusted storage.** The restore root is resolved by path at every step, so replacing it between validation and use is not detected; a staged `.tvpart-*` file is verified by handle but published by path; and the attributes of an existing target are cleared before it is replaced, so a hard link planted there to another file would change that file's attributes. Whoever can write inside the restore folder can change restored files anyway, so keep its permissions tight.
-- **Development mode.** With `TIMEVAULT_AUTH_DISABLED=true` there is no Host header check, so a malicious web page using DNS rebinding could in principle reach the service from the browser of the person who runs it (not tested). Do not use that mode on a computer that browses untrusted sites; use sign-in instead.
+- **Development mode.** With `TIMEVAULT_AUTH_DISABLED=true` everybody is the local administrator and there is no Host header check, so a malicious web page using DNS rebinding could in principle reach the service from the browser of the person who runs it (not tested). Do not use that mode on a computer that browses untrusted sites; use sign-in instead.
+- **Automatic backups.** There is no retention, so automatic runs that find changes add recovery points for good. A scheduled folder that cannot be read produces one failed job and one audit record per interval. An automatic run that finds nothing changed is judged by the number of items it could not read, not by which ones.
 
 ---
 
@@ -45,16 +52,17 @@ This document lists the security controls that exist in the MVP and the gaps tha
 
 ## 概述
 
-本文档列出 MVP 中已有的安全控制和仍然存在的缺口。它描述的是实际实现，而不是意图；plan.md 要求更多的地方，都列在缺口里。
+本文档列出 TimeVault（0.1.1 版）中已有的安全控制和仍然存在的缺口。它描述的是实际实现，而不是意图；plan.md 要求更多的地方，都列在缺口里。
 
 ## 已有的控制
 
 | 方面 | 控制措施 |
 |---|---|
-| 网络暴露 | 服务默认监听 `127.0.0.1`。除非设置 `TIMEVAULT_ALLOW_NON_LOOPBACK=true`，否则会拒绝非回环地址；并且在非回环地址上永远不允许关闭登录。服务本身不终止 TLS：请在前面放置支持 HTTPS 的反向代理，并设置 `TIMEVAULT_COOKIE_SECURE=true`。 |
-| 登录 | 只有一个管理员，其密码哈希（`pbkdf2-sha256`，600,000 次迭代，随机盐）从 `TIMEVAULT_ADMIN_PASSWORD_HASH` 读取。口令和哈希以恒定时间比较，且始终会计算哈希，因此耗时不会暴露用户是否存在。 |
-| 暴力破解 | 每个客户端地址 10 分钟内最多 5 次登录失败（之后返回 `429` 和 `Retry-After`），即使随后提供了正确的密码也一样。失败和被限流的尝试都会写入审计。限流保存在内存中，以连接地址为键。 |
-| 会话 | 无状态、HMAC 签名的 Cookie：`HttpOnly`、`SameSite=Lax`，配置后带 `Secure`，有效期来自 `TIMEVAULT_SESSION_TTL`。签名密钥来自 `TIMEVAULT_SESSION_KEY`，否则每次启动随机生成（此时重启后会话失效）。 |
+| 网络暴露 | 服务默认监听 `127.0.0.1`（端口 8660）。除非设置 `TIMEVAULT_ALLOW_NON_LOOPBACK=true`，否则会拒绝非回环地址；并且在非回环地址上永远不允许关闭登录。服务监听本机之外时，启动时会记录一条警告。服务本身不终止 TLS：请在前面放置支持 HTTPS 的反向代理，并设置 `TIMEVAULT_COOKIE_SECURE=true`。 |
+| 开放浏览 | 没有账号的访问者只能查看：浏览页面和只读 JSON API。他们永远看不到审计日志、状态页和设置页、恢复任务、任务是谁发起的、任务为什么失败及其日志，也看不到文件夹在服务器磁盘上的路径，并且没有任何接口提供文件内容。有测试会在有账号和无账号两种情况下遍历每条路由（`internal/server/access_test.go`）。 |
+| 登录 | 公司账号从 Redis 用户目录（由另一个应用写入的 `app_user_*` 哈希）读取：只读，使用受限的 pickle 解码器，它绝不执行任何内容，并对大小和深度设有限制；密码以恒定时间比较，没有保存密码的记录永远无法登录。可选的本地管理员的哈希（`pbkdf2-sha256`，600,000 次迭代，随机盐）在 `TIMEVAULT_ADMIN_PASSWORD_HASH` 中；它的名字（无论大小写）永远不会到 Redis 中查找，并且始终会计算哈希，因此耗时不会暴露该名字是否存在。 |
+| 暴力破解 | 尝试在开始时就被计数，所以并行的猜测不会在第一次失败被知道之前全部通过：10 分钟内每个客户端地址 5 次尝试、每个账号名 10 次失败，之后返回 `429` 和 `Retry-After`，即使随后提供了正确的密码也一样。账号名不区分大小写，邮箱地址按 `@` 之前的部分比较，所以改变域名不会变成新的账号。成功登录只归还它自己的那一次；不会清除该地址的失败记录。因 Redis 没有应答而失败的登录不会算到账号头上，但会计入地址。失败和被限流的尝试都会写入审计。计数保存在内存中，以连接地址为键，并且有上限。 |
+| 会话 | 无状态、HMAC 签名的 Cookie，带有账号、姓名、角色以及读取它的 Redis 键（格式版本 2；MVP 的 Cookie 会被拒绝）：`HttpOnly`、`SameSite=Lax`，配置后带 `Secure`，有效期来自 `TIMEVAULT_SESSION_TTL`。签名密钥来自 `TIMEVAULT_SESSION_KEY`，否则每次启动随机生成（此时重启后会话失效）。每个受保护的请求都会再次询问 Redis（答复被信任 60 秒）：账号被停用或角色变化会在一分钟内生效，并且会话会当场结束。当 Redis 没有应答时，会话按签发时的内容被信任，15 秒后再询问 Redis；访问者放弃的请求绝不会被当作故障。对账号比对访问者展示更多内容的页面（备份页、任务页、`GET /api/v1/sources`、`GET /api/v1/jobs/{id}`）会先检查账号；其他浏览页面只读取 Cookie。 |
 | CSRF | 每个会改变状态的请求都需要会话令牌（请求头或表单字段），并且当 `Origin` 或 `Sec-Fetch-Site` 显示来自其他站点时会被拒绝。登录表单同样检查来源。通过 `next` 的开放重定向被阻止（只接受本站路径）。 |
 | 浏览器加固 | `Content-Security-Policy: default-src 'self'`，没有内联脚本或样式（有测试扫描每个页面），`frame-ancestors 'none'`，`X-Content-Type-Options: nosniff`，`Referrer-Policy: same-origin`，页面使用 `Cache-Control: no-store`。输出由 `html/template` 转义；测试表明 `{{7+7}}.txt` 和 `a&b'c.txt` 这样的名称会被原样显示。 |
 | 输入校验 | 客户端路径经过 `pathutil`（不允许 `..`、盘符、保留设备名、非法字符、过深层级）。请求体限制为 1 MiB，JSON 为严格模式（拒绝未知字段）。所有 SQL 都使用绑定参数。 |
@@ -62,14 +70,19 @@ This document lists the security controls that exist in the MVP and the gaps tha
 | 恢复 | 只写入 `TIMEVAULT_RESTORE_ROOT` 之下的文件夹，其名称按单个路径组件校验（不存在时创建；已存在时，例如重复恢复，由冲突策略决定如何处理已有的文件）。目标位置必须是普通文件夹（已存在的联接点或符号链接会被拒绝），恢复根目录与仓库以及每个备份源比较的是真实位置。先预览；确认令牌与用户、精确的计划以及 15 分钟有效期绑定；替换文件需要额外的明确确认；所有写入都通过 `os.Root`；目录库中不安全的名称（`..`、`:`、`\`、保留名）会被阻止；每个文件先写入临时文件，核对 SHA-256 和大小，再重命名。审计记录在任务入队之前写入，无法审计的恢复不会运行。恢复不会删除任何源数据或仓库数据。 |
 | 服务实例 | 同一个数据库只能运行一个服务：在启动恢复之前会获取 PostgreSQL advisory 锁，所以第二次启动不能把第一个服务正在运行的任务标记为失败，也不能中止它的恢复点。 |
 | Everything | 引擎 URL 只接受回环主机，并在建立连接时强制检查；不跟随重定向；限制响应大小；可选的 HTTP Basic 凭据来自环境变量，绝不写入日志。用户输入的文本被拆分为词并全部加引号，使 Everything 的操作符（`|`、`!`、`<>`、`regex:`）都按字面处理；查询被限定在备份源根目录内，并且对每个结果再次检查是否在根目录内。 |
-| 审计 | `audit_events` 只追加（数据库触发器会拒绝 UPDATE 和 DELETE）。登录、拒绝、创建备份源、备份/校验的请求与结果、恢复预览、请求与结果、任务取消，都会连同用户和远端地址一起记录。 |
-| 机密信息 | 仅从环境变量读取，记录配置日志时会脱敏，绝不存入代码仓库。开发用的机密信息生成在被 git 忽略的 `data/` 文件夹下。 |
+| 审计 | `audit_events` 只追加（数据库触发器会拒绝 UPDATE 和 DELETE）。登录、登录失败和被限流的登录（账号名按输入的内容记录，截断到 64 个字符）、被拒绝的请求（`access.denied`：没有权限或 CSRF 令牌错误）、创建备份源和备份源的每一次变更（每个字段的旧值和新值）、备份/校验的请求与结果、恢复预览、请求与结果、任务取消，都会连同用户和远端地址一起记录。 |
+| 机密信息 | 仅从环境变量或 `.env` 文件读取（环境变量优先），记录配置日志时会脱敏，绝不存入代码仓库。启动日志、设置页和 Redis 报告只把数据库和 Redis 显示为 `host:port/name`；Redis 客户端的错误信息中，URL 的密码会被遮盖。`/.env` 已被 git 忽略。开发用的机密信息生成在被 git 忽略的 `data/` 文件夹下。 |
 
 ## 缺口与限制（这些方面请勿依赖 MVP）
 
-- **没有按用户或按路径的授权。** 只有一个管理员角色；能登录的人就能浏览和恢复所有备份源。不会查询 NTFS ACL 或 Active Directory 组，也没有实现 Windows SSO。
-- **会话无法单独撤销。** 会话是无状态的；更改 `TIMEVAULT_SESSION_KEY` 会使所有会话失效。退出登录只会清除浏览器端的 Cookie。
-- **服务内没有 TLS**，除登录限流外没有其他限速。
+- **授权比较粗。** 有两种角色。每个已启用的账号都可以备份、校验、取消任何任务、恢复任何备份源并读取审计日志（其中包含他人的操作和地址）；只有 `admin` 账号可以更改监控文件夹。没有按备份源或按路径的权限，不会查询 NTFS ACL 或 Active Directory 组，也没有实现 Windows SSO。
+- **匿名浏览会暴露元数据。** 能访问该地址的任何人，不用账号就能看到每个监控文件夹及其历史的名称、大小、修改时间和结构、恢复点的时间和数量，以及备份的状态和计划。看不到内容、文件夹在服务器磁盘上的路径、任务是谁发起的或为什么失败。读取没有限速。请把该地址限定在可以接受这一点的网络里，或在前面放置反向代理或防火墙。
+- **密码以明文传输和存放。** 另一个应用把公司账号的密码以明文保存在 Redis 中，而登录表单会把它们提交给 TimeVault：没有 HTTPS 时，网络路径上的任何人都能读到。Redis 本身应当要求密码，并且不能从网络访问。
+- **反向代理之后的登录限制。** 限制统计的是连接过来的地址；不信任 `X-Forwarded-For`，所以放在代理之后时，所有访问者共用代理的地址，5 次尝试就会让所有人被锁定 10 分钟。按账号的限制依然有效。尚未实现信任代理。
+- **锁定。** 对同一个账号名 10 次失败的尝试，会让该账号被拒绝 10 分钟（包括本地管理员），即使密码正确也一样；知道账号名的任何人都可以把它锁定。重启会清除计数。
+- **会话无法单独撤销。** 会话是无状态的。在 Redis 中停用账号会在一分钟内结束它的会话；在另一个应用中修改密码则不会。更改 `TIMEVAULT_SESSION_KEY` 会使所有会话失效。退出登录只会清除浏览器端的 Cookie。
+- **服务内没有 TLS**，除登录限制外没有其他限速。
+- **Redis 数据是被信任的。** 假定每个工号只有一条有效记录；另一个应用留下的过期记录，可能让用它登录的会话保留旧的角色或状态（`check-redis-users` 的报告会统计出现在多个键上的工号）。回复会被完整读取之后才解码，而解码器只限制它所解码的内容。一次登录会对数据库执行一次 `SCAN`；按地址的限制限制了访问者能触发它的频率。匹配到超过 200 个键的登录名会被当作有歧义而拒绝。只读取 Cookie 的浏览页面，会让被停用账号的登录页眉和按钮一直显示到它的第一次重要请求结束会话为止；这样的请求要做的事会被拒绝。
 - **仓库没有加密，也不防篡改。** 对象带有只读属性并通过哈希校验，但任何能访问仓库文件系统的人都可以修改或删除它们。没有保留策略、垃圾回收或异机副本。
 - **断电后的持久性是尽力而为。** 对象在发布之前会先刷新文件内容，恢复点提交之前会刷新接收了对象的文件夹，但这一点没有在真实断电下测试过。非正常关机之后请运行一次深度完整性校验。
 - **仓库内容缺失发现得较晚。** 普通备份不会重新检查它原样沿用的未变化文件所对应的仓库对象。完整性校验（Verify）可以发现缺失或损坏的对象，恢复会拒绝使用它们，而**完整重读**备份会把缺失的内容重新写入。
@@ -77,7 +90,8 @@ This document lists the security controls that exist in the MVP and the gaps tha
 - **元数据保真度。** NTFS ACL、备用数据流、所有者、EFS 和硬链接关系不会被保留；恢复出的文件采用目标位置的权限。会恢复修改时间和常用的属性位。
 - **权限。** 服务以启动它的账户运行。请使用能读取备份源、写入仓库和恢复目录的最小权限来运行。尚未实现独立的高权限 worker。
 - **Everything 实例。** 适配器无法知道 Everything 绑定在哪里。请把它的"绑定到接口"选项保持为 `127.0.0.1`，关闭"允许文件下载"，并设置用户名和密码。
-- **备份源路径检查。** 拒绝网络共享的检查只看输入文本开头是否为 `\\`。`//host/share` 和 `\\?\UNC\host\share` 不会被识别，所以添加这样的备份源时，服务会去连接该 SMB 服务器（并发送 Windows 凭据）。只有唯一的管理员可以添加备份源；请使用本地盘符路径。
+- **备份源路径检查。** 拒绝网络共享的检查只看输入文本开头是否为 `\\`。`//host/share` 和 `\\?\UNC\host\share` 不会被识别，所以添加这样的备份源时，服务会去连接该 SMB 服务器（并发送 Windows 凭据）。只有管理员可以添加监控文件夹；请使用本地盘符路径。
 - **恢复的计划与执行。** 确认针对的是预览时的计划，但恢复任务运行时会重新生成计划，并不会与已批准的计划比较。任务排队期间出现在目标位置的文件，可能在 `overwrite` 策略下被替换而无需再次确认；`create` 和 `rename` 项目用无条件的重命名发布，所以同时向同一个文件夹进行两次恢复可能互相替换对方的文件。请不要同时向同一个文件夹运行多个恢复。
 - **恢复目录是受信任的存储。** 恢复根目录在每一步都是按路径解析的，因此在校验与使用之间被替换并不会被发现；暂存的 `.tvpart-*` 文件按句柄校验，却按路径发布；已有目标在被替换之前会先清除其属性，所以被人放在那里、指向其他文件的硬链接，会改变那个文件的属性。能写入恢复目录的人本来就能修改恢复出来的文件，所以请收紧它的权限。
-- **开发模式。** 设置 `TIMEVAULT_AUTH_DISABLED=true` 时没有 Host 头检查，所以使用 DNS rebinding 的恶意网页理论上可以从运行该服务的人的浏览器访问它（未经测试）。不要在会浏览不可信网站的计算机上使用该模式；请使用登录。
+- **开发模式。** 设置 `TIMEVAULT_AUTH_DISABLED=true` 时每个人都是本地管理员，并且没有 Host 头检查，所以使用 DNS rebinding 的恶意网页理论上可以从运行该服务的人的浏览器访问它（未经测试）。不要在会浏览不可信网站的计算机上使用该模式；请使用登录。
+- **自动备份。** 没有保留策略，所以发现变化的自动运行会永久增加恢复点。无法读取的计划文件夹每个间隔产生一个失败任务和一条审计记录。没有发现变化的自动运行，是按它无法读取的项目数量来判断的，而不是按具体是哪些项目。

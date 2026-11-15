@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -782,6 +783,95 @@ func TestPrepareSourceRejectsUnsafeFolders(t *testing.T) {
 	}
 }
 
+func TestSourceScheduleMustBeWithinBounds(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	fresh := t.TempDir()
+	for _, minutes := range []int{-1, 0, MaxScheduleMinutes + 1} {
+		if _, err := e.eng.PrepareSource(ctx, SourceRequest{Name: "n", RootPath: fresh, ScheduleMinutes: &minutes}, "tester"); !errors.Is(err, ErrInvalidSource) {
+			t.Errorf("PrepareSource accepted a schedule of %d minutes: %v", minutes, err)
+		}
+		if _, err := e.eng.PrepareSourceUpdate(ctx, e.src, SourceRequest{Name: "n", ScheduleMinutes: &minutes}); !errors.Is(err, ErrInvalidSource) {
+			t.Errorf("PrepareSourceUpdate accepted a schedule of %d minutes: %v", minutes, err)
+		}
+	}
+	for _, minutes := range []int{MinScheduleMinutes, 60, MaxScheduleMinutes} {
+		got, err := e.eng.PrepareSource(ctx, SourceRequest{Name: "n", RootPath: fresh, ScheduleMinutes: &minutes}, "tester")
+		if err != nil || got.ScheduleMinutes == nil || *got.ScheduleMinutes != minutes {
+			t.Errorf("PrepareSource with a schedule of %d minutes = %+v, %v", minutes, got, err)
+		}
+		got, err = e.eng.PrepareSourceUpdate(ctx, e.src, SourceRequest{Name: "n", ScheduleMinutes: &minutes})
+		if err != nil || got.ScheduleMinutes == nil || *got.ScheduleMinutes != minutes {
+			t.Errorf("PrepareSourceUpdate with a schedule of %d minutes = %+v, %v", minutes, got, err)
+		}
+	}
+	manual, err := e.eng.PrepareSource(ctx, SourceRequest{Name: "n", RootPath: fresh}, "tester")
+	if err != nil || manual.ScheduleMinutes != nil {
+		t.Fatalf("a source without a schedule is manual only: %+v, %v", manual, err)
+	}
+}
+
+func TestPrepareSourceUpdate(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	cur := e.src
+	update := func(req SourceRequest) (catalog.NewSource, error) { return e.eng.PrepareSourceUpdate(ctx, cur, req) }
+
+	otherDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(otherDir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	otherReq, err := e.eng.PrepareSource(ctx, SourceRequest{Name: "other", RootPath: otherDir}, "tester")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.cat.CreateSource(ctx, otherReq); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(e.srcDir, "nested")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rejected := map[string]SourceRequest{
+		"missing folder":        {Name: "n", RootPath: filepath.Join(t.TempDir(), "missing")},
+		"relative path":         {Name: "n", RootPath: `data\relative`},
+		"unc path":              {Name: "n", RootPath: `\\server\share\data`},
+		"the repository":        {Name: "n", RootPath: e.repo.Root()},
+		"another source":        {Name: "n", RootPath: otherDir},
+		"inside another source": {Name: "n", RootPath: filepath.Join(otherDir, "sub")},
+		"empty name":            {Name: " "},
+		"bad exclude pattern":   {Name: "n", Excludes: []string{"[bad"}},
+	}
+	for name, req := range rejected {
+		if _, err := update(req); !errors.Is(err, ErrInvalidSource) {
+			t.Errorf("%s: PrepareSourceUpdate accepted %+v (%v)", name, req, err)
+		}
+	}
+
+	// The source being edited never counts as an overlap, so its folder can move up or down.
+	for name, root := range map[string]string{"a subfolder of itself": nested, "the parent of itself": filepath.Dir(e.srcDir), "an unrelated folder": t.TempDir()} {
+		got, err := update(SourceRequest{Name: " renamed ", RootPath: root + string(filepath.Separator)})
+		if err != nil || got.RootPath != filepath.Clean(root) || got.Name != "renamed" {
+			t.Errorf("%s: PrepareSourceUpdate = %+v, %v", name, got, err)
+		}
+	}
+
+	// A folder that is not changed is not even looked at, so a source whose drive is offline can
+	// still be renamed and rescheduled.
+	if err := os.RemoveAll(e.srcDir); err != nil {
+		t.Fatal(err)
+	}
+	hourly := 60
+	for name, root := range map[string]string{"the same folder": cur.RootPath + string(filepath.Separator), "no folder given": ""} {
+		got, err := update(SourceRequest{Name: "offline", RootPath: root, Excludes: []string{"*.log"}, ScheduleMinutes: &hourly})
+		if err != nil || got.RootPath != cur.RootPath || got.Name != "offline" || got.ScheduleMinutes == nil || *got.ScheduleMinutes != 60 ||
+			len(got.Excludes) != 1 || got.CreatedBy != cur.CreatedBy {
+			t.Errorf("%s: PrepareSourceUpdate = %+v, %v", name, got, err)
+		}
+	}
+}
+
 func TestListChildrenPagesAreStableAndComplete(t *testing.T) {
 	e := newEnv(t)
 	var want []string
@@ -1023,4 +1113,150 @@ func TestVersionsHideTheClosureMadeByARunningBuild(t *testing.T) {
 	}
 	e.backup()
 	e.eng.hook = nil
+}
+
+func (e *testEnv) attempts() []catalog.Point {
+	e.t.Helper()
+	pts, err := e.cat.ListAttempts(context.Background(), e.src.ID, 50)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return pts
+}
+
+// backupSkippingUnchanged is what a scheduled run does.
+func (e *testEnv) backupSkippingUnchanged(rep Reporter) (catalog.Point, error) {
+	return e.eng.Run(context.Background(), e.src.ID, RunOptions{SkipUnchanged: true}, rep)
+}
+
+func TestSkipUnchangedRecordsNothingWhenNothingChanged(t *testing.T) {
+	e := newEnv(t)
+	seedTree(e)
+
+	first, err := e.backupSkippingUnchanged(nil)
+	if err != nil || first.Seq != 1 || first.Kind != "full" {
+		t.Fatalf("the first backup of a source is always recorded: %+v, %v", first, err)
+	}
+	versions := e.versionCount()
+
+	rec := &recorder{}
+	if p, err := e.backupSkippingUnchanged(rec); !errors.Is(err, ErrUnchanged) || p.ID != 0 {
+		t.Fatalf("an unchanged source = %+v, %v; want ErrUnchanged", p, err)
+	}
+	if !rec.has("nothing changed since recovery point #1") {
+		t.Fatalf("events = %v", rec.events)
+	}
+	if got := e.attempts(); len(got) != 1 || got[0].ID != first.ID {
+		t.Fatalf("attempts = %+v; an unchanged run must leave no point behind, not even a failed one", got)
+	}
+	if latest, err := e.cat.LatestCommitted(context.Background(), e.src.ID); err != nil || latest.ID != first.ID {
+		t.Fatalf("latest committed = %+v, %v", latest, err)
+	}
+	if got := e.versionCount(); got != versions {
+		t.Fatalf("version rows grew from %d to %d", versions, got)
+	}
+	e.assertManifest(first)
+
+	// The sequence number of the dropped point is taken by the next real one.
+	e.write("a.txt", "alpha v2")
+	second, err := e.backupSkippingUnchanged(nil)
+	if err != nil || second.Seq != 2 || second.ModifiedCount != 1 {
+		t.Fatalf("the next change = %+v, %v; want point #2", second, err)
+	}
+	e.assertManifest(second)
+
+	// Only automatic runs skip: a manual backup records a point even when nothing changed.
+	if manual := e.backup(); manual.Seq != 3 || manual.AddedCount+manual.ModifiedCount+manual.DeletedCount != 0 {
+		t.Fatalf("manual run of an unchanged source = %+v", manual)
+	}
+}
+
+func TestSkipUnchangedStillRecordsEveryKindOfChange(t *testing.T) {
+	cases := map[string]struct {
+		change                   func(e *testEnv)
+		added, modified, deleted int64
+	}{
+		"a new file":       {func(e *testEnv) { e.write("new.txt", "new") }, 1, 0, 0},
+		"a changed file":   {func(e *testEnv) { e.write("a.txt", "alpha v2") }, 0, 1, 0},
+		"a deleted file":   {func(e *testEnv) { e.remove("a.txt") }, 0, 0, 1},
+		"a deleted folder": {func(e *testEnv) { e.remove("empty") }, 0, 0, 1},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			seedTree(e)
+			e.backup()
+			c.change(e)
+			p, err := e.backupSkippingUnchanged(nil)
+			if err != nil || p.Seq != 2 || p.AddedCount != c.added || p.ModifiedCount != c.modified || p.DeletedCount != c.deleted {
+				t.Fatalf("point = %+v, %v", p, err)
+			}
+			e.assertManifest(p)
+		})
+	}
+}
+
+// Items that could not be captured are not changes, but a different number of them is news
+// worth a point: something broke, or an earlier problem went away.
+func TestSkipUnchangedComparesTheNumberOfSkippedItems(t *testing.T) {
+	e := newEnv(t)
+	seedTree(e)
+	e.backup()
+
+	e.eng.failReadDir = func(rel string) error {
+		if rel == "docs" {
+			return os.ErrPermission
+		}
+		return nil
+	}
+	second, err := e.backupSkippingUnchanged(nil)
+	if err != nil || second.Seq != 2 || second.SkippedCount != 1 || second.AddedCount+second.ModifiedCount+second.DeletedCount != 0 {
+		t.Fatalf("a newly unreadable folder = %+v, %v; want a point that reports it", second, err)
+	}
+	if _, err := e.backupSkippingUnchanged(nil); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("the same problem again = %v, want ErrUnchanged", err)
+	}
+
+	e.eng.failReadDir = nil
+	third, err := e.backupSkippingUnchanged(nil)
+	if err != nil || third.Seq != 3 || third.SkippedCount != 0 {
+		t.Fatalf("the problem going away = %+v, %v; want a point that reports it", third, err)
+	}
+	if _, err := e.backupSkippingUnchanged(nil); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("a healthy unchanged source = %v, want ErrUnchanged", err)
+	}
+	e.assertManifest(third)
+}
+
+// The common real case: a file was edited but is locked by the editor. The previous version is kept,
+// so no path changed, yet the point must tell that the newest edit is not protected.
+func TestSkipUnchangedStillReportsAFileThatCouldNotBeRead(t *testing.T) {
+	e := newEnv(t)
+	e.write("report.txt", "version one")
+	e.backup()
+	edit := func() { e.write("report.txt", "version two, but unreadable now") }
+	// Replace the file with a folder just before it is opened, so reading it fails.
+	e.eng.hook = func(event, rel string) {
+		if event == "opening" && rel == "report.txt" {
+			p := filepath.Join(e.srcDir, "report.txt")
+			_ = os.Remove(p)
+			_ = os.Mkdir(p, 0o755)
+		}
+	}
+	edit()
+	rec := &recorder{}
+	p, err := e.backupSkippingUnchanged(rec)
+	if err != nil || p.Seq != 2 || p.SkippedCount != 1 || p.AddedCount+p.ModifiedCount+p.DeletedCount != 0 || !rec.has("the previous version is kept") {
+		t.Fatalf("point = %+v, %v, events %v; want a point that reports the file as not captured", p, err, rec.events)
+	}
+	if got := e.content(e.entry(p.Seq, "report.txt")); got != "version one" {
+		t.Fatalf("report.txt at the new point = %q, want the previous version", got)
+	}
+
+	// Still locked at the next run: the same news is not recorded twice.
+	e.remove("report.txt")
+	edit()
+	if _, err := e.backupSkippingUnchanged(nil); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("the same unreadable file again = %v, want ErrUnchanged", err)
+	}
 }

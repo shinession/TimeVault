@@ -10,6 +10,10 @@
 
   Durability is relaxed (fsync off) on purpose: this cluster is for development only.
 
+  data\pgdev\db.env may be edited to point at another PostgreSQL server (for example the one
+  installed on this computer). The scripts then never overwrite or delete that file: creating the
+  private cluster and reset stop with an explanation until the file is moved aside.
+
 .PARAMETER Action
   init   Create the cluster and the databases 'timevault' and 'timevault_test'.
   start  Start the cluster (runs init first when needed).
@@ -79,6 +83,16 @@ function Read-Password {
     throw "Cannot read the database password from $envFile"
 }
 
+# db.env may have been edited to point at another PostgreSQL server, for example the one installed
+# on this computer. It is then the developer's file: never overwrite it and never delete it.
+function Test-EnvPointsElsewhere {
+    if (-not (Test-Path -LiteralPath $envFile)) { return $false }
+    $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -like 'TIMEVAULT_DATABASE_URL=*' } | Select-Object -First 1
+    if (-not $line) { return $false }
+    if ($line -match '@[^/:?#]+:(\d+)') { return ([int]$Matches[1] -ne $Port) }
+    return $true
+}
+
 function Invoke-Psql([string]$Database, [string]$Sql) {
     $env:PGPASSWORD = Read-Password
     try {
@@ -90,6 +104,9 @@ function Invoke-Psql([string]$Database, [string]$Sql) {
 
 function Initialize-Cluster {
     if (Test-Path (Join-Path $pgData 'PG_VERSION')) { return }
+    if (Test-EnvPointsElsewhere) {
+        throw "$envFile points to another PostgreSQL server, and creating the private cluster would overwrite it. Move the file aside first."
+    }
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     $password = New-Password
     $pwFile = Join-Path $dataDir 'initdb.pw'
@@ -157,6 +174,9 @@ switch ($Action) {
         if (Test-Running) { Write-Host "running on 127.0.0.1:$Port" } else { Write-Host 'not running'; exit 1 }
     }
     'reset' {
+        if (Test-EnvPointsElsewhere) {
+            throw "$envFile points to another PostgreSQL server and would be deleted with the private cluster. Move it aside first if you really want to reset the private cluster."
+        }
         Stop-Cluster
         if (Test-Path $dataDir) { Remove-Item -LiteralPath $dataDir -Recurse -Force }
         Start-Cluster

@@ -8,17 +8,21 @@
   {{template "icon" "folder"}}
   <h2>{{$.T "backups.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "backups.no_sources_text"}}</p>
+  {{if $.CanManage}}<a class="tv-btn tv-btn-primary" href="/settings">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a>{{end}}
 </section>
+{{else if $.CanAudit}}
+<p><a class="tv-btn tv-btn-small tv-btn-ghost" href="/settings">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a></p>
 {{end}}
 
 {{range .Sources}}
 <section class="tv-card tv-source">
   <div class="tv-card-head">
     <div>
-      <h2>{{template "icon" "folder"}} {{.Name}}</h2>
-      <p class="tv-muted tv-path"><code>{{.RootPath}}</code></p>
+      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "backups.disabled"}}</span>{{end}}</h2>
+      {{if $.SignedIn}}<p class="tv-muted tv-path"><code>{{.RootPath}}</code></p>{{end}}
     </div>
     <div class="tv-actions">
+      {{if and $.CanBackup .Enabled}}
       <form method="post" action="/backups/run" class="tv-inline-form">
         {{template "csrf" $}}
         <input type="hidden" name="source_id" value="{{.ID}}">
@@ -30,6 +34,9 @@
         <input type="hidden" name="rehash" value="1">
         <button class="tv-btn" type="submit"{{if .Active}} disabled{{end}} title="{{$.T "backups.rehash_hint"}}">{{$.T "backups.run_rehash"}}</button>
       </form>
+      {{else if and (not $.SignedIn) .Enabled}}
+      <a class="tv-btn tv-btn-small" data-no-boost href="{{url "/login" "next" $.RequestURI}}">{{template "icon" "user"}} {{$.T "backups.sign_in_to_run"}}</a>
+      {{end}}
     </div>
   </div>
 
@@ -45,6 +52,11 @@
   <dl class="tv-facts">
     <div><dt>{{$.T "backups.latest"}}</dt>
       <dd>{{if .Latest}}<time datetime="{{iso .Latest.CapturedAt}}">{{$.Time .Latest.CapturedAt}}</time> · #{{.Latest.Seq}}{{else}}{{$.T "backups.never"}}{{end}}</dd></div>
+    <div><dt>{{$.T "backups.schedule"}}</dt>
+      <dd>{{if .Minutes}}{{$.T "backups.every_minutes" .Minutes}}
+        {{if .NextRun}}<br><span class="tv-muted tv-small">{{$.T "backups.next_run"}}: {{if $.Soon .NextRun}}{{$.T "backups.run_soon"}}{{else}}{{$.TimeP .NextRun}}{{end}}</span>{{end}}
+        {{else}}{{$.T "settings.manual_only"}}{{end}}</dd></div>
+    <div><dt>{{$.T "backups.last_run"}}</dt><dd>{{$.TimeP .LastRunAt}}</dd></div>
     <div><dt>{{$.T "backups.excludes"}}</dt><dd>{{if .Excludes}}<code>{{join .Excludes ", "}}</code>{{else}}-{{end}}</dd></div>
   </dl>
 
@@ -61,7 +73,7 @@
         <tr>
           <td>{{.Seq}}</td>
           <td>{{$.KindLabel .Kind}}</td>
-          <td><span class="tv-chip tv-chip-{{.State}}" {{if .FailureReason}}title="{{.FailureReason}}"{{end}}>{{$.StateLabel .State}}</span></td>
+          <td><span class="tv-chip tv-chip-{{.State}}" {{if and .FailureReason $.SignedIn}}title="{{.FailureReason}}"{{end}}>{{$.StateLabel .State}}</span></td>
           <td>{{$.Time .CapturedAt}}</td>
           <td class="num">{{if eq .State "committed"}}{{.FileCount}}{{else}}-{{end}}</td>
           <td class="num">{{if eq .State "committed"}}{{bytes .TotalBytes}}{{else}}-{{end}}</td>
@@ -69,7 +81,7 @@
           <td class="num">{{if .SkippedCount}}<span class="tv-chip tv-chip-warn">{{.SkippedCount}}</span>{{else}}0{{end}}</td>
           <td>{{if eq .State "committed"}}<span class="tv-chip tv-chip-{{.Verification}}">{{$.VerifyLabel .Verification}}</span>{{else}}-{{end}}</td>
           <td class="tv-actions">
-            {{if eq .State "committed"}}
+            {{if and (eq .State "committed") $.CanBackup}}
             <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
             <form method="post" action="/backups/verify" class="tv-inline-form">
               {{template "csrf" $}}
@@ -78,6 +90,8 @@
               <input type="hidden" name="deep" value="1">
               <button class="tv-btn tv-btn-small" type="submit" title="{{$.T "points.verify_hint"}}">{{template "icon" "check"}} {{$.T "points.verify"}}</button>
             </form>
+            {{else if eq .State "committed"}}
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
             {{end}}
           </td>
         </tr>
@@ -88,20 +102,6 @@
   {{end}}
 </section>
 {{end}}
-
-<section class="tv-card">
-  <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2></div>
-  {{with .Form.Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
-  <form method="post" action="/backups/sources" class="tv-form tv-form-grid">
-    {{template "csrf" $}}
-    <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.Form.Name}}" maxlength="100" required></label>
-    <label class="tv-field"><span>{{$.T "backups.field_path"}}</span><input name="root_path" value="{{.Form.RootPath}}" placeholder="D:\Data" required></label>
-    <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.Form.Excludes}}</textarea>
-      <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
-    <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "backups.add"}}</button></div>
-  </form>
-  <p class="tv-muted tv-small">{{$.T "backups.source_rules"}}</p>
-</section>
 
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "clock"}} {{$.T "backups.jobs"}}</h2></div>
@@ -119,7 +119,7 @@
             {{if .Active}}<span class="tv-muted" data-job-field="phase">{{$.PhaseLabel .Phase}}</span>{{end}}</td>
           <td>{{$.TimeS .Job.CreatedAt}}</td>
           <td>{{if .Duration}}{{.Duration}}{{else}}-{{end}}</td>
-          <td>{{.Job.RequestedBy}}</td>
+          <td>{{if $.SignedIn}}{{.Job.RequestedBy}}{{else}}-{{end}}</td>
         </tr>
         {{end}}
       </tbody>
@@ -128,11 +128,13 @@
   {{else}}<p class="tv-empty-text">{{$.T "backups.no_jobs"}}</p>{{end}}
 </section>
 
+{{if $.SignedIn}}
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "backups.restore_settings"}}</h2></div>
   {{if .RestoreEnabled}}<p>{{$.T "backups.restore_root"}}: <code>{{.RestoreRoot}}</code></p>
   {{else}}<p class="tv-alert tv-alert-warn">{{$.T "history.restore_disabled"}}</p>{{end}}
   <p class="tv-muted tv-small">{{$.T "backups.restore_hint"}}</p>
 </section>
+{{end}}
 {{end}}
 {{end}}

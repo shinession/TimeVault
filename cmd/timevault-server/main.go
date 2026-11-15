@@ -1,8 +1,9 @@
 // Command timevault-server runs the TimeVault web service and its background workers.
 //
-//	timevault-server [serve]      run the service (default)
-//	timevault-server migrate      apply database migrations and exit
+//	timevault-server [serve]        run the service (default)
+//	timevault-server migrate        apply database migrations and exit
 //	timevault-server hash-password  create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
+//	timevault-server check-redis-users  check that the user accounts in Redis can be read
 //	timevault-server version
 package main
 
@@ -14,10 +15,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -28,6 +31,7 @@ import (
 	"timevault/internal/config"
 	"timevault/internal/db"
 	"timevault/internal/jobs"
+	"timevault/internal/redisuser"
 	"timevault/internal/repository"
 	"timevault/internal/restore"
 	"timevault/internal/search"
@@ -38,7 +42,7 @@ import (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "0.1.0-mvp"
+var version = "0.1.1"
 
 func main() {
 	cmd := "serve"
@@ -53,6 +57,8 @@ func main() {
 		err = runMigrate()
 	case "hash-password":
 		err = runHashPassword()
+	case "check-redis-users":
+		err = runCheckRedisUsers()
 	case "version", "-v", "--version":
 		fmt.Println("timevault-server", version)
 	case "help", "-h", "--help":
@@ -70,13 +76,30 @@ func main() {
 const usage = `usage: timevault-server [command]
 
 commands:
-  serve           run the service (default)
-  migrate         apply database migrations and exit
-  hash-password   create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
-  version         print the version
+  serve               run the service (default)
+  migrate             apply database migrations and exit
+  hash-password       create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
+  check-redis-users   check that the user accounts in Redis can be read (prints counts, never names or passwords)
+  version             print the version
 
-All settings are read from TIMEVAULT_* environment variables; see docs/runbook.md.
+Settings are read from TIMEVAULT_* environment variables and from a .env file: the one named by
+TIMEVAULT_ENV_FILE, else .env in the working directory, else .env next to the executable.
+A variable that is set in the environment wins over the file. See docs/runbook.md.
 `
+
+// loadConfig reads the settings from the environment and the .env file.
+func loadConfig() (config.Config, error) {
+	lookup, envPath, err := config.LoadEnv(config.OSLookup)
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg, err := config.Load(lookup)
+	if err != nil {
+		return config.Config{}, err
+	}
+	cfg.EnvFile = envPath
+	return cfg, nil
+}
 
 func newLogger(cfg config.Config) *slog.Logger {
 	opts := &slog.HandlerOptions{Level: cfg.LogLevel}
@@ -87,7 +110,7 @@ func newLogger(cfg config.Config) *slog.Logger {
 }
 
 func runMigrate() error {
-	cfg, err := config.Load(config.OSLookup)
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -128,8 +151,45 @@ func runHashPassword() error {
 	return nil
 }
 
+// runCheckRedisUsers reads the whole user directory once and reports how much of
+// it can be used. The report holds counts only: no name, e-mail address or password.
+func runCheckRedisUsers() error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.RedisURL == "" {
+		return errors.New("TIMEVAULT_REDIS_URL is not set, neither in the environment nor in the .env file")
+	}
+	store, err := redisuser.Open(redisuser.Options{URL: cfg.RedisURL, KeyPrefix: cfg.RedisKeyPrefix, Timeout: cfg.RedisTimeout})
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	settings := cfg.EnvFile
+	if settings == "" {
+		settings = "(none: the environment only)"
+	}
+	fmt.Printf("settings file: %s\nuser directory: %s, key prefix %q\n", settings, store.Addr(), cfg.RedisKeyPrefix)
+	if err := store.Ping(ctx); err != nil {
+		return fmt.Errorf("the user directory does not answer: %w", err)
+	}
+	report, err := store.Check(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Print(report.Format())
+	if report.Records == 0 {
+		return errors.New("no readable user record was found under the key prefix, so nobody could sign in")
+	}
+	return nil
+}
+
 func runServe() error {
-	cfg, err := config.Load(config.OSLookup)
+	cfg, err := loadConfig()
 	if err != nil {
 		return err
 	}
@@ -138,6 +198,10 @@ func runServe() error {
 	}
 	log := newLogger(cfg)
 	log.Info("starting TimeVault", append([]any{"version", version}, cfg.LogAttrs()...)...)
+	if host, _, err := net.SplitHostPort(cfg.ListenAddr); err == nil && !cfg.IsLoopbackListen(host) {
+		log.Warn("the service is reachable from other computers: anyone who can reach it can browse the names, sizes and history of the monitored folders without signing in, and account passwords are typed into this site, so serve it over HTTPS through a TLS reverse proxy",
+			"cookie_secure", cfg.CookieSecure)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -186,10 +250,30 @@ func runServe() error {
 	if len(sessionKey) == 0 {
 		log.Warn("TIMEVAULT_SESSION_KEY is not set: sessions end when the service restarts")
 	}
-	am, err := auth.NewManager(auth.Options{
+	authOptions := auth.Options{
 		AdminUser: cfg.AdminUser, AdminPasswordHash: cfg.AdminPasswordHash, Disabled: cfg.AuthDisabled,
 		SessionKey: sessionKey, TTL: cfg.SessionTTL, CookieSecure: cfg.CookieSecure,
-	})
+	}
+	// directory stays nil, and so do the interface values it feeds, when no user directory is configured.
+	var directory *redisuser.Directory
+	if cfg.RedisURL != "" {
+		store, err := redisuser.Open(redisuser.Options{URL: cfg.RedisURL, KeyPrefix: cfg.RedisKeyPrefix, Timeout: cfg.RedisTimeout})
+		if err != nil {
+			return fmt.Errorf("user directory: %w", err)
+		}
+		defer store.Close()
+		directory = redisuser.NewDirectory(store, log)
+		authOptions.Directory = directory
+		// Redis may start after the service, so an answer is not required here.
+		pingCtx, cancelPing := context.WithTimeout(ctx, 2*cfg.RedisTimeout)
+		if err := store.Ping(pingCtx); err != nil {
+			log.Warn("the user directory does not answer; company accounts cannot sign in until it does", "addr", store.Addr(), "error", err)
+		} else {
+			log.Info("user directory reachable", "addr", store.Addr())
+		}
+		cancelPing()
+	}
+	am, err := auth.NewManager(authOptions)
 	if err != nil {
 		return err
 	}
@@ -223,13 +307,19 @@ func runServe() error {
 	} else if n > 0 {
 		log.Warn("aborted unfinished recovery points and removed their partial history", "count", n)
 	}
-	svc := service.New(service.Config{
+	serviceConfig := service.Config{
 		Pool: pool, Catalog: cat, Repo: repo, Engine: engine, Restore: restoreMgr, Jobs: runner,
 		Audit: audit.New(pool, log), Search: provider, Logger: log,
-	})
-	runner.Start(ctx)
+	}
+	if directory != nil {
+		serviceConfig.Directory = directory
+	}
+	svc := service.New(serviceConfig)
 
-	handler, err := server.New(svc, am, web.FS, server.Options{Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure}, log)
+	// Everything that can fail to build comes before the workers start, so that a failure leaves nothing running.
+	handler, err := server.New(svc, am, web.FS, server.Options{
+		Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure, Deployment: cfg.Describe(),
+	}, log)
 	if err != nil {
 		return err
 	}
@@ -238,6 +328,14 @@ func runServe() error {
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: 5 * time.Minute, IdleTimeout: 2 * time.Minute,
 		MaxHeaderBytes: 64 << 10,
 	}
+
+	runner.Start(ctx)
+	var scheduler sync.WaitGroup
+	scheduler.Add(1)
+	go func() {
+		defer scheduler.Done()
+		svc.RunScheduler(ctx)
+	}()
 	serveErr := make(chan error, 1)
 	go func() {
 		log.Info("listening", "addr", cfg.ListenAddr)
@@ -250,6 +348,7 @@ func runServe() error {
 	select {
 	case err := <-serveErr:
 		stop()
+		scheduler.Wait()
 		runner.Shutdown(context.Background())
 		return err
 	case <-ctx.Done():
@@ -260,6 +359,8 @@ func runServe() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Warn("http shutdown", "error", err)
 	}
+	// No backup may be queued once the runner starts to shut down.
+	scheduler.Wait()
 	runner.Shutdown(shutdownCtx)
 	log.Info("stopped")
 	return nil

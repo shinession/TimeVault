@@ -1,0 +1,118 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<h1 class="tv-page-title">{{template "icon" "settings"}} {{$.T "settings.title"}}</h1>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "folder"}} {{$.T "settings.sources"}}</h2></div>
+  <p class="tv-muted">{{$.T "settings.sources_intro"}}</p>
+  {{if not $.CanManage}}<p class="tv-alert tv-alert-info" role="note">{{$.T "settings.admin_only"}}</p>{{end}}
+  {{if not .Sources}}<p class="tv-empty-text">{{$.T "backups.no_sources_title"}}</p>{{end}}
+</section>
+
+{{range .Sources}}
+<section class="tv-card tv-source">
+  <div class="tv-card-head">
+    <div>
+      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "settings.disabled"}}</span>{{end}}</h2>
+      <p class="tv-muted tv-path"><code>{{.RootPath}}</code></p>
+    </div>
+  </div>
+
+  <dl class="tv-facts">
+    <div><dt>{{$.T "settings.schedule"}}</dt>
+      <dd>{{if .Minutes}}{{$.T "settings.every_minutes" .Minutes}}
+        {{if .NextRun}}<br><span class="tv-muted tv-small">{{$.T "settings.next_run"}}: {{if $.Soon .NextRun}}{{$.T "settings.next_soon"}}{{else}}{{$.TimeP .NextRun}}{{end}}</span>{{end}}
+        {{else}}{{$.T "settings.manual_only"}}{{end}}</dd></div>
+    <div><dt>{{$.T "backups.latest"}}</dt>
+      <dd>{{if .Latest}}<time datetime="{{iso .Latest.CapturedAt}}">{{$.Time .Latest.CapturedAt}}</time> · #{{.Latest.Seq}}{{else}}{{$.T "backups.never"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.last_run"}}</dt><dd>{{$.TimeP .LastRunAt}}</dd></div>
+    <div><dt>{{$.T "backups.excludes"}}</dt><dd>{{if .Excludes}}<code>{{join .Excludes ", "}}</code>{{else}}-{{end}}</dd></div>
+  </dl>
+
+  {{if $.CanManage}}
+  <details class="tv-details"{{if .Open}} open{{end}}>
+    <summary>{{template "icon" "settings"}} {{$.T "settings.edit"}}</summary>
+    <div class="tv-details-body">
+      {{with .Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
+      <form method="post" action="/settings/sources/{{.ID}}" class="tv-form tv-form-grid">
+        {{template "csrf" $}}
+        <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.Form.Name}}" maxlength="100" required></label>
+        <label class="tv-field"><span>{{$.T "backups.field_path"}}</span>
+          <input name="root_path" value="{{.Form.RootPath}}" required{{if .HasPoints}} readonly{{end}}>
+          {{if .HasPoints}}<small class="tv-muted">{{$.T "settings.path_locked"}}</small>{{end}}</label>
+        <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.Form.Excludes}}</textarea>
+          <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
+        <label class="tv-check tv-field-wide"><input type="checkbox" name="enabled" value="1"{{if .Form.Enabled}} checked{{end}}> <span>{{$.T "settings.enabled_label"}}</span></label>
+        <div class="tv-field tv-field-wide">
+          <label class="tv-check"><input type="checkbox" name="schedule" value="1"{{if .Form.Scheduled}} checked{{end}}> <span>{{$.T "settings.schedule_on"}}</span></label>
+          <div class="tv-schedule">
+            <input type="number" name="schedule_minutes" value="{{.Form.Minutes}}" min="1" max="43200" step="1" aria-label="{{$.T "settings.minutes_label"}}">
+            <span class="tv-muted">{{$.T "settings.minutes"}}</span>
+          </div>
+          <small class="tv-muted">{{$.T "settings.schedule_hint"}}</small>
+        </div>
+        <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "settings.save"}}</button></div>
+      </form>
+    </div>
+  </details>
+  {{end}}
+</section>
+{{end}}
+
+{{if $.CanManage}}
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2></div>
+  {{with .AddError}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
+  <form method="post" action="/settings/sources" class="tv-form tv-form-grid">
+    {{template "csrf" $}}
+    <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.AddForm.Name}}" maxlength="100" required></label>
+    <label class="tv-field"><span>{{$.T "backups.field_path"}}</span><input name="root_path" value="{{.AddForm.RootPath}}" placeholder="D:\Data" required></label>
+    <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.AddForm.Excludes}}</textarea>
+      <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
+    <div class="tv-field tv-field-wide">
+      <label class="tv-check"><input type="checkbox" name="schedule" value="1"{{if .AddForm.Scheduled}} checked{{end}}> <span>{{$.T "settings.schedule_on"}}</span></label>
+      <div class="tv-schedule">
+        <input type="number" name="schedule_minutes" value="{{.AddForm.Minutes}}" min="1" max="43200" step="1" aria-label="{{$.T "settings.minutes_label"}}">
+        <span class="tv-muted">{{$.T "settings.minutes"}}</span>
+      </div>
+      <small class="tv-muted">{{$.T "settings.schedule_hint"}}</small>
+    </div>
+    <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "backups.add"}}</button></div>
+  </form>
+  <p class="tv-muted tv-small">{{$.T "backups.source_rules"}}</p>
+</section>
+{{end}}
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "backup"}} {{$.T "settings.storage"}}</h2></div>
+  <dl class="tv-facts">
+    <div><dt>{{$.T "settings.repository"}}</dt>
+      <dd><code>{{.Deployment.RepositoryPath}}</code>
+        {{if .Repository.Name}} <span class="tv-chip tv-chip-status-{{.Repository.State}}">{{$.ComponentStateLabel .Repository.State}}</span>{{end}}
+        {{if ge .RepoFreePct 0}}<br><span class="tv-muted tv-small">{{$.T "settings.free_space" .RepoFreePct}}</span>
+        {{else if and .Repository.Name (ne .Repository.State "ok")}}<br><span class="tv-muted tv-small">{{.Repository.Detail}}</span>{{end}}</dd></div>
+    <div><dt>{{$.T "settings.restore_root"}}</dt>
+      <dd>{{if .Deployment.RestoreRoot}}<code>{{.Deployment.RestoreRoot}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+  </dl>
+  <p class="tv-muted tv-small">{{$.T "settings.storage_hint"}}</p>
+</section>
+
+<section class="tv-card">
+  <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "settings.service"}}</h2>
+    <a class="tv-btn tv-btn-small tv-btn-ghost" href="/status">{{$.T "nav.status"}}</a></div>
+  <dl class="tv-facts">
+    <div><dt>{{$.T "settings.version"}}</dt><dd>v{{.Version}}</dd></div>
+    <div><dt>{{$.T "settings.listen"}}</dt><dd><code>{{.Deployment.ListenAddr}}</code></dd></div>
+    <div><dt>{{$.T "settings.database"}}</dt><dd><code>{{.Deployment.Database}}</code></dd></div>
+    <div><dt>{{$.T "settings.directory"}}</dt><dd>{{if .Deployment.UserDirectory}}<code>{{.Deployment.UserDirectory}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.local_admin"}}</dt><dd>{{if .Deployment.LocalAdmin}}{{.Deployment.LocalAdmin}}{{else}}{{$.T "settings.none"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.search"}}</dt><dd>{{if .Deployment.SearchHost}}<code>{{.Deployment.SearchHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.session_ttl"}}</dt><dd>{{.Deployment.SessionTTL}}</dd></div>
+    <div><dt>{{$.T "settings.secure_cookie"}}</dt><dd>{{if .Deployment.CookieSecure}}{{$.T "settings.yes"}}{{else}}{{$.T "settings.no"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.env_file"}}</dt><dd>{{if .Deployment.EnvFile}}<code>{{.Deployment.EnvFile}}</code>{{else}}{{$.T "settings.none"}}{{end}}</dd></div>
+  </dl>
+  <p class="tv-muted tv-small">{{$.T "settings.env_hint"}}</p>
+</section>
+{{end}}
+{{end}}

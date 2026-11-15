@@ -22,7 +22,7 @@ func TestTemplatesParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"login", "explorer", "history", "versions", "backups", "job", "restore_preview", "audit", "status", "error"} {
+	for _, name := range []string{"login", "explorer", "history", "versions", "backups", "job", "restore_preview", "audit", "status", "settings", "error"} {
 		if pages[name] == nil {
 			t.Errorf("page template %q is missing", name)
 		}
@@ -90,7 +90,7 @@ func TestVocabulariesAreTranslated(t *testing.T) {
 		"policy.":      {"skip", "rename", "overwrite"},
 		"item.":        {"ok", "skipped", "failed"},
 		"auditresult.": {audit.ResultOK, audit.ResultDenied, audit.ResultFailed},
-		"component.":   {"database", "repository", "search", "restore", "jobs", "vss", "usn"},
+		"component.":   {"database", "repository", "search", "directory", "restore", "jobs", "vss", "usn"},
 		"cstate.":      {"ok", "degraded", "disabled", "failed"},
 		"live.":        {"protected", "changed", "new", "not_captured", "deleted"},
 		"now.":         {"same", "modified", "deleted"},
@@ -114,8 +114,8 @@ func TestVocabulariesAreTranslated(t *testing.T) {
 }
 
 func TestErrorKeysExist(t *testing.T) {
-	for _, key := range []string{"errors.generic", "errors.internal", "errors.not_found", "errors.bad_path", "errors.csrf", "errors.restore_disabled",
-		"errors.not_restorable", "errors.stale_preview", "errors.not_confirmed", "errors.blocked", "errors.source_unavailable"} {
+	for _, key := range []string{"errors.generic", "errors.internal", "errors.not_found", "errors.bad_path", "errors.csrf", "errors.forbidden", "errors.restore_disabled",
+		"errors.not_restorable", "errors.stale_preview", "errors.not_confirmed", "errors.blocked", "errors.source_unavailable", "errors.source_disabled", "errors.source_busy"} {
 		if !messageExists(key) {
 			t.Errorf("missing %s", key)
 		}

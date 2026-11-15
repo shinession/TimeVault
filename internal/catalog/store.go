@@ -44,13 +44,24 @@ type NewSource struct {
 	RootPath  string
 	Excludes  []string
 	CreatedBy string
+	// ScheduleMinutes is the interval between automatic backups; nil means manual only.
+	ScheduleMinutes *int
 }
 
-const sourceColumns = `id, name, root_path, excludes, enabled, created_by, created_at`
+// SourceUpdate replaces every editable field of a source. Callers validate it first.
+type SourceUpdate struct {
+	Name            string
+	RootPath        string
+	Excludes        []string
+	Enabled         bool
+	ScheduleMinutes *int
+}
+
+const sourceColumns = `id, name, root_path, excludes, enabled, created_by, created_at, schedule_minutes, last_run_at`
 
 func scanSource(row pgx.Row) (Source, error) {
 	var s Source
-	err := row.Scan(&s.ID, &s.Name, &s.RootPath, &s.Excludes, &s.Enabled, &s.CreatedBy, &s.CreatedAt)
+	err := row.Scan(&s.ID, &s.Name, &s.RootPath, &s.Excludes, &s.Enabled, &s.CreatedBy, &s.CreatedAt, &s.ScheduleMinutes, &s.LastRunAt)
 	return s, err
 }
 
@@ -61,10 +72,10 @@ func (s *Store) CreateSource(ctx context.Context, in NewSource) (Source, error) 
 		excludes = []string{}
 	}
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO sources (name, root_path, root_key, excludes, created_by)
-		 VALUES ($1, $2, $3, $4, $5)
+		`INSERT INTO sources (name, root_path, root_key, excludes, created_by, schedule_minutes)
+		 VALUES ($1, $2, $3, $4, $5, $6)
 		 RETURNING `+sourceColumns,
-		in.Name, in.RootPath, RootKey(in.RootPath), excludes, in.CreatedBy)
+		in.Name, in.RootPath, RootKey(in.RootPath), excludes, in.CreatedBy, in.ScheduleMinutes)
 	src, err := scanSource(row)
 	if isUniqueViolation(err) {
 		return Source{}, fmt.Errorf("%w: a source with this name or folder is already registered", ErrConflict)
@@ -73,6 +84,60 @@ func (s *Store) CreateSource(ctx context.Context, in NewSource) (Source, error) 
 		return Source{}, fmt.Errorf("catalog: create source: %w", err)
 	}
 	return src, nil
+}
+
+// UpdateSource replaces the editable fields of a source. Pointing it at another
+// folder forgets when it last ran: that run belonged to the old folder, and the
+// new one is due at once if it has a schedule.
+func (s *Store) UpdateSource(ctx context.Context, id int64, u SourceUpdate) (Source, error) {
+	excludes := u.Excludes
+	if excludes == nil {
+		excludes = []string{}
+	}
+	row := s.pool.QueryRow(ctx,
+		`UPDATE sources
+		 SET name = $2, root_path = $3, root_key = $4, excludes = $5, enabled = $6, schedule_minutes = $7,
+		     last_run_at = CASE WHEN root_key = $4 THEN last_run_at ELSE NULL END
+		 WHERE id = $1
+		 RETURNING `+sourceColumns,
+		id, u.Name, u.RootPath, RootKey(u.RootPath), excludes, u.Enabled, u.ScheduleMinutes)
+	src, err := scanSource(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Source{}, ErrNotFound
+	}
+	if isUniqueViolation(err) {
+		return Source{}, fmt.Errorf("%w: a source with this name or folder is already registered", ErrConflict)
+	}
+	if err != nil {
+		return Source{}, fmt.Errorf("catalog: update source: %w", err)
+	}
+	return src, nil
+}
+
+// MarkRun records that a backup run of the source has just ended, whatever its outcome.
+func (s *Store) MarkRun(ctx context.Context, sourceID int64) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE sources SET last_run_at = now() WHERE id = $1`, sourceID); err != nil {
+		return fmt.Errorf("catalog: mark run: %w", err)
+	}
+	return nil
+}
+
+// DueSources returns the enabled sources whose schedule says a backup is due,
+// the one waiting longest first. A source that never ran is due at once.
+func (s *Store) DueSources(ctx context.Context) ([]int64, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id FROM sources
+		 WHERE enabled AND schedule_minutes IS NOT NULL
+		   AND (last_run_at IS NULL OR last_run_at + make_interval(mins => schedule_minutes) <= now())
+		 ORDER BY coalesce(last_run_at, 'epoch'), id`)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: due sources: %w", err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return nil, fmt.Errorf("catalog: due sources: %w", err)
+	}
+	return ids, nil
 }
 
 // GetSource returns one source.

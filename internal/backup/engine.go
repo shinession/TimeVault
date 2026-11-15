@@ -79,19 +79,35 @@ func (e *Engine) resolveProtected() []string {
 	return out
 }
 
+// ErrUnchanged is returned by Run when RunOptions.SkipUnchanged is set and the
+// source is identical to its newest recovery point. Nothing was recorded.
+var ErrUnchanged = errors.New("backup: nothing changed since the last recovery point")
+
 // RunOptions tunes one backup.
 type RunOptions struct {
 	// Rehash reads every file even when its size and modification time are unchanged.
 	Rehash bool
+	// SkipUnchanged records no recovery point when nothing changed since the
+	// previous one, so automatic runs do not pile up identical points. Run then
+	// returns ErrUnchanged. The first backup of a source is always recorded.
+	SkipUnchanged bool
 }
 
 // Run takes one recovery point of a source and returns it once committed.
 // On any failure the partial work is removed and the point is recorded as
 // failed (or aborted when ctx was cancelled); it never becomes visible.
+// A run that ends with ErrUnchanged leaves no trace at all, not even a failed point.
 func (e *Engine) Run(ctx context.Context, sourceID int64, opts RunOptions, rep Reporter) (catalog.Point, error) {
 	if rep == nil {
 		rep = NopReporter{}
 	}
+	lock, err := e.cat.LockSource(ctx, sourceID)
+	if err != nil {
+		return catalog.Point{}, err
+	}
+	defer lock.Unlock()
+	// The source is read only once its writer lock is held, so an edit made while this run waited for it or
+	// just before is seen, and none can be stored while the run goes on (a change of folder needs the lock).
 	src, err := e.cat.GetSource(ctx, sourceID)
 	if err != nil {
 		return catalog.Point{}, err
@@ -99,11 +115,6 @@ func (e *Engine) Run(ctx context.Context, sourceID int64, opts RunOptions, rep R
 	if !src.Enabled {
 		return catalog.Point{}, errors.New("backup: the source is disabled")
 	}
-	lock, err := e.cat.LockSource(ctx, sourceID)
-	if err != nil {
-		return catalog.Point{}, err
-	}
-	defer lock.Unlock()
 
 	rep.Phase(PhasePreparing)
 	if err := e.checkSource(src); err != nil {
@@ -125,6 +136,9 @@ func (e *Engine) Run(ctx context.Context, sourceID int64, opts RunOptions, rep R
 	rep.Event("info", fmt.Sprintf("started %s recovery point #%d (live scan, no VSS snapshot)", point.Kind, point.Seq))
 
 	if err := e.build(ctx, lock, src, point, prevSeq, opts, rep); err != nil {
+		if errors.Is(err, ErrUnchanged) {
+			return catalog.Point{}, ErrUnchanged
+		}
 		state, reason := catalog.StateFailed, err.Error()
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			state, reason = catalog.StateAborted, "canceled"
@@ -188,6 +202,11 @@ func (e *Engine) build(ctx context.Context, lock *catalog.SourceLock, src catalo
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if opts.SkipUnchanged && prevSeq > 0 {
+		if err := e.discardIfUnchanged(ctx, lock, point, sc.stats, rep); err != nil {
+			return err
+		}
+	}
 	// The commit is one statement; once it is issued it is not abandoned, because a
 	// cancellation in the middle would leave the outcome in doubt.
 	commitCtx, cancelCommit := context.WithTimeout(context.WithoutCancel(ctx), commitTimeout)
@@ -201,6 +220,35 @@ func (e *Engine) build(ctx context.Context, lock *catalog.SourceLock, src catalo
 	rep.Event("info", fmt.Sprintf("committed recovery point #%d: %d files, %d folders, %d added, %d modified, %d deleted, %d not captured",
 		point.Seq, sc.stats.FileCount, sc.stats.DirCount, sc.stats.AddedCount, sc.stats.ModifiedCount, sc.stats.DeletedCount, sc.stats.SkippedCount))
 	return nil
+}
+
+// discardIfUnchanged drops the point under construction when the scan found
+// nothing to record. It returns ErrUnchanged once the point is gone and nil when
+// the point has to be committed.
+//
+// "Nothing" means no path was added, modified or deleted and the number of items
+// that could not be captured is the same as in the previous point. A different
+// number is worth a point of its own: items were newly skipped, or an earlier
+// problem went away, and the history should say so.
+func (e *Engine) discardIfUnchanged(ctx context.Context, lock *catalog.SourceLock, point catalog.Point, st catalog.Stats, rep Reporter) error {
+	if st.AddedCount+st.ModifiedCount+st.DeletedCount != 0 {
+		return nil
+	}
+	prev, err := e.cat.LatestCommitted(ctx, point.SourceID)
+	if err != nil {
+		return err
+	}
+	if st.SkippedCount != prev.SkippedCount {
+		return nil
+	}
+	// Like the commit, the cleanup is not abandoned halfway by a cancellation.
+	discardCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), commitTimeout)
+	defer cancel()
+	if err := e.cat.DiscardPoint(discardCtx, lock, point); err != nil {
+		return err
+	}
+	rep.Event("info", fmt.Sprintf("nothing changed since recovery point #%d; no new recovery point was recorded", prev.Seq))
+	return ErrUnchanged
 }
 
 // checkSource makes sure the registered folder still exists and does not
