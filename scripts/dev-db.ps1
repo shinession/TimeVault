@@ -6,13 +6,14 @@
   Creates and runs a throw-away cluster under <repo>\data\pgdev using the PostgreSQL
   binaries that are already installed. It listens on 127.0.0.1 only, on its own port,
   and never touches an existing PostgreSQL service. The superuser password is random,
-  stored only in <repo>\data\pgdev\db.env (git-ignored) and never printed.
+  stored only in <repo>\.env (git-ignored; TIMEVAULT_DATABASE_URL and TIMEVAULT_TEST_DATABASE_URL)
+  and never printed.
 
   Durability is relaxed (fsync off) on purpose: this cluster is for development only.
 
-  data\pgdev\db.env may be edited to point at another PostgreSQL server (for example the one
-  installed on this computer). The scripts then never overwrite or delete that file: creating the
-  private cluster and reset stop with an explanation until the file is moved aside.
+  TIMEVAULT_DATABASE_URL in .env may point at another PostgreSQL server (for example the one
+  installed on this computer). The scripts then never overwrite or delete that setting: creating the
+  private cluster and reset stop with an explanation until you remove the two URLs from .env.
 
 .PARAMETER Action
   init   Create the cluster and the databases 'timevault' and 'timevault_test'.
@@ -22,8 +23,8 @@
   reset  Stop and delete the cluster, then create a new one.
 
 .PARAMETER PgBin
-  Folder with pg_ctl.exe, initdb.exe, psql.exe. Defaults to $env:TIMEVAULT_PG_BIN,
-  then pg_ctl on PATH, then the newest C:\Program Files\PostgreSQL\<version>\bin.
+  Folder with pg_ctl.exe, initdb.exe, psql.exe. Defaults to $env:TIMEVAULT_PG_BIN, then
+  TIMEVAULT_PG_BIN in .env, then pg_ctl on PATH, then the newest C:\Program Files\PostgreSQL\<version>\bin.
 
 .PARAMETER Port
   TCP port of the private cluster (default 55432).
@@ -41,13 +42,17 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $dataDir = Join-Path $repoRoot 'data\pgdev'
 $pgData = Join-Path $dataDir 'pgdata'
-$envFile = Join-Path $dataDir 'db.env'
 $logFile = Join-Path $dataDir 'postgres.log'
 $dbUser = 'timevault'
+
+. (Join-Path $PSScriptRoot 'dotenv.ps1')
+Move-LegacyEnvFiles
 
 function Resolve-PgBin {
     if ($PgBin) { return $PgBin }
     if ($env:TIMEVAULT_PG_BIN) { return $env:TIMEVAULT_PG_BIN }
+    $fromEnvFile = Get-DotEnvValue 'TIMEVAULT_PG_BIN'
+    if ($fromEnvFile) { return $fromEnvFile }
     $cmd = Get-Command pg_ctl.exe -ErrorAction SilentlyContinue
     if ($cmd) { return Split-Path -Parent $cmd.Source }
     $candidate = Get-ChildItem 'C:\Program Files\PostgreSQL' -Directory -ErrorAction SilentlyContinue |
@@ -78,18 +83,18 @@ function New-Password {
 }
 
 function Read-Password {
-    $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -like 'TIMEVAULT_DATABASE_URL=*' } | Select-Object -First 1
-    if ($line -match '://[^:]+:([^@]+)@') { return $Matches[1] }
-    throw "Cannot read the database password from $envFile"
+    $url = Get-DotEnvValue 'TIMEVAULT_DATABASE_URL'
+    if ($url -match '://[^:]+:([^@]+)@') { return $Matches[1] }
+    throw "Cannot read the database password from TIMEVAULT_DATABASE_URL in $DotEnvFile"
 }
 
-# db.env may have been edited to point at another PostgreSQL server, for example the one installed
-# on this computer. It is then the developer's file: never overwrite it and never delete it.
+# TIMEVAULT_DATABASE_URL may have been changed to point at another PostgreSQL server, for example
+# the one installed on this computer. It is then the developer's setting: never overwrite it and
+# never delete it.
 function Test-EnvPointsElsewhere {
-    if (-not (Test-Path -LiteralPath $envFile)) { return $false }
-    $line = Get-Content -LiteralPath $envFile | Where-Object { $_ -like 'TIMEVAULT_DATABASE_URL=*' } | Select-Object -First 1
-    if (-not $line) { return $false }
-    if ($line -match '@[^/:?#]+:(\d+)') { return ([int]$Matches[1] -ne $Port) }
+    $url = Get-DotEnvValue 'TIMEVAULT_DATABASE_URL'
+    if (-not $url) { return $false }
+    if ($url -match '@[^/:?#]+:(\d+)') { return ([int]$Matches[1] -ne $Port) }
     return $true
 }
 
@@ -105,7 +110,7 @@ function Invoke-Psql([string]$Database, [string]$Sql) {
 function Initialize-Cluster {
     if (Test-Path (Join-Path $pgData 'PG_VERSION')) { return }
     if (Test-EnvPointsElsewhere) {
-        throw "$envFile points to another PostgreSQL server, and creating the private cluster would overwrite it. Move the file aside first."
+        throw "TIMEVAULT_DATABASE_URL in $DotEnvFile points to another PostgreSQL server, and creating the private cluster would replace it. Remove TIMEVAULT_DATABASE_URL and TIMEVAULT_TEST_DATABASE_URL from .env first."
     }
     New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
     $password = New-Password
@@ -130,11 +135,8 @@ function Initialize-Cluster {
     Add-Content -LiteralPath (Join-Path $pgData 'postgresql.conf') -Value $conf -Encoding ascii
 
     $urlBase = "postgres://${dbUser}:${password}@127.0.0.1:${Port}"
-    $lines = @(
-        "TIMEVAULT_DATABASE_URL=$urlBase/timevault?sslmode=disable",
-        "TIMEVAULT_TEST_DATABASE_URL=$urlBase/timevault_test?sslmode=disable"
-    )
-    Set-Content -LiteralPath $envFile -Value $lines -Encoding ascii
+    Set-DotEnvValue 'TIMEVAULT_DATABASE_URL' "$urlBase/timevault?sslmode=disable"
+    Set-DotEnvValue 'TIMEVAULT_TEST_DATABASE_URL' "$urlBase/timevault_test?sslmode=disable"
 }
 
 function Invoke-PgCtl([string]$Arguments) {
@@ -167,7 +169,7 @@ function Stop-Cluster {
 }
 
 switch ($Action) {
-    'init' { Start-Cluster; Write-Host "Private PostgreSQL ready on 127.0.0.1:$Port (credentials in data\pgdev\db.env)." }
+    'init' { Start-Cluster; Write-Host "Private PostgreSQL ready on 127.0.0.1:$Port (the credentials are in $DotEnvFile)." }
     'start' { Start-Cluster; Write-Host "Private PostgreSQL running on 127.0.0.1:$Port." }
     'stop' { Stop-Cluster; Write-Host 'Private PostgreSQL stopped.' }
     'status' {
@@ -175,7 +177,7 @@ switch ($Action) {
     }
     'reset' {
         if (Test-EnvPointsElsewhere) {
-            throw "$envFile points to another PostgreSQL server and would be deleted with the private cluster. Move it aside first if you really want to reset the private cluster."
+            throw "TIMEVAULT_DATABASE_URL in $DotEnvFile points to another PostgreSQL server, which a reset of the private cluster would replace. Remove TIMEVAULT_DATABASE_URL and TIMEVAULT_TEST_DATABASE_URL from .env first if you really want to reset the private cluster."
         }
         Stop-Cluster
         if (Test-Path $dataDir) { Remove-Item -LiteralPath $dataDir -Recurse -Force }

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -107,6 +108,35 @@ func loadEnv(base Lookup, dirs []string) (Lookup, string, error) {
 		v, ok := values[key]
 		return v, ok
 	}, path, nil
+}
+
+// EnvOverrides names, sorted, the TIMEVAULT_ settings that the file at path sets
+// to one value and the process environment to another. The environment wins, so
+// the value in the file is not in effect, and editing the file changes nothing:
+// a variable left behind in a terminal is an easy way to end up there. Only
+// names are returned, never values. An empty path, or a file that cannot be read
+// (LoadEnv has already reported that), gives nil.
+func EnvOverrides(base Lookup, path string) []string {
+	if path == "" {
+		return nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	values, err := ParseEnv(f)
+	if err != nil {
+		return nil
+	}
+	var names []string
+	for key, fileValue := range values {
+		if envValue, ok := base(key); ok && strings.HasPrefix(key, "TIMEVAULT_") && envValue != fileValue {
+			names = append(names, key)
+		}
+	}
+	slices.Sort(names)
+	return names
 }
 
 func findEnvFile(base Lookup, dirs []string) (string, error) {

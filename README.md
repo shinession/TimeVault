@@ -19,7 +19,7 @@
 
 ### Quick start (development, Windows PowerShell)
 
-Needs Go 1.25+ and a PostgreSQL server (see [docs/runbook.md](docs/runbook.md)). If Go is not on your `PATH`, first create `data\local.env` with the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>`. The scripts keep everything under the git-ignored `data\` folder and never touch an existing PostgreSQL service.
+Needs Go 1.25+ and a PostgreSQL server (see [docs/runbook.md](docs/runbook.md)). If Go is not on your `PATH`, first put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env` in the repository folder. **`.env` is the only settings file**: the scripts create and fill it, and the service reads it. The scripts keep their other data under the git-ignored `data\` folder and never touch an existing PostgreSQL service.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-db.ps1 start    # optional: private PostgreSQL on port 55432 (skip it to use your own server)
@@ -27,7 +27,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-run.ps1         
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        # in a second window: demo data
 ```
 
-To use your own PostgreSQL server, create the database and the role, then put the URL into `data\pgdev\db.env` (`TIMEVAULT_DATABASE_URL`, and `TIMEVAULT_TEST_DATABASE_URL` for the tests); the scripts then start no private cluster. `dev-run.ps1` creates a commented `.env` in the repository folder, which is the service's own settings file. For company sign-in add `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0` there and check it with `data\dev\bin\timevault-server.exe check-redis-users`.
+To use your own PostgreSQL server, create the database and the role, then put the URL into `.env` (`TIMEVAULT_DATABASE_URL`, and `TIMEVAULT_TEST_DATABASE_URL` for the tests); the scripts then start no private cluster. `dev-run.ps1` creates `.env` with comments and fills in what the service needs. For company sign-in add `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0` there and check it with `data\dev\bin\timevault-server.exe check-redis-users`. A `TIMEVAULT_*` variable in your terminal would override `.env`: the scripts remove such variables, and the service names them in its start-up log.
 
 Open `http://127.0.0.1:8660/`. Anyone can browse; to back up, restore or change settings, sign in as `admin` (the generated password is in `data\dev\admin-password.txt`) or with a company account. An administrator adds the monitored folders on the **Settings** page. Run the tests with `. .\scripts\dev-env.ps1` followed by `go test ./... -count=1`.
 
@@ -82,7 +82,7 @@ Open `http://127.0.0.1:8660/`. Anyone can browse; to back up, restore or change 
 
 ### 快速开始（开发环境，Windows PowerShell）
 
-需要 Go 1.25+ 和一个 PostgreSQL 服务器（见 [docs/runbook.md](docs/runbook.md)）。如果 Go 不在 `PATH` 中，请先创建 `data\local.env`，写入 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行。脚本把所有内容放在被 git 忽略的 `data\` 文件夹下，不会触碰已有的 PostgreSQL 服务。
+需要 Go 1.25+ 和一个 PostgreSQL 服务器（见 [docs/runbook.md](docs/runbook.md)）。如果 Go 不在 `PATH` 中，请先把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入仓库文件夹中的 `.env`。**`.env` 是唯一的设置文件**：脚本创建并填写它，服务读取它。脚本把其他数据放在被 git 忽略的 `data\` 文件夹下，不会触碰已有的 PostgreSQL 服务。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-db.ps1 start    # optional: private PostgreSQL on port 55432 (skip it to use your own server)
@@ -90,7 +90,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-run.ps1         
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        # in a second window: demo data
 ```
 
-要使用你自己的 PostgreSQL 服务器，先创建好数据库和角色，再把 URL 写入 `data\pgdev\db.env`（`TIMEVAULT_DATABASE_URL`，测试用的是 `TIMEVAULT_TEST_DATABASE_URL`）；这样脚本就不会启动私有集群。`dev-run.ps1` 会在仓库文件夹中创建带注释的 `.env`，它是服务自己的设置文件。要启用公司账号登录，请在其中加入 `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0`，并用 `data\dev\bin\timevault-server.exe check-redis-users` 检查。
+要使用你自己的 PostgreSQL 服务器，先创建好数据库和角色，再把 URL 写入 `.env`（`TIMEVAULT_DATABASE_URL`，测试用的是 `TIMEVAULT_TEST_DATABASE_URL`）；这样脚本就不会启动私有集群。`dev-run.ps1` 会创建带注释的 `.env`，并填入服务需要的内容。要启用公司账号登录，请在其中加入 `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0`，并用 `data\dev\bin\timevault-server.exe check-redis-users` 检查。终端里的 `TIMEVAULT_*` 变量会覆盖 `.env`：脚本会移除这类变量，服务也会在启动日志里点名它们。
 
 打开 `http://127.0.0.1:8660/`。任何人都可以浏览；要备份、恢复或修改设置，请以 `admin`（生成的密码在 `data\dev\admin-password.txt` 中）或公司账号登录。管理员在**设置**页添加监控文件夹。运行测试：先执行 `. .\scripts\dev-env.ps1`，再执行 `go test ./... -count=1`。
 

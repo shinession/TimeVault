@@ -84,7 +84,8 @@ commands:
 
 Settings are read from TIMEVAULT_* environment variables and from a .env file: the one named by
 TIMEVAULT_ENV_FILE, else .env in the working directory, else .env next to the executable.
-A variable that is set in the environment wins over the file. See docs/runbook.md.
+A variable that is set in the environment wins over the file; the startup log names the ones
+that do. See docs/runbook.md.
 `
 
 // loadConfig reads the settings from the environment and the .env file.
@@ -98,6 +99,7 @@ func loadConfig() (config.Config, error) {
 		return config.Config{}, err
 	}
 	cfg.EnvFile = envPath
+	cfg.EnvOverrides = config.EnvOverrides(config.OSLookup, envPath)
 	return cfg, nil
 }
 
@@ -174,6 +176,9 @@ func runCheckRedisUsers() error {
 		settings = "(none: the environment only)"
 	}
 	fmt.Printf("settings file: %s\nuser directory: %s, key prefix %q\n", settings, store.Addr(), cfg.RedisKeyPrefix)
+	if len(cfg.EnvOverrides) > 0 {
+		fmt.Printf("overridden by the process environment: %s\n", strings.Join(cfg.EnvOverrides, ", "))
+	}
 	if err := store.Ping(ctx); err != nil {
 		return fmt.Errorf("the user directory does not answer: %w", err)
 	}
@@ -198,6 +203,10 @@ func runServe() error {
 	}
 	log := newLogger(cfg)
 	log.Info("starting TimeVault", append([]any{"version", version}, cfg.LogAttrs()...)...)
+	if len(cfg.EnvOverrides) > 0 {
+		log.Warn("these settings come from the process environment and override the .env file, so editing the file does not change them: remove the environment variables, or set them to the value you want",
+			"settings", strings.Join(cfg.EnvOverrides, ","), "env_file", cfg.EnvFile)
+	}
 	if host, _, err := net.SplitHostPort(cfg.ListenAddr); err == nil && !cfg.IsLoopbackListen(host) {
 		log.Warn("the service is reachable from other computers: anyone who can reach it can browse the names, sizes and history of the monitored folders without signing in, and account passwords are typed into this site, so serve it over HTTPS through a TLS reverse proxy",
 			"cookie_secure", cfg.CookieSecure)

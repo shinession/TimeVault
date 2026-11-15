@@ -10,13 +10,20 @@
   on disk without a backup so the Explorer shows "changed", "new" and "deleted" items.
 
 .PARAMETER BaseUrl
-  Address of the running server (default http://127.0.0.1:8660).
+  Address of the running server. Without it the address is built from TIMEVAULT_LISTEN_ADDR in .env
+  (default http://127.0.0.1:8660). After dev-run.ps1 -Port, pass it, for example -BaseUrl http://127.0.0.1:9000.
 #>
 [CmdletBinding()]
-param([string]$BaseUrl = 'http://127.0.0.1:8660')
+param([string]$BaseUrl)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'dotenv.ps1')
+if (-not $BaseUrl) {
+    $listen = Get-DotEnvValue 'TIMEVAULT_LISTEN_ADDR'
+    if (-not $listen) { $listen = '127.0.0.1:8660' }
+    $BaseUrl = 'http://' + ($listen -replace '^(0\.0\.0\.0|\[::\]|::)(?=:)', '127.0.0.1')
+}
 $devDir = Join-Path $repoRoot 'data\dev'
 $source = Join-Path $devDir 'source'
 $passwordFile = Join-Path $devDir 'admin-password.txt'

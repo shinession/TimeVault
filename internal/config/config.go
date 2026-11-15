@@ -60,6 +60,9 @@ type Config struct {
 
 	// EnvFile is the .env file the settings were read from, if any. It is set by the caller of LoadEnv.
 	EnvFile string
+	// EnvOverrides names the settings of EnvFile that the process environment overrides (see EnvOverrides).
+	// It is set by the caller of LoadEnv.
+	EnvOverrides []string
 }
 
 // Lookup resolves one environment variable.

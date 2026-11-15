@@ -21,7 +21,7 @@ This document lists the security controls that exist in TimeVault (version 0.1.1
 | Service instance | Only one service can run against a database: a PostgreSQL advisory lock is taken before start-up recovery, so a second launch cannot mark the first one's running jobs as failed or abort its recovery points. |
 | Everything | Only loopback hosts are accepted for the engine URL, enforced when the connection is made; redirects are not followed; responses are size-limited; optional HTTP Basic credentials come from the environment and are never logged. The user's text is split into words that are all quoted so Everything operators (`|`, `!`, `<>`, `regex:`) are literal, the query is confined to the source root, and every result is checked against the root again. |
 | Audit | `audit_events` is append-only (a database trigger rejects UPDATE and DELETE). Sign-ins, failed and throttled sign-ins (with the account name as typed, cut to 64 characters), refused requests (`access.denied`: no permission or a bad CSRF token), source creation and every source change (old and new value per field), backup/verify requests and results, restore previews, requests and results and job cancellations are recorded with the user and remote address. |
-| Secrets | Read only from environment variables or the `.env` file (the environment wins), redacted when the configuration is logged, never stored in the repository. The startup log, the Settings page and the Redis report show the database and Redis as `host:port/name` only; errors from the Redis client have the password of the URL masked. `/.env` is git-ignored. Development secrets are generated under the git-ignored `data/` folder. |
+| Secrets | Read only from environment variables or the `.env` file (the environment wins; the start-up log names, and never shows, the settings that the environment overrides), redacted when the configuration is logged, never stored in the repository. The startup log, the Settings page and the Redis report show the database and Redis as `host:port/name` only; errors from the Redis client have the password of the URL masked. `/.env` is git-ignored and, in development, the only file that holds secrets: the dev scripts write the generated database password, session key and administrator password hash there (the generated administrator password is in `data/dev/admin-password.txt`, also git-ignored). |
 
 ## Gaps and limits (do not rely on the MVP for these)
 
@@ -71,7 +71,7 @@ This document lists the security controls that exist in TimeVault (version 0.1.1
 | 服务实例 | 同一个数据库只能运行一个服务：在启动恢复之前会获取 PostgreSQL advisory 锁，所以第二次启动不能把第一个服务正在运行的任务标记为失败，也不能中止它的恢复点。 |
 | Everything | 引擎 URL 只接受回环主机，并在建立连接时强制检查；不跟随重定向；限制响应大小；可选的 HTTP Basic 凭据来自环境变量，绝不写入日志。用户输入的文本被拆分为词并全部加引号，使 Everything 的操作符（`|`、`!`、`<>`、`regex:`）都按字面处理；查询被限定在备份源根目录内，并且对每个结果再次检查是否在根目录内。 |
 | 审计 | `audit_events` 只追加（数据库触发器会拒绝 UPDATE 和 DELETE）。登录、登录失败和被限流的登录（账号名按输入的内容记录，截断到 64 个字符）、被拒绝的请求（`access.denied`：没有权限或 CSRF 令牌错误）、创建备份源和备份源的每一次变更（每个字段的旧值和新值）、备份/校验的请求与结果、恢复预览、请求与结果、任务取消，都会连同用户和远端地址一起记录。 |
-| 机密信息 | 仅从环境变量或 `.env` 文件读取（环境变量优先），记录配置日志时会脱敏，绝不存入代码仓库。启动日志、设置页和 Redis 报告只把数据库和 Redis 显示为 `host:port/name`；Redis 客户端的错误信息中，URL 的密码会被遮盖。`/.env` 已被 git 忽略。开发用的机密信息生成在被 git 忽略的 `data/` 文件夹下。 |
+| 机密信息 | 仅从环境变量或 `.env` 文件读取（环境变量优先；启动日志会点名、但绝不显示被环境变量覆盖的设置），记录配置日志时会脱敏，绝不存入代码仓库。启动日志、设置页和 Redis 报告只把数据库和 Redis 显示为 `host:port/name`；Redis 客户端的错误信息中，URL 的密码会被遮盖。`/.env` 已被 git 忽略，开发时它是唯一存放机密信息的文件：开发脚本把生成的数据库密码、会话密钥和管理员密码哈希写在这里（生成的管理员密码本身在同样被 git 忽略的 `data/dev/admin-password.txt` 中）。 |
 
 ## 缺口与限制（这些方面请勿依赖 MVP）
 

@@ -10,7 +10,7 @@ This document describes what is implemented. Items that plan.md describes but Ti
 
 | Package | Responsibility |
 |---|---|
-| `internal/config` | Reads and validates the `TIMEVAULT_*` settings from the environment and the `.env` file (the environment wins), and describes the running configuration for the Settings page without secrets. |
+| `internal/config` | Reads and validates the `TIMEVAULT_*` settings from the environment and the `.env` file (the environment wins), names the settings of the file that the environment overrides (the start-up log warns about them), and describes the running configuration for the Settings page without secrets. |
 | `internal/db`, `migrations/` | pgx connection pool, the embedded, checksummed SQL migrations (`0001_init`, `0002_schedule`), and the service-wide instance lock. |
 | `internal/pathutil` | Windows-compatible name validation, source-relative path cleaning, case-insensitive containment, and resolution of a path's real location (junctions and links included). |
 | `internal/platform` | Windows file attributes, disk space, lock detection, real-path resolution and folder flushing behind build tags. |
@@ -113,7 +113,7 @@ TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），�
 
 | 包 | 职责 |
 |---|---|
-| `internal/config` | 从环境变量和 `.env` 文件读取并校验 `TIMEVAULT_*` 设置（环境变量优先），并为设置页描述当前运行的配置（不含机密信息）。 |
+| `internal/config` | 从环境变量和 `.env` 文件读取并校验 `TIMEVAULT_*` 设置（环境变量优先），点名文件中被环境变量覆盖的设置（启动日志会就此给出警告），并为设置页描述当前运行的配置（不含机密信息）。 |
 | `internal/db`、`migrations/` | pgx 连接池、内嵌且带校验和的 SQL 迁移（`0001_init`、`0002_schedule`），以及服务级的实例锁。 |
 | `internal/pathutil` | 兼容 Windows 的名称校验、相对路径清理、不区分大小写的包含判断，以及解析路径真实位置（包括联接点和链接）。 |
 | `internal/platform` | 通过 build tag 隔离的 Windows 文件属性、磁盘空间、文件锁检测、真实路径解析和文件夹刷新。 |

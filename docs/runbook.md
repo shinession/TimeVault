@@ -9,23 +9,23 @@ How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.1
 | Item | Notes |
 |---|---|
 | Windows with NTFS | Developed and tested on Windows 11 Pro. The server also compiles on other systems (some path rules and tests are Windows specific), but only Windows was exercised. |
-| Go 1.25 or newer | Needed to build (`go.mod` declares `go 1.25.0`); the restore code uses `os.Root`. A portable Go works: set `TIMEVAULT_GO_ROOT` to the Go folder (the one that contains `bin\go.exe`) and the dev scripts add it to `PATH`. To keep it across terminals without touching the system `PATH`, put the line `TIMEVAULT_GO_ROOT=<Go folder>` into `data\local.env` (git-ignored; you create it). |
+| Go 1.25 or newer | Needed to build (`go.mod` declares `go 1.25.0`); the restore code uses `os.Root`. A portable Go works: put the line `TIMEVAULT_GO_ROOT=<Go folder>` (the folder that contains `bin\go.exe`) into `.env` and the dev scripts add it to `PATH` in every terminal, without touching the system `PATH`. |
 | PostgreSQL | Tested with 16.4 only. The SQL needs at least PostgreSQL 11 (identity columns, `hashtextextended`), but older versions than 16 were not tried. |
 | Redis (optional) | The user directory of another (dash) application: hashes named `app_user_<ee_code>_<name>_<email>`. Without it only the local administrator can sign in. Tested against an in-process fake and pickle data written by Python, not against the company's own Redis: run `timevault-server check-redis-users` on it once. |
 | Everything 1.4.x (optional) | Only for search. Without it search shows "not configured" and everything else works. See [Everything search](#everything-search). |
 
 ## Quick start for development
 
-The scripts keep everything under the git-ignored `data\` folder, never touch an existing PostgreSQL service and print no secrets. If PowerShell blocks the scripts, run them as `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\<name>.ps1`. If Go is not on your `PATH`, first create `data\local.env` with the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>`; without it `dev-run.ps1` stops at once with "The go command was not found".
+The scripts keep their data under the git-ignored `data\` folder and **all settings in one git-ignored file, `.env` in the repository folder** (see [Where settings live](#where-settings-live)). They never touch an existing PostgreSQL service and print no secrets. If PowerShell blocks the scripts, run them as `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\<name>.ps1`. If Go is not on your `PATH`, first put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env`; without it `dev-run.ps1` stops at once with "The go command was not found". Earlier versions kept settings in four more files (`data\local.env`, `data\pgdev\db.env`, `data\dev\server.env`, `data\everything\everything.env`); the first time a script runs it moves their settings into `.env` and deletes them.
 
-1. `scripts\dev-db.ps1 start` creates (first time) and starts a private PostgreSQL cluster in `data\pgdev` on `127.0.0.1:55432` with the databases `timevault` and `timevault_test`. The random password is stored in `data\pgdev\db.env`. It needs the installed PostgreSQL binaries (`TIMEVAULT_PG_BIN` or `-PgBin` to point at them). Other actions: `stop`, `status`, `init`, `reset` (deletes the cluster). **You can skip this step and use a PostgreSQL server you already have**: edit `data\pgdev\db.env` so that `TIMEVAULT_DATABASE_URL` (and `TIMEVAULT_TEST_DATABASE_URL`, for the tests) point at it, after creating the database and the role yourself. The scripts then start no private cluster, and `dev-db.ps1` refuses to overwrite or delete a `db.env` that points at another server.
-2. `scripts\dev-run.ps1` starts the private database when the database settings point at it (port 55432) and otherwise expects the server you configured to be running, builds `data\dev\bin\timevault-server.exe`, and on the first run creates `data\dev` (a demo source folder, repository, restore folder, `server.env`, and a random password for the local administrator `admin` in `data\dev\admin-password.txt`) and `.env` in the repository folder, which is the service's own settings file (commented, git-ignored). It then runs the server in the foreground on `http://127.0.0.1:8660/` (`-Port` changes the port; without it `TIMEVAULT_LISTEN_ADDR` from `.env` applies) and prints whether the Redis user directory is configured. Stop it with Ctrl+C.
-3. `scripts\dev-demo.ps1` (with the server running) registers `data\dev\source` as the monitored folder "Demo files" and creates three recovery points through the API, leaving some uncommitted changes so the Explorer shows changed, new and deleted items.
+1. `scripts\dev-db.ps1 start` creates (first time) and starts a private PostgreSQL cluster in `data\pgdev` on `127.0.0.1:55432` with the databases `timevault` and `timevault_test`. The random password is written into `.env` (`TIMEVAULT_DATABASE_URL` and `TIMEVAULT_TEST_DATABASE_URL`). It needs the installed PostgreSQL binaries (`TIMEVAULT_PG_BIN` in `.env` or `-PgBin` to point at them). Other actions: `stop`, `status`, `init`, `reset` (deletes the cluster). **You can skip this step and use a PostgreSQL server you already have**: create the database and the role yourself, then put `TIMEVAULT_DATABASE_URL` (and `TIMEVAULT_TEST_DATABASE_URL`, for the tests) into `.env`. The scripts then start no private cluster, and `dev-db.ps1` refuses to create or reset one while `.env` points at another server.
+2. `scripts\dev-run.ps1` creates `.env` (commented, git-ignored) when it is missing; starts the private database when `TIMEVAULT_DATABASE_URL` points at it (port 55432) and otherwise expects the server you configured to be running; builds `data\dev\bin\timevault-server.exe`; and adds to `.env` what the service needs and `.env` does not have yet: a repository and a restore folder under `data\dev`, `TIMEVAULT_AUTO_MIGRATE=true`, a session key and, on the very first run, a random password for the local administrator `admin` (the password goes to `data\dev\admin-password.txt`, only its hash to `.env`). **It removes `TIMEVAULT_*` variables that are left in your terminal** before it starts the server, because they would override `.env`, and it names them. It then runs the server in the foreground on `http://127.0.0.1:8660/` (`-Port` changes the port for that run; without it `TIMEVAULT_LISTEN_ADDR` from `.env` applies) and prints whether the Redis user directory is configured. Stop it with Ctrl+C.
+3. `scripts\dev-demo.ps1` (with the server running) registers `data\dev\source` as the monitored folder "Demo files" and creates three recovery points through the API, leaving some uncommitted changes so the Explorer shows changed, new and deleted items. It takes the address from `TIMEVAULT_LISTEN_ADDR` in `.env`; after `dev-run.ps1 -Port` pass `-BaseUrl http://127.0.0.1:<port>`.
 4. Open the address. Anyone can browse. To back up, restore or change settings, sign in as `admin` with the password from `data\dev\admin-password.txt`, or with a company account after you put `TIMEVAULT_REDIS_URL` into `.env` (check it with `data\dev\bin\timevault-server.exe check-redis-users`, run from the repository folder). The header has the language switch (English / 中文) and a light/dark theme toggle (the page follows the system setting until you use the toggle; the browser then remembers your choice).
 
 5. Optional, for the search box: `scripts\dev-everything.ps1 -Action start`, then restart the server (see [Everything search](#everything-search)).
 
-`. .\scripts\dev-env.ps1` loads the same settings into your own PowerShell session (`data\pgdev\db.env`, `data\dev\server.env`, `data\everything\everything.env` and `data\local.env`, each when present) so you can run `go test` or `timevault-server` by hand; it also puts Go on the `PATH` of that session when `TIMEVAULT_GO_ROOT` is set.
+`. .\scripts\dev-env.ps1` prepares your own PowerShell session for `go test` and for running `timevault-server` by hand. It removes `TIMEVAULT_*` settings that are left in the session (they would override `.env`), sets `TIMEVAULT_ENV_FILE` to the `.env` of the repository, loads what only tests and tools read (`TIMEVAULT_TEST_*`, `TIMEVAULT_GO_ROOT`, `TIMEVAULT_PG_BIN`, `TIMEVAULT_EVERYTHING_EXE`) and puts Go on the `PATH` of that session. The settings of the service are not copied into the environment: the service reads `.env` itself.
 
 ## Commands
 
@@ -43,14 +43,16 @@ Build: `go build -o timevault-server.exe ./cmd/timevault-server`. The web templa
 
 | What | Where | Changed by | Takes effect |
 |---|---|---|---|
-| Deployment: database URL, Redis URL, listen address, backup folder (`TIMEVAULT_REPOSITORY_PATH`), restore folder (`TIMEVAULT_RESTORE_ROOT`), session key, search, workers, logging | The process environment and/or the `.env` file | Whoever installs the service, by editing the file | After a restart |
+| Deployment: database URL, Redis URL, listen address, backup folder (`TIMEVAULT_REPOSITORY_PATH`), restore folder (`TIMEVAULT_RESTORE_ROOT`), session key, search, workers, logging | The `.env` file (a process environment variable overrides it) | Whoever installs the service, by editing the file | After a restart |
 | Monitored folders: name, folder, exclude patterns, on or off, automatic schedule | The database (table `sources`) | Administrators, on the **Settings** page or with `PATCH /api/v1/sources/{id}` | At once |
 | Accounts and roles | Redis (`app_user_*`), written by another application | That application | Within a minute for a session that is already signed in |
 
-- The `.env` file is the one named by `TIMEVAULT_ENV_FILE` (it must exist), otherwise `.env` in the working directory, otherwise `.env` next to `timevault-server.exe`. The first one found is used; files are not merged. **A variable that is set in the process environment wins over the same key in the file.** In development `scripts\dev-run.ps1` first loads `data\pgdev\db.env`, `data\dev\server.env`, `data\everything\everything.env` and `data\local.env` into the environment, so a key set there cannot be changed in `.env`.
+- The `.env` file is the one named by `TIMEVAULT_ENV_FILE` (it must exist), otherwise `.env` in the working directory, otherwise `.env` next to `timevault-server.exe`. The first one found is used; files are not merged. In development it is the `.env` in the repository folder, and it is the only settings file: the dev scripts read and write it, and `dev-run.ps1` points the service at it.
+- **A `TIMEVAULT_*` variable in the process environment wins over the same key in the file**, and nothing tells you unless you look: a variable left in a terminal makes the service ignore what you wrote in `.env` (typically a port that does not change). The service therefore names every setting that the environment overrides in a warning when it starts (`check-redis-users` prints them too), and the dev scripts remove such variables from the terminal. If the warning keeps coming back, the variable is set in your Windows user or system environment.
 - Syntax: one `KEY=VALUE` per line. Blank lines and lines that start with `#` are ignored, a leading `export ` is allowed, and a UTF-8 byte order mark and Windows line ends are accepted. The value is taken literally up to the end of the line, so a path with `\` or a password with `#` needs no escaping (and a trailing ` # comment` would become part of the value); one pair of matching single or double quotes around the value is removed; the last assignment of a key wins. An error names the line number and never shows the line.
 - The file holds secrets (the database and Redis passwords, the session key). `/.env` is in `.gitignore`; keep the file readable only by the account that runs the service, and never commit a filled-in copy. [configs/timevault.example.env](../configs/timevault.example.env) is the template.
-- The **Settings** page (any signed-in account may open it) shows the monitored folders, the backup folder and restore folder read-only with the free space of the repository, and the running configuration: version, listen address, database and Redis as `host:port/name`, the settings file, the local administrator's name, the search server. Secrets are never shown. Only administrators see the forms that change the monitored folders.
+- The **Settings** page (any signed-in account may open it) shows the monitored folders, the backup folder and the restore folder read-only with the free space of the repository, and the running configuration: version, listen address, database and Redis as `host:port/name`, the settings file, the local administrator's name, the search server. Secrets are never shown. Only administrators see the forms that change the monitored folders.
+- **Backup folder and restore folder.** They are two different places. The backup folder (`TIMEVAULT_REPOSITORY_PATH`, the repository) is where TimeVault keeps the contents of everything it backed up. The restore folder (`TIMEVAULT_RESTORE_ROOT`) is where restored files are put: a restore never overwrites the original files and never writes into a monitored folder, so it writes the restored copies into a new folder below the restore folder (named on the restore form, by default `restore-<date>-<time>`), and you copy back what you need from there. Neither may lie inside a monitored folder.
 
 ## Configuration reference
 
@@ -63,8 +65,8 @@ Every setting is an environment variable or a line of the `.env` file (see [Wher
 | `TIMEVAULT_ALLOW_NON_LOOPBACK` | `false` | Confirms that a TLS reverse proxy protects a non-loopback listener. The service logs a warning at start when it listens beyond this computer. |
 | `TIMEVAULT_DATABASE_URL` | none (required) | PostgreSQL connection URL. Secret. |
 | `TIMEVAULT_AUTO_MIGRATE` | `false` | Apply migrations at start. When `false` the service refuses to start if the schema is not current; run `migrate` first. |
-| `TIMEVAULT_REPOSITORY_PATH` | none (required) | Backup folder (the repository). A new or empty folder is initialised; a non-empty folder that is not a TimeVault repository is refused. Needs a restart to change. |
-| `TIMEVAULT_RESTORE_ROOT` | empty | Folder below which restores write (one folder per restore, created when needed). Empty disables restore. It must not be inside or contain the repository. |
+| `TIMEVAULT_REPOSITORY_PATH` | none (required) | Backup folder (the repository): where the contents of the backed-up files are stored. A new or empty folder is initialised; a non-empty folder that is not a TimeVault repository is refused. Needs a restart to change. |
+| `TIMEVAULT_RESTORE_ROOT` | empty | Restore folder. A restore never overwrites the original files and never writes into a monitored folder: it creates a new folder below this one for each restore (named on the restore form) and writes the restored copies there. Empty disables restore. It must not be inside or contain the repository or a monitored folder. |
 | `TIMEVAULT_AUTH_DISABLED` | `false` | Turns sign-in off: everyone is the local administrator. Only accepted on a loopback listener. For development only. |
 | `TIMEVAULT_REDIS_URL` | empty | The Redis user directory, `redis://[:password@]host:port/db` (`rediss://` for TLS). Empty means no company accounts. Secret. |
 | `TIMEVAULT_REDIS_KEY_PREFIX` | `app_user_` | Prefix of the keys of the user hashes. |
@@ -82,7 +84,7 @@ Every setting is an environment variable or a line of the `.env` file (see [Wher
 | `TIMEVAULT_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `TIMEVAULT_LOG_FORMAT` | `text` | `text` or `json`. |
 
-Variables used only by the helper scripts and tests: `TIMEVAULT_GO_ROOT`, `TIMEVAULT_PG_BIN`, `TIMEVAULT_TEST_DATABASE_URL` (see [Tests](#tests)). [configs/timevault.example.env](../configs/timevault.example.env) is a template with placeholders.
+Variables used only by the helper scripts and tests, kept in the same `.env` (the service ignores them): `TIMEVAULT_GO_ROOT`, `TIMEVAULT_PG_BIN`, `TIMEVAULT_EVERYTHING_EXE`, `TIMEVAULT_TEST_DATABASE_URL` and `TIMEVAULT_TEST_EVERYTHING_*` (see [Tests](#tests)). [configs/timevault.example.env](../configs/timevault.example.env) is a template with placeholders.
 
 ## Running outside the dev scripts
 
@@ -102,10 +104,10 @@ At start the service marks jobs that were running when the previous process ende
 
 ## Tests
 
-`go test ./...` runs everything. Tests that need PostgreSQL are skipped unless `TIMEVAULT_TEST_DATABASE_URL` points at a database; each test creates a private schema named `tvtest_<random>` and drops it, so use a separate test database such as `timevault_test` from `dev-db.ps1`, never the working database. If `data\pgdev\db.env` points at your own PostgreSQL server instead of the private cluster, create the test database there first (`CREATE DATABASE timevault_test OWNER timevault;`); the role needs no other rights. Tests that exercise junctions and Windows file locking run only on Windows. Everything live tests are described in [Everything search](#everything-search). The Redis tests need no Redis: they use an in-process fake with pickle data written by Python.
+`go test ./...` runs everything. Tests that need PostgreSQL are skipped unless `TIMEVAULT_TEST_DATABASE_URL` points at a database; each test creates a private schema named `tvtest_<random>` and drops it, so use a separate test database such as `timevault_test`, never the working database. `dev-db.ps1` writes the URL for the private cluster into `.env`; if `.env` points at your own PostgreSQL server instead, create the test database there first (`CREATE DATABASE timevault_test OWNER timevault;`) and set `TIMEVAULT_TEST_DATABASE_URL` in `.env`; the role needs no other rights. Tests that exercise junctions and Windows file locking run only on Windows. Everything live tests are described in [Everything search](#everything-search). The Redis tests need no Redis: they use an in-process fake with pickle data written by Python.
 
 ```powershell
-. .\scripts\dev-env.ps1      # also sets TIMEVAULT_TEST_DATABASE_URL from data\pgdev\db.env
+. .\scripts\dev-env.ps1      # loads TIMEVAULT_TEST_DATABASE_URL (and the other TIMEVAULT_TEST_* settings) from .env
 go test ./... -count=1
 ```
 
@@ -127,15 +129,15 @@ Search is optional. TimeVault asks a **local Everything instance** (the HTTP ser
 - Every result is checked again against the source root. Anything outside is dropped and counted, never shown.
 - Pages hold at most 200 results; folder sizes are shown as unknown when Everything does not index them.
 
-**Development instance** (`scripts\dev-everything.ps1`, needs Everything 1.4.x installed; point `TIMEVAULT_EVERYTHING_EXE` at `Everything.exe` if it is not found):
+**Development instance** (`scripts\dev-everything.ps1`, needs Everything 1.4.x installed; point `TIMEVAULT_EVERYTHING_EXE` (environment or `.env`) at `Everything.exe` if it is not found):
 
 | Action | Effect |
 |---|---|
-| `-Action start` | Starts the named instance `TimeVault` from a private copy of `Everything.exe` in `data\everything\bin`, with its own ini and database in `data\everything`. It indexes only `-IndexRoot` (default `data\dev\source`) as a folder index, listens on `127.0.0.1:38480` (`-Port`), has file download off, shows no tray icon and keeps no history. Random credentials are kept in `data\everything\http-credentials.txt`; the settings for the server are written to `data\everything\everything.env`, which `dev-env.ps1` and `dev-run.ps1` load. |
-| `-Action stop`, `status`, `reset` | Stop it (only its own process), show whether it answers, or stop and delete its ini, database and `everything.env`. |
+| `-Action start` | Starts the named instance `TimeVault` from a private copy of `Everything.exe` in `data\everything\bin`, with its own ini and database in `data\everything`. It indexes only `-IndexRoot` (default `data\dev\source`) as a folder index, listens on `127.0.0.1:38480` (`-Port`), has file download off, shows no tray icon and keeps no history. Random credentials are kept in `data\everything\http-credentials.txt`; the settings for the server (`TIMEVAULT_EVERYTHING_*`) and for the live tests (`TIMEVAULT_TEST_EVERYTHING_*`) are written into `.env`. |
+| `-Action stop`, `status`, `reset` | Stop it (only its own process), show whether it answers, or stop and delete its ini and database and remove its settings from `.env`. |
 | `-Action fixture` | Creates the test tree used by the live tests under `-IndexRoot`. |
 
-The script never touches your normal Everything instance and never writes into the Everything installation folder. It was tested from a normal (not elevated) shell. After `start`, restart the TimeVault server so it picks up `everything.env`.
+The script never touches your normal Everything instance and never writes into the Everything installation folder. It was tested from a normal (not elevated) shell. After `start`, restart the TimeVault server so it picks up the new settings in `.env`.
 
 Live tests against that instance:
 
@@ -178,7 +180,8 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | The service stops with an error about `.env` | The message names the file and the line number, never the line. `TIMEVAULT_ENV_FILE` must name an existing file. |
 | The service stops with "another TimeVault service is already running against this database" | A second `timevault-server` uses the same database (schema). Stop the other one first; its lock is released when its process ends. |
 | The service stops with "not a TimeVault repository" | `TIMEVAULT_REPOSITORY_PATH` points at a non-empty folder without `timevault-repository.json`. Use an empty folder. |
-| `go` is not found by the scripts | Add Go to `PATH`, or put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `data\local.env`. Setting the variable in one terminal only lasts for that terminal. |
+| `go` is not found by the scripts | Add Go to `PATH`, or put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env`. Setting the variable in one terminal only lasts for that terminal. |
+| The service listens on another port (or uses another setting) than the one written in `.env` | A `TIMEVAULT_*` variable in the process environment beats `.env`. The start-up log has a warning that names every setting it overrides (`TIMEVAULT_LISTEN_ADDR`, for a port). The usual cause is a variable left in the terminal by an older `dev-run.ps1`: start the service with `scripts\dev-run.ps1`, or load the session with `. .\scripts\dev-env.ps1`, which remove such variables. If it comes back, it is set in your Windows user or system environment. |
 | `dev-db.ps1` cannot find PostgreSQL | Set `TIMEVAULT_PG_BIN` or pass `-PgBin`. |
 | Sign-in answers 429 | Too many attempts: 5 per address or 10 failures per account name within 10 minutes (`Retry-After` says how long). Behind a reverse proxy all visitors share the proxy's address. Wait, or restart the service (the counters are in memory). |
 | Sign-in says the user accounts cannot be reached (503) | Redis does not answer. Browsing, sessions that already exist and the local administrator keep working. Check `TIMEVAULT_REDIS_URL` and run `timevault-server check-redis-users`; the **Status** page shows the directory as "degraded". Attempts made meanwhile count for the address, not against the account. |
@@ -210,23 +213,23 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | 项目 | 说明 |
 |---|---|
 | 带 NTFS 的 Windows | 在 Windows 11 Pro 上开发和测试。服务也能在其他系统上编译（部分路径规则和测试仅适用于 Windows），但只在 Windows 上实际运行过。 |
-| Go 1.25 或更新版本 | 构建所需（`go.mod` 声明了 `go 1.25.0`）；恢复代码使用了 `os.Root`。可以使用便携版 Go：把 `TIMEVAULT_GO_ROOT` 设为 Go 文件夹（包含 `bin\go.exe` 的那个），开发脚本会把它加入 `PATH`。若要在不同终端间长期生效、又不修改系统 `PATH`，请把 `TIMEVAULT_GO_ROOT=<Go 文件夹>` 这一行写入 `data\local.env`（已被 git 忽略；需自行创建）。 |
+| Go 1.25 或更新版本 | 构建所需（`go.mod` 声明了 `go 1.25.0`）；恢复代码使用了 `os.Root`。可以使用便携版 Go：把 `TIMEVAULT_GO_ROOT=<Go 文件夹>`（包含 `bin\go.exe` 的那个文件夹）这一行写入 `.env`，开发脚本就会在每个终端里把它加入 `PATH`，而不必修改系统 `PATH`。 |
 | PostgreSQL | 只测试过 16.4。所用 SQL 至少需要 PostgreSQL 11（identity 列、`hashtextextended`），但没有试过低于 16 的版本。 |
 | Redis（可选） | 另一个应用（dash）的用户目录：名为 `app_user_<ee_code>_<name>_<email>` 的哈希。没有它时只有本地管理员可以登录。测试使用的是进程内的模拟服务和 Python 生成的 pickle 数据，没有连接过公司自己的 Redis：请在它上面运行一次 `timevault-server check-redis-users`。 |
 | Everything 1.4.x（可选） | 仅用于搜索。没有它时搜索显示"未配置"，其他功能正常。见 [Everything 搜索](#everything-搜索)。 |
 
 ## 开发环境快速开始
 
-脚本把所有内容放在被 git 忽略的 `data\` 文件夹下，不会触碰已有的 PostgreSQL 服务，也不会打印任何机密信息。如果 PowerShell 拦截脚本，请用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\<name>.ps1` 运行。如果 Go 不在 `PATH` 中，请先创建 `data\local.env`，写入 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行；否则 `dev-run.ps1` 会立即以"The go command was not found"退出。
+脚本把数据放在被 git 忽略的 `data\` 文件夹下，**所有设置放在同一个被 git 忽略的文件里：仓库文件夹中的 `.env`**（见[设置放在哪里](#设置放在哪里)）。脚本不会触碰已有的 PostgreSQL 服务，也不会打印任何机密信息。如果 PowerShell 拦截脚本，请用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\<name>.ps1` 运行。如果 Go 不在 `PATH` 中，请先把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入 `.env`；否则 `dev-run.ps1` 会立即以"The go command was not found"退出。早期版本还把设置放在另外四个文件里（`data\local.env`、`data\pgdev\db.env`、`data\dev\server.env`、`data\everything\everything.env`）；脚本第一次运行时会把它们的设置移入 `.env` 并删除这些文件。
 
-1. `scripts\dev-db.ps1 start`（首次）创建并启动一个私有 PostgreSQL 集群，位于 `data\pgdev`，监听 `127.0.0.1:55432`，包含数据库 `timevault` 和 `timevault_test`。随机密码保存在 `data\pgdev\db.env`。它需要已安装的 PostgreSQL 二进制文件（用 `TIMEVAULT_PG_BIN` 或 `-PgBin` 指定位置）。其他动作：`stop`、`status`、`init`、`reset`（会删除该集群）。**也可以跳过这一步，改用你已有的 PostgreSQL 服务器**：自己创建好数据库和角色后，修改 `data\pgdev\db.env`，让 `TIMEVAULT_DATABASE_URL`（以及测试用的 `TIMEVAULT_TEST_DATABASE_URL`）指向它。这样脚本不会启动私有集群，并且 `dev-db.ps1` 会拒绝覆盖或删除指向其他服务器的 `db.env`。
-2. `scripts\dev-run.ps1` 在数据库设置指向私有集群（端口 55432）时启动它，否则认为你配置的服务器已在运行；它会构建 `data\dev\bin\timevault-server.exe`，首次运行时创建 `data\dev`（示例备份源文件夹、仓库、恢复目录、`server.env`，以及保存在 `data\dev\admin-password.txt` 的本地管理员 `admin` 的随机密码）和仓库文件夹下的 `.env`（服务自己的设置文件，带注释，已被 git 忽略）。然后在前台运行服务，地址为 `http://127.0.0.1:8660/`（用 `-Port` 修改端口；不带该参数时使用 `.env` 中的 `TIMEVAULT_LISTEN_ADDR`），并打印是否已配置 Redis 用户目录。按 Ctrl+C 停止。
-3. `scripts\dev-demo.ps1`（服务运行时）把 `data\dev\source` 登记为监控文件夹"Demo files"，并通过 API 创建三个恢复点，同时留下一些未备份的改动，使文件浏览页能显示已变更、新增和已删除的项目。
+1. `scripts\dev-db.ps1 start`（首次）创建并启动一个私有 PostgreSQL 集群，位于 `data\pgdev`，监听 `127.0.0.1:55432`，包含数据库 `timevault` 和 `timevault_test`。随机密码写入 `.env`（`TIMEVAULT_DATABASE_URL` 和 `TIMEVAULT_TEST_DATABASE_URL`）。它需要已安装的 PostgreSQL 二进制文件（用 `.env` 中的 `TIMEVAULT_PG_BIN` 或 `-PgBin` 指定位置）。其他动作：`stop`、`status`、`init`、`reset`（会删除该集群）。**也可以跳过这一步，改用你已有的 PostgreSQL 服务器**：自己创建好数据库和角色后，把 `TIMEVAULT_DATABASE_URL`（以及测试用的 `TIMEVAULT_TEST_DATABASE_URL`）写入 `.env`。这样脚本不会启动私有集群，并且只要 `.env` 指向其他服务器，`dev-db.ps1` 就会拒绝创建或重置私有集群。
+2. `scripts\dev-run.ps1` 在 `.env` 不存在时创建它（带注释，已被 git 忽略）；在 `TIMEVAULT_DATABASE_URL` 指向私有集群（端口 55432）时启动它，否则认为你配置的服务器已在运行；构建 `data\dev\bin\timevault-server.exe`；并把服务需要而 `.env` 里还没有的内容加入 `.env`：`data\dev` 下的仓库和恢复文件夹、`TIMEVAULT_AUTO_MIGRATE=true`、会话密钥，以及在第一次运行时为本地管理员 `admin` 生成的随机密码（密码放在 `data\dev\admin-password.txt`，只有它的哈希进入 `.env`）。**在启动服务之前，它会移除终端里遗留的 `TIMEVAULT_*` 变量**，因为它们会覆盖 `.env`，并且会把它们的名字列出来。然后在前台运行服务，地址为 `http://127.0.0.1:8660/`（用 `-Port` 修改这一次运行的端口；不带该参数时使用 `.env` 中的 `TIMEVAULT_LISTEN_ADDR`），并打印是否已配置 Redis 用户目录。按 Ctrl+C 停止。
+3. `scripts\dev-demo.ps1`（服务运行时）把 `data\dev\source` 登记为监控文件夹"Demo files"，并通过 API 创建三个恢复点，同时留下一些未备份的改动，使文件浏览页能显示已变更、新增和已删除的项目。它从 `.env` 中的 `TIMEVAULT_LISTEN_ADDR` 取得地址；用 `dev-run.ps1 -Port` 启动之后，请传入 `-BaseUrl http://127.0.0.1:<port>`。
 4. 打开该地址。任何人都可以浏览。要备份、恢复或修改设置，请用 `admin` 和 `data\dev\admin-password.txt` 中的密码登录；或者在 `.env` 中写入 `TIMEVAULT_REDIS_URL` 后使用公司账号登录（在仓库文件夹中运行 `data\dev\bin\timevault-server.exe check-redis-users` 检查）。页眉有语言切换（English / 中文）和浅色/深色主题切换按钮（在使用该按钮之前，页面跟随系统设置；之后浏览器会记住你的选择）。
 
 5. 可选，用于搜索框：`scripts\dev-everything.ps1 -Action start`，然后重启服务（见 [Everything 搜索](#everything-搜索)）。
 
-`. .\scripts\dev-env.ps1` 会把同样的设置加载到你自己的 PowerShell 会话中（`data\pgdev\db.env`、`data\dev\server.env`、`data\everything\everything.env` 和 `data\local.env`，各自在存在时加载），这样可以手动运行 `go test` 或 `timevault-server`；设置了 `TIMEVAULT_GO_ROOT` 时，它也会把 Go 加入该会话的 `PATH`。
+`. .\scripts\dev-env.ps1` 为你自己的 PowerShell 会话做好运行 `go test` 和手动运行 `timevault-server` 的准备。它会移除会话里遗留的 `TIMEVAULT_*` 设置（它们会覆盖 `.env`），把 `TIMEVAULT_ENV_FILE` 设为仓库的 `.env`，加载只有测试和工具才读取的内容（`TIMEVAULT_TEST_*`、`TIMEVAULT_GO_ROOT`、`TIMEVAULT_PG_BIN`、`TIMEVAULT_EVERYTHING_EXE`），并把 Go 加入该会话的 `PATH`。服务自己的设置不会被复制到环境变量中：服务直接读取 `.env`。
 
 ## 命令
 
@@ -244,14 +247,16 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 
 | 内容 | 位置 | 由谁修改 | 何时生效 |
 |---|---|---|---|
-| 部署设置：数据库 URL、Redis URL、监听地址、备份文件夹（`TIMEVAULT_REPOSITORY_PATH`）、恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）、会话密钥、搜索、worker、日志 | 进程环境变量和/或 `.env` 文件 | 安装服务的人，通过编辑文件 | 重启之后 |
+| 部署设置：数据库 URL、Redis URL、监听地址、备份文件夹（`TIMEVAULT_REPOSITORY_PATH`）、恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）、会话密钥、搜索、worker、日志 | `.env` 文件（进程环境变量会覆盖它） | 安装服务的人，通过编辑文件 | 重启之后 |
 | 监控文件夹：名称、文件夹、排除规则、启用或停用、自动备份计划 | 数据库（表 `sources`） | 管理员，在**设置**页或通过 `PATCH /api/v1/sources/{id}` | 立即 |
 | 账号和角色 | Redis（`app_user_*`），由另一个应用写入 | 那个应用 | 对已经登录的会话，在一分钟之内 |
 
-- `.env` 文件是 `TIMEVAULT_ENV_FILE` 所指的文件（它必须存在），否则是工作目录下的 `.env`，否则是 `timevault-server.exe` 旁边的 `.env`。使用找到的第一个；不会合并多个文件。**进程环境变量中已设置的变量优先于文件中的同名键。**开发时 `scripts\dev-run.ps1` 会先把 `data\pgdev\db.env`、`data\dev\server.env`、`data\everything\everything.env` 和 `data\local.env` 加载到环境变量中，所以在那里设置的键不能在 `.env` 中更改。
+- `.env` 文件是 `TIMEVAULT_ENV_FILE` 所指的文件（它必须存在），否则是工作目录下的 `.env`，否则是 `timevault-server.exe` 旁边的 `.env`。使用找到的第一个；不会合并多个文件。开发时它就是仓库文件夹中的 `.env`，也是唯一的设置文件：开发脚本读写它，`dev-run.ps1` 让服务使用它。
+- **进程环境变量中的 `TIMEVAULT_*` 变量优先于文件中的同名键**，而且除非你去查，否则没有任何提示：终端里遗留的某个变量会让服务无视你在 `.env` 里写的内容（典型表现是端口改不动）。因此服务在启动时会用一条警告点名所有被环境变量覆盖的设置（`check-redis-users` 也会打印它们），开发脚本则会从终端里移除这类变量。如果这条警告反复出现，说明该变量设在你的 Windows 用户或系统环境变量里。
 - 语法：每行一个 `KEY=VALUE`。空行和以 `#` 开头的行会被忽略，允许行首的 `export `，接受 UTF-8 字节顺序标记和 Windows 行尾。值按字面一直取到行尾，所以带 `\` 的路径或带 `#` 的密码无需转义（行尾的 ` # 注释` 会成为值的一部分）；值两侧成对的单引号或双引号会被去掉；同一个键以最后一次赋值为准。出错时只指出行号，绝不显示该行内容。
 - 该文件包含机密信息（数据库和 Redis 密码、会话密钥）。`/.env` 已在 `.gitignore` 中；请让它只能被运行服务的账户读取，并且绝不要提交填好的副本。[configs/timevault.example.env](../configs/timevault.example.env) 是模板。
 - **设置**页（任何已登录账号都可以打开）以只读方式显示监控文件夹、备份文件夹和恢复文件夹（含仓库的剩余空间），以及当前运行的配置：版本、监听地址、数据库和 Redis（显示为 `host:port/name`）、设置文件、本地管理员的名称、搜索服务器。机密信息绝不显示。只有管理员能看到修改监控文件夹的表单。
+- **备份文件夹和恢复文件夹。** 它们是两个不同的地方。备份文件夹（`TIMEVAULT_REPOSITORY_PATH`，即仓库）是 TimeVault 保存所有被备份内容的地方。恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）是放恢复出来的文件的地方：恢复不会覆盖原文件，也绝不会写入监控文件夹，所以它把恢复出来的副本写入恢复文件夹下的一个新文件夹（名称在恢复表单中填写，默认是 `restore-<日期>-<时间>`），需要哪些再从那里复制回去。两者都不能位于监控文件夹之内。
 
 ## 配置参考
 
@@ -264,8 +269,8 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | `TIMEVAULT_ALLOW_NON_LOOPBACK` | `false` | 确认由 TLS 反向代理保护非回环监听。服务在监听本机之外时，启动时会记录一条警告。 |
 | `TIMEVAULT_DATABASE_URL` | 无（必填） | PostgreSQL 连接 URL。机密。 |
 | `TIMEVAULT_AUTO_MIGRATE` | `false` | 启动时应用迁移。为 `false` 时，如果数据库结构不是最新，服务会拒绝启动；请先运行 `migrate`。 |
-| `TIMEVAULT_REPOSITORY_PATH` | 无（必填） | 备份文件夹（仓库）。新文件夹或空文件夹会被初始化；不是 TimeVault 仓库的非空文件夹会被拒绝。修改后需要重启。 |
-| `TIMEVAULT_RESTORE_ROOT` | 空 | 恢复写入的位置（每次恢复一个文件夹，需要时创建）。为空表示禁用恢复。不得位于仓库之内，也不得包含仓库。 |
+| `TIMEVAULT_REPOSITORY_PATH` | 无（必填） | 备份文件夹（仓库）：保存被备份文件内容的地方。新文件夹或空文件夹会被初始化；不是 TimeVault 仓库的非空文件夹会被拒绝。修改后需要重启。 |
+| `TIMEVAULT_RESTORE_ROOT` | 空 | 恢复文件夹。恢复不会覆盖原文件，也绝不会写入监控文件夹：每次恢复都会在此文件夹下新建一个文件夹（名称在恢复表单中填写），并把恢复出来的副本写到那里。为空表示禁用恢复。不得位于仓库或监控文件夹之内，也不得包含它们。 |
 | `TIMEVAULT_AUTH_DISABLED` | `false` | 关闭登录：每个人都是本地管理员。只在回环监听时被接受。仅用于开发。 |
 | `TIMEVAULT_REDIS_URL` | 空 | Redis 用户目录，`redis://[:password@]host:port/db`（TLS 用 `rediss://`）。为空表示没有公司账号。机密。 |
 | `TIMEVAULT_REDIS_KEY_PREFIX` | `app_user_` | 用户哈希的键前缀。 |
@@ -283,7 +288,7 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | `TIMEVAULT_LOG_LEVEL` | `info` | `debug`、`info`、`warn` 或 `error`。 |
 | `TIMEVAULT_LOG_FORMAT` | `text` | `text` 或 `json`。 |
 
-仅供辅助脚本和测试使用的变量：`TIMEVAULT_GO_ROOT`、`TIMEVAULT_PG_BIN`、`TIMEVAULT_TEST_DATABASE_URL`（见[测试](#测试)）。[configs/timevault.example.env](../configs/timevault.example.env) 是带占位符的模板。
+仅供辅助脚本和测试使用、同样放在这个 `.env` 里的变量（服务会忽略它们）：`TIMEVAULT_GO_ROOT`、`TIMEVAULT_PG_BIN`、`TIMEVAULT_EVERYTHING_EXE`、`TIMEVAULT_TEST_DATABASE_URL` 和 `TIMEVAULT_TEST_EVERYTHING_*`（见[测试](#测试)）。[configs/timevault.example.env](../configs/timevault.example.env) 是带占位符的模板。
 
 ## 不使用开发脚本时的运行方式
 
@@ -303,10 +308,10 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 
 ## 测试
 
-`go test ./...` 运行全部测试。需要 PostgreSQL 的测试在 `TIMEVAULT_TEST_DATABASE_URL` 未指向某个数据库时会被跳过；每个测试都会创建名为 `tvtest_<random>` 的私有 schema 并在结束后删除，所以请使用单独的测试数据库，例如 `dev-db.ps1` 创建的 `timevault_test`，不要使用正式使用的数据库。如果 `data\pgdev\db.env` 指向的是你自己的 PostgreSQL 服务器而不是私有集群，请先在那里创建测试数据库（`CREATE DATABASE timevault_test OWNER timevault;`）；该角色不需要其他权限。涉及联接点和 Windows 文件锁的测试只在 Windows 上运行。Everything 在线测试见 [Everything 搜索](#everything-搜索)。Redis 测试不需要 Redis：它们使用进程内的模拟服务和 Python 生成的 pickle 数据。
+`go test ./...` 运行全部测试。需要 PostgreSQL 的测试在 `TIMEVAULT_TEST_DATABASE_URL` 未指向某个数据库时会被跳过；每个测试都会创建名为 `tvtest_<random>` 的私有 schema 并在结束后删除，所以请使用单独的测试数据库，例如 `timevault_test`，不要使用正式使用的数据库。`dev-db.ps1` 会把私有集群的 URL 写入 `.env`；如果 `.env` 指向的是你自己的 PostgreSQL 服务器，请先在那里创建测试数据库（`CREATE DATABASE timevault_test OWNER timevault;`），并在 `.env` 中设置 `TIMEVAULT_TEST_DATABASE_URL`；该角色不需要其他权限。涉及联接点和 Windows 文件锁的测试只在 Windows 上运行。Everything 在线测试见 [Everything 搜索](#everything-搜索)。Redis 测试不需要 Redis：它们使用进程内的模拟服务和 Python 生成的 pickle 数据。
 
 ```powershell
-. .\scripts\dev-env.ps1      # also sets TIMEVAULT_TEST_DATABASE_URL from data\pgdev\db.env
+. .\scripts\dev-env.ps1      # loads TIMEVAULT_TEST_DATABASE_URL (and the other TIMEVAULT_TEST_* settings) from .env
 go test ./... -count=1
 ```
 
@@ -328,15 +333,15 @@ go test ./... -count=1
 - 每个结果都会再次对照备份源根目录检查。范围之外的结果会被丢弃并计数，绝不会显示。
 - 每页最多 200 条结果；Everything 没有索引文件夹大小时，文件夹大小显示为未知。
 
-**开发用实例**（`scripts\dev-everything.ps1`，需要已安装 Everything 1.4.x；找不到时请把 `TIMEVAULT_EVERYTHING_EXE` 指向 `Everything.exe`）：
+**开发用实例**（`scripts\dev-everything.ps1`，需要已安装 Everything 1.4.x；找不到时请把 `TIMEVAULT_EVERYTHING_EXE`（环境变量或 `.env`）指向 `Everything.exe`）：
 
 | 动作 | 效果 |
 |---|---|
-| `-Action start` | 用 `data\everything\bin` 中 `Everything.exe` 的私有副本启动名为 `TimeVault` 的实例，它的 ini 和数据库放在 `data\everything`。它只把 `-IndexRoot`（默认 `data\dev\source`）作为文件夹索引来建立索引，监听 `127.0.0.1:38480`（可用 `-Port` 修改），关闭文件下载，不显示托盘图标，也不保留历史记录。随机凭据保存在 `data\everything\http-credentials.txt`；服务所需的设置写入 `data\everything\everything.env`，`dev-env.ps1` 和 `dev-run.ps1` 会加载它。 |
-| `-Action stop`、`status`、`reset` | 停止它（只停止它自己的进程）、显示它是否应答，或停止并删除它的 ini、数据库和 `everything.env`。 |
+| `-Action start` | 用 `data\everything\bin` 中 `Everything.exe` 的私有副本启动名为 `TimeVault` 的实例，它的 ini 和数据库放在 `data\everything`。它只把 `-IndexRoot`（默认 `data\dev\source`）作为文件夹索引来建立索引，监听 `127.0.0.1:38480`（可用 `-Port` 修改），关闭文件下载，不显示托盘图标，也不保留历史记录。随机凭据保存在 `data\everything\http-credentials.txt`；服务所需的设置（`TIMEVAULT_EVERYTHING_*`）和在线测试所需的设置（`TIMEVAULT_TEST_EVERYTHING_*`）写入 `.env`。 |
+| `-Action stop`、`status`、`reset` | 停止它（只停止它自己的进程）、显示它是否应答，或停止并删除它的 ini 和数据库，并从 `.env` 中移除它的设置。 |
 | `-Action fixture` | 在 `-IndexRoot` 之下创建在线测试使用的测试目录树。 |
 
-该脚本绝不会触碰你日常使用的 Everything 实例，也绝不会写入 Everything 的安装文件夹。它是在普通（非提升权限）的 shell 中测试的。`start` 之后，请重启 TimeVault 服务，使其读取 `everything.env`。
+该脚本绝不会触碰你日常使用的 Everything 实例，也绝不会写入 Everything 的安装文件夹。它是在普通（非提升权限）的 shell 中测试的。`start` 之后，请重启 TimeVault 服务，使其读取 `.env` 中的新设置。
 
 针对该实例的在线测试：
 
@@ -379,7 +384,8 @@ Invoke-Expression "$s -Action stop"
 | 服务以与 `.env` 有关的错误退出 | 提示会指出文件和行号，绝不会显示该行内容。`TIMEVAULT_ENV_FILE` 必须指向一个存在的文件。 |
 | 服务以"another TimeVault service is already running against this database"退出 | 另一个 `timevault-server` 正在使用同一个数据库（schema）。请先停止那一个；它的锁会在其进程结束时释放。 |
 | 服务以"not a TimeVault repository"退出 | `TIMEVAULT_REPOSITORY_PATH` 指向的非空文件夹中没有 `timevault-repository.json`。请使用空文件夹。 |
-| 脚本找不到 `go` | 把 Go 加入 `PATH`，或把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入 `data\local.env`。只在某一个终端里设置该变量，仅对那个终端有效。 |
+| 脚本找不到 `go` | 把 Go 加入 `PATH`，或把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入 `.env`。只在某一个终端里设置该变量，仅对那个终端有效。 |
+| 服务监听的端口（或其他设置）与 `.env` 中写的不一致 | 进程环境变量中的 `TIMEVAULT_*` 变量优先于 `.env`。启动日志中有一条警告，会点名它覆盖的每一项设置（端口对应 `TIMEVAULT_LISTEN_ADDR`）。常见原因是旧版 `dev-run.ps1` 在终端里留下了变量：请用 `scripts\dev-run.ps1` 启动服务，或用 `. .\scripts\dev-env.ps1` 加载会话，它们都会移除这类变量。如果它又出现了，说明它设在你的 Windows 用户或系统环境变量里。 |
 | `dev-db.ps1` 找不到 PostgreSQL | 设置 `TIMEVAULT_PG_BIN` 或传入 `-PgBin`。 |
 | 登录返回 429 | 尝试次数过多：10 分钟内每个地址 5 次，或每个账号名 10 次失败（`Retry-After` 说明要等多久）。放在反向代理之后时，所有访问者共用代理的地址。请等待，或重启服务（计数保存在内存中）。 |
 | 登录提示无法连接用户账号服务（503） | Redis 没有应答。浏览、已有的会话和本地管理员仍可使用。请检查 `TIMEVAULT_REDIS_URL` 并运行 `timevault-server check-redis-users`；**状态**页会把该目录显示为"降级"。这期间的尝试计入地址，不会算到账号头上。 |

@@ -9,7 +9,7 @@ package search
 //	$s = 'powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-everything.ps1'
 //	Invoke-Expression "$s -Action fixture -IndexRoot data\everything-test"
 //	Invoke-Expression "$s -Action start -IndexRoot data\everything-test"
-//	. .\scripts\dev-env.ps1        # loads data\everything\everything.env, written by start
+//	. .\scripts\dev-env.ps1        # loads TIMEVAULT_TEST_EVERYTHING_* from .env, where start wrote them
 //	go test ./internal/search/... -run Live -count=1 -v
 //	Invoke-Expression "$s -Action stop"
 //

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -112,6 +113,42 @@ func TestLoadEnvLayersTheFileUnderTheEnvironment(t *testing.T) {
 	}
 	if c.LogLevel.String() != "WARN" {
 		t.Errorf("the environment must win over the file, level = %v", c.LogLevel)
+	}
+}
+
+// A variable left in a terminal silently beats the file; the start-up log has to be able to name it.
+func TestEnvOverridesNamesTheSettingsTheEnvironmentChanges(t *testing.T) {
+	dir := t.TempDir()
+	path := writeEnv(t, dir, "TIMEVAULT_LISTEN_ADDR=127.0.0.1:8660\n"+
+		"TIMEVAULT_LOG_LEVEL=debug\n"+
+		"TIMEVAULT_REDIS_URL=redis://:hunter2@127.0.0.1:6379/0\n"+
+		"TIMEVAULT_DATABASE_URL=postgres://u:p@db/x\n"+
+		"SOMETHING_ELSE=file\n")
+	env := lookupFrom(map[string]string{
+		"TIMEVAULT_LISTEN_ADDR":  "127.0.0.1:8470",  // differs: the stale-variable case
+		"TIMEVAULT_LOG_LEVEL":    "debug",           // same value: not an override
+		"TIMEVAULT_REDIS_URL":    "redis://other/0", // differs
+		"SOMETHING_ELSE":         "env",             // not a TIMEVAULT_ setting
+		"TIMEVAULT_AUTO_MIGRATE": "true",            // not in the file at all
+	})
+	got := EnvOverrides(env, path)
+	want := []string{"TIMEVAULT_LISTEN_ADDR", "TIMEVAULT_REDIS_URL"}
+	if !slices.Equal(got, want) {
+		t.Errorf("EnvOverrides = %v, want %v", got, want)
+	}
+	for _, name := range got {
+		if strings.Contains(name, "hunter2") {
+			t.Errorf("a value reached the result: %q", name)
+		}
+	}
+	if got := EnvOverrides(lookupFrom(nil), path); got != nil {
+		t.Errorf("an empty environment overrides nothing, got %v", got)
+	}
+	if got := EnvOverrides(env, ""); got != nil {
+		t.Errorf("no file, got %v", got)
+	}
+	if got := EnvOverrides(env, filepath.Join(dir, "missing.env")); got != nil {
+		t.Errorf("a missing file, got %v", got)
 	}
 }
 

@@ -10,7 +10,8 @@
 
     HTTP credentials are generated once into <DataDir>\http-credentials.txt. They are never printed
     unless -ShowEnv is given. After a start the settings the server and the live test need are written
-    to <DataDir>\everything.env (KEY=VALUE, including the password), which scripts\dev-env.ps1 loads.
+    into <repo>\.env, the only settings file (TIMEVAULT_EVERYTHING_* for the server, TIMEVAULT_TEST_EVERYTHING_*
+    for the live tests, including the password); restart the server to pick them up.
     The index is rebuilt from scratch on every start, so it always reflects the folder. The generated
     ini layout is the Everything 1.4 one; other versions are refused.
 
@@ -19,16 +20,17 @@
     ask for elevation) is never consulted and nothing is written to the installation folder.
 
 .PARAMETER Action
-    start    write the ini, start the instance, wait until it answers and has indexed the files, write everything.env
+    start    write the ini, start the instance, wait until it answers and has indexed the files, write its settings into .env
     stop     ask the instance to exit; falls back to stopping only its own process by PID
     status   show whether it runs, where it listens and whether it answers
-    reset    stop, then delete the instance ini, database and everything.env (credentials are kept)
+    reset    stop, then delete the instance ini and database and remove its settings from .env (credentials are kept)
     fixture  (re)create the live-test fixture tree <IndexRoot>\source and <IndexRoot>\source2
 
 .PARAMETER EverythingExe
     Path of the installed Everything.exe (1.4 only; it is copied, see above). Default:
-    $env:TIMEVAULT_EVERYTHING_EXE, then the path of a running Everything process (a standard-user shell
-    cannot see the path of an elevated one), then Everything.exe on PATH, then Program Files.
+    $env:TIMEVAULT_EVERYTHING_EXE, then TIMEVAULT_EVERYTHING_EXE in .env, then the path of a running
+    Everything process (a standard-user shell cannot see the path of an elevated one), then
+    Everything.exe on PATH, then Program Files.
 
 .PARAMETER Port
     HTTP port on 127.0.0.1. Default 38480.
@@ -93,6 +95,10 @@ function Write-Info([string]$Message) {
     if ($ShowEnv) { [Console]::Error.WriteLine($Message) } else { Write-Host $Message }
 }
 
+. (Join-Path $PSScriptRoot 'dotenv.ps1')
+function Write-DotEnvInfo([string]$Message) { Write-Info $Message }
+Move-LegacyEnvFiles
+
 function Resolve-FullPath([string]$Path) {
     $full = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
     if ($full.Length -gt 3) { $full = $full.TrimEnd('\') }
@@ -106,7 +112,6 @@ $DataDir = Resolve-FullPath $DataDir
 $IniPath = Join-Path $DataDir "Everything-$InstanceName.ini"
 $DbPath = Join-Path $DataDir "Everything-$InstanceName.db"
 $CredentialsPath = Join-Path $DataDir 'http-credentials.txt'
-$EnvPath = Join-Path $DataDir 'everything.env'
 $BaseUrl = 'http://{0}:{1}' -f $BindAddress, $Port
 $FixtureRoot = Join-Path $IndexRoot 'source'
 
@@ -117,10 +122,13 @@ function Test-IsInside([string]$Child, [string]$Parent) {
 
 function Find-EverythingExe {
     $candidate = $null
+    $fromEnvFile = Get-DotEnvValue 'TIMEVAULT_EVERYTHING_EXE'
     if ($EverythingExe) {
         $candidate = $EverythingExe
     } elseif ($env:TIMEVAULT_EVERYTHING_EXE) {
         $candidate = $env:TIMEVAULT_EVERYTHING_EXE
+    } elseif ($fromEnvFile) {
+        $candidate = $fromEnvFile
     } else {
         # WMI also reports the path of an elevated Everything to a standard-user shell; Get-Process does not.
         $running = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'Everything.exe'" | Where-Object { $_.ExecutablePath }) | Select-Object -First 1
@@ -322,7 +330,7 @@ function Start-Instance {
     $source = Find-EverythingExe
     $running = @(Get-InstanceProcess)
     if ($running.Count -gt 0) {
-        Write-EnvFile
+        Write-EnvSettings
         Write-Info "Instance '$InstanceName' is already running (pid $($running[0].ProcessId)). Use -Action reset to rebuild it."
         return
     }
@@ -344,7 +352,7 @@ function Start-Instance {
     $arguments = '-instance {0} -config "{1}" -db "{2}" -startup' -f $InstanceName, $IniPath, $DbPath
     $launched = Start-Process -FilePath $exe -ArgumentList $arguments -WindowStyle Hidden -PassThru
     $seconds = Wait-Ready $credentials $launched
-    Write-EnvFile
+    Write-EnvSettings
     $pids = (@(Get-InstanceProcess) | ForEach-Object { $_.ProcessId }) -join ','
     Write-Info ('Instance ''{0}'' is ready after {1:N1} s (pid {2}).' -f $InstanceName, $seconds, $pids)
 }
@@ -373,27 +381,27 @@ function Remove-InstanceFiles {
     foreach ($file in Get-ChildItem -LiteralPath $DataDir -Filter "Everything-$InstanceName*" -File -ErrorAction SilentlyContinue) {
         Remove-Item -LiteralPath $file.FullName -Force
     }
-    Remove-Item -LiteralPath $EnvPath -Force -ErrorAction SilentlyContinue
+    foreach ($key in $SettingKeys) { Remove-DotEnvValue $key }
 }
 
-# The KEY=VALUE file that scripts\dev-env.ps1 loads into a PowerShell session. Like http-credentials.txt it holds
-# the password and stays under the git-ignored data folder. The test variables are only set once the fixture exists.
-function Write-EnvFile {
+# The settings of this instance in .env, the only settings file. Like http-credentials.txt they hold the
+# password; .env is git-ignored. The test variables are only set once the fixture exists.
+$SettingKeys = @(
+    'TIMEVAULT_EVERYTHING_URL', 'TIMEVAULT_EVERYTHING_USERNAME', 'TIMEVAULT_EVERYTHING_PASSWORD',
+    'TIMEVAULT_TEST_EVERYTHING_URL', 'TIMEVAULT_TEST_EVERYTHING_USERNAME', 'TIMEVAULT_TEST_EVERYTHING_PASSWORD', 'TIMEVAULT_TEST_EVERYTHING_ROOT'
+)
+
+function Write-EnvSettings {
     $credentials = Get-Credentials
-    $lines = @(
-        "TIMEVAULT_EVERYTHING_URL=$BaseUrl",
-        "TIMEVAULT_EVERYTHING_USERNAME=$($credentials.Username)",
-        "TIMEVAULT_EVERYTHING_PASSWORD=$($credentials.Password)"
-    )
+    Set-DotEnvValue 'TIMEVAULT_EVERYTHING_URL' $BaseUrl
+    Set-DotEnvValue 'TIMEVAULT_EVERYTHING_USERNAME' $credentials.Username
+    Set-DotEnvValue 'TIMEVAULT_EVERYTHING_PASSWORD' $credentials.Password
     if (Test-Path -LiteralPath (Join-Path $FixtureRoot $FixtureMarker)) {
-        $lines += @(
-            "TIMEVAULT_TEST_EVERYTHING_URL=$BaseUrl",
-            "TIMEVAULT_TEST_EVERYTHING_USERNAME=$($credentials.Username)",
-            "TIMEVAULT_TEST_EVERYTHING_PASSWORD=$($credentials.Password)",
-            "TIMEVAULT_TEST_EVERYTHING_ROOT=$FixtureRoot"
-        )
+        Set-DotEnvValue 'TIMEVAULT_TEST_EVERYTHING_URL' $BaseUrl
+        Set-DotEnvValue 'TIMEVAULT_TEST_EVERYTHING_USERNAME' $credentials.Username
+        Set-DotEnvValue 'TIMEVAULT_TEST_EVERYTHING_PASSWORD' $credentials.Password
+        Set-DotEnvValue 'TIMEVAULT_TEST_EVERYTHING_ROOT' $FixtureRoot
     }
-    [System.IO.File]::WriteAllText($EnvPath, ($lines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($true)))
 }
 
 function Show-Status {
@@ -441,7 +449,7 @@ function Write-Env {
     Write-Info ('url       : {0}' -f $BaseUrl)
     Write-Info ('index root: {0}' -f $IndexRoot)
     Write-Info ('test root : {0} (TIMEVAULT_TEST_EVERYTHING_ROOT)' -f $FixtureRoot)
-    Write-Info ('env file  : {0} (loaded by scripts\dev-env.ps1)' -f $EnvPath)
+    Write-Info ('settings  : written into {0}, the only settings file (restart the server to pick them up)' -f $DotEnvFile)
     Write-Info ('credentials are stored in {0}; add -ShowEnv to emit them as environment assignments.' -f $CredentialsPath)
 }
 
