@@ -6,18 +6,18 @@
   {{template "icon" "folder"}}
   <h2>{{$.T "explorer.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
-  <a class="tv-btn tv-btn-primary" href="/backups">{{$.T "explorer.go_backups"}}</a>
+  <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
 <div class="tv-toolbar">
-  <form class="tv-source-form" method="get" action="/explorer" data-autosubmit>
+  <form class="tv-source-form" method="get" action="{{url "/explorer"}}" data-autosubmit>
     <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
     <select id="source-select" name="source" class="tv-select">
       {{range .Sources}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
     </select>
     <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
   </form>
-  <form class="tv-search" method="get" action="/explorer" role="search">
+  <form class="tv-search" method="get" action="{{url "/explorer"}}" role="search">
     <input type="hidden" name="source" value="{{.Source.ID}}">
     <span class="tv-search-icon">{{template "icon" "search"}}</span>
     <input class="tv-search-input" type="search" name="q" value="{{.Query}}" maxlength="256"
@@ -46,7 +46,7 @@
   <a href="{{url "/history" "source" .Source.ID "path" .Rel}}">{{template "icon" "history"}} {{$.T "explorer.open_history"}}</a>
 </p>
 {{else}}
-<div class="tv-alert tv-alert-info">{{$.T "explorer.no_backup_yet"}} <a href="/backups">{{$.T "explorer.go_backups"}}</a></div>
+<div class="tv-alert tv-alert-info">{{$.T "explorer.no_backup_yet"}} <a href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a></div>
 {{end}}
 
 {{if .Query}}
@@ -71,7 +71,7 @@
       <span class="c-name">{{if .IsDir}}{{template "icon" "folder"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span></span>
       <span class="c-type">{{$.TypeOf .Name .IsDir false}}</span>
       <span class="c-path tv-muted">/{{.DirRel}}</span>
-      <span class="c-size">{{if .IsDir}}-{{else}}{{bytes .Size}}{{end}}</span>
+      <span class="c-size">{{if ge .Size 0}}{{bytes .Size}}{{else}}-{{end}}</span>
       <span class="c-time">{{$.Time .ModTime}}</span>
     </a>
     {{end}}
@@ -92,11 +92,11 @@
   {{if .Listing.Entries}}
   <div class="tv-list" role="list">
     <div class="tv-list-head" role="row">
-      <a class="c-name tv-sort" href="{{.List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
-      <a class="c-type tv-sort" href="{{.List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
+      <a class="c-name tv-sort" href="{{url .List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
+      <a class="c-type tv-sort" href="{{url .List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
       <span class="c-status">{{$.T "list.backup_status"}}</span>
-      <a class="c-size tv-sort" href="{{.List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
-      <a class="c-time tv-sort" href="{{.List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
+      <a class="c-size tv-sort" href="{{url .List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
+      <a class="c-time tv-sort" href="{{url .List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
     </div>
     <div class="tv-list-rows">
     {{range .Listing.Entries}}
@@ -113,7 +113,7 @@
       <span class="c-name">{{if .IsDir}}{{template "icon" "folder"}}{{else if .Special}}{{template "icon" "link"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span></span>
       <span class="c-type">{{$.TypeOf .Name .IsDir .Special}}</span>
       <span class="c-status"><span class="tv-chip tv-chip-{{.Status}}">{{$.LiveLabel .Status}}</span></span>
-      <span class="c-size">{{if .IsDir}}-{{else if .Special}}-{{else}}{{bytes .Size}}{{end}}</span>
+      <span class="c-size">{{if .SizeKnown}}{{bytes .Size}}{{else}}-{{end}}</span>
       <span class="c-time">{{$.Time .ModTime}}</span>
     </a>
     {{end}}

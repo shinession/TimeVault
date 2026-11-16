@@ -37,6 +37,58 @@ type fakeDirectory struct {
 	mu       sync.Mutex
 	accounts map[string]fakeAccount
 	down     bool
+	// sso holds what the single sign-on service recorded, by token; ssoLooks counts how often it was asked.
+	sso      map[string]auth.SSOResult
+	ssoLooks int
+}
+
+var _ auth.SSODirectory = (*fakeDirectory)(nil)
+
+// setSSO records the result of the sign-on service for a token; an error result reads as one that cannot be trusted.
+func (d *fakeDirectory) setSSO(token string, r auth.SSOResult) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.sso == nil {
+		d.sso = map[string]auth.SSOResult{}
+	}
+	d.sso[token] = r
+}
+
+func (d *fakeDirectory) looks() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.ssoLooks
+}
+
+func (d *fakeDirectory) SSOResult(_ context.Context, token string) (auth.SSOResult, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.ssoLooks++
+	if d.down {
+		return auth.SSOResult{}, auth.ErrUnavailable
+	}
+	r, ok := d.sso[token]
+	switch {
+	case !ok:
+		return auth.SSOResult{}, auth.ErrSSOPending
+	case r.Status == "unreadable":
+		return auth.SSOResult{}, auth.ErrInvalidCredentials
+	}
+	return r, nil
+}
+
+func (d *fakeDirectory) Identify(_ context.Context, ecode string) (auth.Identity, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.down {
+		return auth.Identity{}, auth.ErrUnavailable
+	}
+	for _, a := range d.accounts {
+		if strings.EqualFold(a.ID, ecode) && !a.Inactive {
+			return a.identity(), nil
+		}
+	}
+	return auth.Identity{}, auth.ErrInvalidCredentials
 }
 
 func newFakeDirectory() *fakeDirectory {
@@ -141,11 +193,17 @@ func (c *testClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 }
 
-// forwarded lets a test pretend to be another client address: the sign-in throttle counts by it.
+// forwarded lets a test pretend to be another client address: the sign-in throttle counts by it. A request that carries
+// X-Test-Strip goes through a reverse proxy that takes the /tv prefix off, as the nginx rewrite does: the browser asked
+// for /tv/x, and the application sees /x.
 func forwarded(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c := r.Header.Get("X-Test-Client"); c != "" {
 			r.RemoteAddr = c + ":50000"
+		}
+		if r.Header.Get("X-Test-Strip") != "" && strings.HasPrefix(r.URL.Path, tvBase+"/") {
+			r.URL.Path = strings.TrimPrefix(r.URL.Path, tvBase)
+			r.URL.RawPath = strings.TrimPrefix(r.URL.RawPath, tvBase)
 		}
 		next.ServeHTTP(w, r)
 	})

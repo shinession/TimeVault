@@ -14,7 +14,7 @@
 <section class="tv-card">
   <div class="tv-card-head">
     <h1>{{template "icon" "file"}} {{.Hist.Name}}</h1>
-    <a class="tv-btn tv-btn-ghost" href="{{.BackURL}}">{{$.T "common.back"}}</a>
+    <a class="tv-btn tv-btn-ghost" href="{{url .BackURL}}">{{$.T "common.back"}}</a>
   </div>
   <p class="tv-muted">{{$.T "versions.intro" (len .Hist.Versions)}}</p>
 
@@ -42,7 +42,7 @@
           </td>
           <td class="tv-actions">
             {{if and $.CanRestore $.Data.RestoreEnabled (eq .State "ok")}}
-            <form method="post" action="/restore/preview" class="tv-inline-form">
+            <form method="post" action="{{url "/restore/preview"}}" class="tv-inline-form">
               {{template "csrf" $}}
               <input type="hidden" name="source_id" value="{{$.Data.Source.ID}}">
               <input type="hidden" name="point_id" value="{{.FirstPointID}}">

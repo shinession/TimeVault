@@ -84,8 +84,8 @@ func TestVocabulariesAreTranslated(t *testing.T) {
 	vocab := map[string][]string{
 		"verify.":      {"pending", "validated", "verified", "failed"},
 		"state.":       {"queued", "running", "succeeded", "failed", "canceled", "building", "committed", "aborted"},
-		"phase.":       {"", "snapshot_preparing", "scanning", "manifest_validating", "committing", "committed", "verifying", "planning", "restoring", "done"},
-		"jobkind.":     {"backup", "verify", "restore"},
+		"phase.":       {"", "snapshot_preparing", "scanning", "manifest_validating", "committing", "committed", "verifying", "planning", "restoring", "done", "pruning", "sweeping"},
+		"jobkind.":     {"backup", "verify", "restore", "prune"},
 		"kind.":        {"full", "incremental"},
 		"policy.":      {"skip", "rename", "overwrite"},
 		"item.":        {"ok", "skipped", "failed"},
@@ -137,6 +137,8 @@ func TestSafeNext(t *testing.T) {
 		"javascript:alert(1)":    "/",
 		"/ok\r\nSet-Cookie: x=1": "/",
 		"relative":               "/",
+		"/" + strings.Repeat("a", maxNextLength-1): "/" + strings.Repeat("a", maxNextLength-1), // the longest that is kept
+		"/" + strings.Repeat("a", maxNextLength):   "/",                                        // one more is not an address of this site
 	}
 	for in, want := range cases {
 		if got := safeNext(in); got != want {

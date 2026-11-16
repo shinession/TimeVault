@@ -6,11 +6,11 @@
   {{template "icon" "history"}}
   <h2>{{$.T "explorer.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
-  <a class="tv-btn tv-btn-primary" href="/backups">{{$.T "explorer.go_backups"}}</a>
+  <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
 <div class="tv-toolbar">
-  <form class="tv-source-form" method="get" action="/history" data-autosubmit>
+  <form class="tv-source-form" method="get" action="{{url "/history"}}" data-autosubmit>
     <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
     <select id="source-select" name="source" class="tv-select">
       {{range .Sources}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
@@ -24,7 +24,7 @@
   {{template "icon" "history"}}
   <h2>{{$.T "history.no_points_title"}}</h2>
   <p class="tv-muted">{{$.T "history.no_points_text"}}</p>
-  <a class="tv-btn tv-btn-primary" href="/backups">{{$.T "explorer.go_backups"}}</a>
+  <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
 <section class="tv-timeline" aria-label="{{$.T "history.timeline"}}">
@@ -54,7 +54,9 @@
   <span class="tv-chip tv-chip-{{.Point.Verification}}">{{$.VerifyLabel .Point.Verification}}</span>
   {{if not .IsLatest}}<span class="tv-chip tv-chip-old">{{$.T "history.older_point"}}</span>{{end}}
   {{if not .Point.Restorable}}<span class="tv-chip tv-chip-failed">{{$.T "history.not_restorable"}}</span>{{end}}
+  {{if .Point.Partial}}<span class="tv-chip tv-chip-warn" title="{{$.T "points.partial_hint"}}">{{$.T "points.partial"}}</span>{{end}}
 </div>
+{{if .Point.Partial}}<p class="tv-alert tv-alert-warn" role="note">{{template "icon" "alert"}} {{$.T "points.partial_hint"}}</p>{{end}}
 
 <nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
   <a class="tv-crumb" href="{{url "/history" "source" .Source.ID "point" .Point.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
@@ -73,7 +75,7 @@
 </div>
 {{end}}
 
-{{if $.CanRestore}}<form class="tv-restore-form" method="post" action="/restore/preview" data-selection-form>
+{{if $.CanRestore}}<form class="tv-restore-form" method="post" action="{{url "/restore/preview"}}" data-selection-form>
   {{template "csrf" $}}
   <input type="hidden" name="source_id" value="{{.Source.ID}}">
   <input type="hidden" name="point_id" value="{{.Point.ID}}">
@@ -97,17 +99,17 @@
     <div class="tv-list" role="list">
       <div class="tv-list-head" role="row">
         {{if $.CanRestore}}<label class="c-check"><input type="checkbox" data-select-all aria-label="{{$.T "common.select_all"}}"></label>{{end}}
-        <a class="c-name tv-sort" href="{{.List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
-        <a class="c-type tv-sort" href="{{.List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
+        <a class="c-name tv-sort" href="{{url .List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
+        <a class="c-type tv-sort" href="{{url .List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
         <span class="c-status">{{$.T "list.vs_now"}}</span>
-        <a class="c-size tv-sort" href="{{.List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
-        <a class="c-time tv-sort" href="{{.List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
+        <a class="c-size tv-sort" href="{{url .List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
+        <a class="c-time tv-sort" href="{{url .List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
       </div>
       <div class="tv-list-rows">
       {{range .Listing.Entries}}
       <div class="tv-row{{if $.CanRestore}} tv-row-select{{end}}" role="listitem">
         {{if $.CanRestore}}<label class="c-check"><input type="checkbox" name="paths" value="{{joinRel $.Data.Rel .Name}}" data-select-item aria-label="{{.Name}}"></label>{{end}}
-        <a class="c-name" href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name) "back" (url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" $.Data.Rel)}}{{end}}">
+        <a class="c-name" href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name) "back" (route "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" $.Data.Rel)}}{{end}}">
           {{if .IsDir}}{{template "icon" "folder"}}{{else if eq .State "skipped"}}{{template "icon" "alert"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span>
         </a>
         <span class="c-type">{{$.TypeOf .Name .IsDir false}}</span>

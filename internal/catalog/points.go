@@ -14,14 +14,14 @@ import (
 
 const pointColumns = `id, source_id, seq, kind, state, consistency, captured_at, committed_at,
 	file_count, dir_count, total_bytes, added_count, modified_count, deleted_count,
-	new_object_count, new_object_bytes, skipped_count, manifest_sha256, verification, verified_at, failure_reason`
+	new_object_count, new_object_bytes, skipped_count, manifest_sha256, verification, verified_at, failure_reason, partial`
 
 func scanPoint(row pgx.Row) (Point, error) {
 	var p Point
 	var reason *string
 	err := row.Scan(&p.ID, &p.SourceID, &p.Seq, &p.Kind, &p.State, &p.Consistency, &p.CapturedAt, &p.CommittedAt,
 		&p.FileCount, &p.DirCount, &p.TotalBytes, &p.AddedCount, &p.ModifiedCount, &p.DeletedCount,
-		&p.NewObjectCount, &p.NewObjectBytes, &p.SkippedCount, &p.ManifestSHA256, &p.Verification, &p.VerifiedAt, &reason)
+		&p.NewObjectCount, &p.NewObjectBytes, &p.SkippedCount, &p.ManifestSHA256, &p.Verification, &p.VerifiedAt, &reason, &p.Partial)
 	if reason != nil {
 		p.FailureReason = *reason
 	}

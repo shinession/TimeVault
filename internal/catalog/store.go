@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -48,6 +49,8 @@ type NewSource struct {
 	ScheduleMinutes *int
 	// DisplayPath is the network path users know the folder by; empty means none.
 	DisplayPath string
+	// MaxVersions is the most versions of one file to keep; nil means unlimited.
+	MaxVersions *int
 }
 
 // SourceUpdate replaces every editable field of a source. Callers validate it first.
@@ -59,14 +62,18 @@ type SourceUpdate struct {
 	ScheduleMinutes *int
 	// DisplayPath is the network path users know the folder by; empty removes it.
 	DisplayPath string
+	// MaxVersions is the most versions of one file to keep; nil means unlimited.
+	MaxVersions *int
 }
 
 // sourceColumns lists the columns scanSource reads; a missing display path comes back as "".
-const sourceColumns = `id, name, root_path, excludes, enabled, created_by, created_at, schedule_minutes, last_run_at, coalesce(display_path, '')`
+const sourceColumns = `id, name, root_path, excludes, enabled, created_by, created_at, schedule_minutes, last_run_at, coalesce(display_path, ''),
+	max_versions, last_run_ms, last_walk_at, last_walk_items`
 
 func scanSource(row pgx.Row) (Source, error) {
 	var s Source
-	err := row.Scan(&s.ID, &s.Name, &s.RootPath, &s.Excludes, &s.Enabled, &s.CreatedBy, &s.CreatedAt, &s.ScheduleMinutes, &s.LastRunAt, &s.DisplayPath)
+	err := row.Scan(&s.ID, &s.Name, &s.RootPath, &s.Excludes, &s.Enabled, &s.CreatedBy, &s.CreatedAt, &s.ScheduleMinutes, &s.LastRunAt, &s.DisplayPath,
+		&s.MaxVersions, &s.LastRunMS, &s.LastWalkAt, &s.LastWalkItems)
 	return s, err
 }
 
@@ -85,10 +92,10 @@ func (s *Store) CreateSource(ctx context.Context, in NewSource) (Source, error) 
 		excludes = []string{}
 	}
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO sources (name, root_path, root_key, excludes, created_by, schedule_minutes, display_path)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO sources (name, root_path, root_key, excludes, created_by, schedule_minutes, display_path, max_versions)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING `+sourceColumns,
-		in.Name, in.RootPath, RootKey(in.RootPath), excludes, in.CreatedBy, in.ScheduleMinutes, textOrNull(in.DisplayPath))
+		in.Name, in.RootPath, RootKey(in.RootPath), excludes, in.CreatedBy, in.ScheduleMinutes, textOrNull(in.DisplayPath), in.MaxVersions)
 	src, err := scanSource(row)
 	if isUniqueViolation(err) {
 		return Source{}, fmt.Errorf("%w: a source with this name or folder is already registered", ErrConflict)
@@ -100,9 +107,10 @@ func (s *Store) CreateSource(ctx context.Context, in NewSource) (Source, error) 
 }
 
 // UpdateSource replaces the editable fields of a source. Pointing it at another
-// folder forgets when it last ran: that run belonged to the old folder, and the
-// new one is due at once if it has a schedule. The display path can change at any
-// time, also when the source already has recovery points.
+// folder forgets when it last ran and last scanned: those belonged to the old folder, and the
+// new one is due at once if it has a schedule. Changing the exclude patterns forgets the last scan too,
+// because what a scan has to capture changed without a file changing: the search engine could not tell that
+// anything is new. The display path can change at any time, also when the source already has recovery points.
 func (s *Store) UpdateSource(ctx context.Context, id int64, u SourceUpdate) (Source, error) {
 	excludes := u.Excludes
 	if excludes == nil {
@@ -111,10 +119,14 @@ func (s *Store) UpdateSource(ctx context.Context, id int64, u SourceUpdate) (Sou
 	row := s.pool.QueryRow(ctx,
 		`UPDATE sources
 		 SET name = $2, root_path = $3, root_key = $4, excludes = $5, enabled = $6, schedule_minutes = $7, display_path = $8,
-		     last_run_at = CASE WHEN root_key = $4 THEN last_run_at ELSE NULL END
+		     max_versions = $9,
+		     last_run_at     = CASE WHEN root_key = $4 THEN last_run_at ELSE NULL END,
+		     last_run_ms     = CASE WHEN root_key = $4 THEN last_run_ms ELSE NULL END,
+		     last_walk_at    = CASE WHEN root_key = $4 AND excludes = $5 THEN last_walk_at ELSE NULL END,
+		     last_walk_items = CASE WHEN root_key = $4 AND excludes = $5 THEN last_walk_items ELSE NULL END
 		 WHERE id = $1
 		 RETURNING `+sourceColumns,
-		id, u.Name, u.RootPath, RootKey(u.RootPath), excludes, u.Enabled, u.ScheduleMinutes, textOrNull(u.DisplayPath))
+		id, u.Name, u.RootPath, RootKey(u.RootPath), excludes, u.Enabled, u.ScheduleMinutes, textOrNull(u.DisplayPath), u.MaxVersions)
 	src, err := scanSource(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Source{}, ErrNotFound
@@ -128,30 +140,114 @@ func (s *Store) UpdateSource(ctx context.Context, id int64, u SourceUpdate) (Sou
 	return src, nil
 }
 
-// MarkRun records that a backup run of the source has just ended, whatever its outcome.
-func (s *Store) MarkRun(ctx context.Context, sourceID int64) error {
-	if _, err := s.pool.Exec(ctx, `UPDATE sources SET last_run_at = now() WHERE id = $1`, sourceID); err != nil {
-		return fmt.Errorf("catalog: mark run: %w", err)
+// RunEnd describes how a backup run ended, for the scheduler.
+type RunEnd struct {
+	// Duration is how long the run took; zero leaves the recorded duration as it is.
+	Duration time.Duration
+	// WalkStarted is when the scan of the folder began. It is zero when no complete scan was made (the run
+	// failed, was canceled or was skipped), and then the scan time and item count recorded before stay as they are.
+	WalkStarted time.Time
+	// WalkItems is how many entries the search engine held below the folder when the scan began; nil when it was
+	// not asked or did not know the folder. It is recorded together with WalkStarted.
+	WalkItems *int64
+}
+
+// RecordRun records that a backup run of the source has just ended, whatever its outcome: the schedule
+// interval restarts, and the duration and the scan start are kept for the scheduler.
+func (s *Store) RecordRun(ctx context.Context, sourceID int64, end RunEnd) error {
+	var ms *int64
+	if end.Duration > 0 {
+		v := end.Duration.Milliseconds()
+		ms = &v
+	}
+	var walk *time.Time
+	if !end.WalkStarted.IsZero() {
+		walk = &end.WalkStarted
+	}
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE sources
+		 SET last_run_at = now(), last_run_ms = coalesce($2, last_run_ms),
+		     last_walk_at    = CASE WHEN $3::timestamptz IS NULL THEN last_walk_at ELSE $3 END,
+		     last_walk_items = CASE WHEN $3::timestamptz IS NULL THEN last_walk_items ELSE $4 END
+		 WHERE id = $1`, sourceID, ms, walk, end.WalkItems); err != nil {
+		return fmt.Errorf("catalog: record run: %w", err)
 	}
 	return nil
 }
 
-// DueSources returns the enabled sources whose schedule says a backup is due,
+// MarkRun records that a backup run of the source has just ended, whatever its outcome.
+func (s *Store) MarkRun(ctx context.Context, sourceID int64) error {
+	return s.RecordRun(ctx, sourceID, RunEnd{})
+}
+
+// Due is a source whose schedule says a backup is due.
+type Due struct {
+	ID              int64
+	RootPath        string
+	ScheduleMinutes int
+	LastRunAt       *time.Time
+	LastRunMS       *int64
+	LastWalkAt      *time.Time
+	LastWalkItems   *int64
+	// HasPoint is true when the source has a committed recovery point.
+	HasPoint bool
+	// LatestSkipped is how many items its newest committed recovery point could not capture.
+	LatestSkipped int64
+}
+
+// DueNow returns the enabled sources whose schedule says a backup is due, the one waiting longest first.
+// A source that never ran is due at once.
+func (s *Store) DueNow(ctx context.Context) ([]Due, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT s.id, s.root_path, s.schedule_minutes, s.last_run_at, s.last_run_ms, s.last_walk_at, s.last_walk_items,
+		        latest.id IS NOT NULL, coalesce(latest.skipped_count, 0)
+		 FROM sources s
+		 LEFT JOIN LATERAL (
+		     SELECT p.id, p.skipped_count FROM recovery_points p
+		     WHERE p.source_id = s.id AND p.state = 'committed' ORDER BY p.seq DESC LIMIT 1
+		 ) latest ON true
+		 WHERE s.enabled AND s.schedule_minutes IS NOT NULL
+		   AND (s.last_run_at IS NULL OR s.last_run_at + make_interval(mins => s.schedule_minutes) <= now())
+		 ORDER BY coalesce(s.last_run_at, 'epoch'), s.id`)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: due sources: %w", err)
+	}
+	due, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Due, error) {
+		var d Due
+		err := r.Scan(&d.ID, &d.RootPath, &d.ScheduleMinutes, &d.LastRunAt, &d.LastRunMS, &d.LastWalkAt, &d.LastWalkItems, &d.HasPoint, &d.LatestSkipped)
+		return d, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("catalog: due sources: %w", err)
+	}
+	return due, nil
+}
+
+// DueSources returns the ids of the enabled sources whose schedule says a backup is due,
 // the one waiting longest first. A source that never ran is due at once.
 func (s *Store) DueSources(ctx context.Context) ([]int64, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id FROM sources
-		 WHERE enabled AND schedule_minutes IS NOT NULL
-		   AND (last_run_at IS NULL OR last_run_at + make_interval(mins => schedule_minutes) <= now())
-		 ORDER BY coalesce(last_run_at, 'epoch'), id`)
+	due, err := s.DueNow(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("catalog: due sources: %w", err)
+		return nil, err
 	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[int64])
-	if err != nil {
-		return nil, fmt.Errorf("catalog: due sources: %w", err)
+	ids := make([]int64, len(due))
+	for i, d := range due {
+		ids[i] = d.ID
 	}
 	return ids, nil
+}
+
+// ScheduleIntervals returns the schedule of every enabled source that has one, in minutes.
+func (s *Store) ScheduleIntervals(ctx context.Context) ([]int, error) {
+	rows, err := s.pool.Query(ctx, `SELECT schedule_minutes FROM sources WHERE enabled AND schedule_minutes IS NOT NULL`)
+	if err != nil {
+		return nil, fmt.Errorf("catalog: schedule intervals: %w", err)
+	}
+	minutes, err := pgx.CollectRows(rows, pgx.RowTo[int])
+	if err != nil {
+		return nil, fmt.Errorf("catalog: schedule intervals: %w", err)
+	}
+	return minutes, nil
 }
 
 // GetSource returns one source.

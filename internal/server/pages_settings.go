@@ -20,6 +20,9 @@ const defaultScheduleMinutes = 60
 // errBadMinutes is the form-level counterpart of the engine's range check: the field did not hold a number.
 var errBadMinutes = fmt.Errorf("%w: the interval must be a whole number of minutes between 1 and 43200", backup.ErrInvalidSource)
 
+// errBadVersions is the same for the number of versions kept per file.
+var errBadVersions = fmt.Errorf("%w: the number of versions must be a whole number from 0 to %d", backup.ErrInvalidSource, backup.MaxVersionsLimit)
+
 // nextRun is when the schedule of a source starts its next backup. It is nil
 // without a schedule and while the source is switched off.
 func nextRun(src catalog.Source, now time.Time) *time.Time {
@@ -44,15 +47,20 @@ type settingsForm struct {
 	Enabled     bool
 	Scheduled   bool
 	Minutes     string
+	// MaxVersions is the number of versions kept per file as typed; "0" keeps them all.
+	MaxVersions string
 }
 
 func formOf(src catalog.Source) settingsForm {
 	f := settingsForm{
 		Name: src.Name, DisplayPath: src.DisplayPath, RootPath: src.RootPath, Excludes: strings.Join(src.Excludes, "\n"),
-		Enabled: src.Enabled, Minutes: strconv.Itoa(defaultScheduleMinutes),
+		Enabled: src.Enabled, Minutes: strconv.Itoa(defaultScheduleMinutes), MaxVersions: "0",
 	}
 	if src.ScheduleMinutes != nil {
 		f.Scheduled, f.Minutes = true, strconv.Itoa(*src.ScheduleMinutes)
+	}
+	if src.MaxVersions != nil {
+		f.MaxVersions = strconv.Itoa(*src.MaxVersions)
 	}
 	return f
 }
@@ -61,10 +69,11 @@ func parseSourceForm(r *http.Request) (settingsForm, backup.SourceRequest, error
 	f := settingsForm{
 		Name: r.PostFormValue("name"), DisplayPath: r.PostFormValue("display_path"), RootPath: r.PostFormValue("root_path"),
 		Excludes: r.PostFormValue("excludes"), Enabled: r.PostFormValue("enabled") != "", Scheduled: r.PostFormValue("schedule") != "",
-		Minutes: strings.TrimSpace(r.PostFormValue("schedule_minutes")),
+		Minutes: strings.TrimSpace(r.PostFormValue("schedule_minutes")), MaxVersions: strings.TrimSpace(r.PostFormValue("max_versions")),
 	}
 	req := backup.SourceRequest{
 		Name: f.Name, DisplayPath: f.DisplayPath, RootPath: f.RootPath, Excludes: strings.Split(strings.ReplaceAll(f.Excludes, "\r", ""), "\n"),
+		ConfirmPrune: r.PostFormValue("confirm_prune") != "",
 	}
 	if f.Scheduled {
 		n, err := strconv.Atoi(f.Minutes)
@@ -73,6 +82,15 @@ func parseSourceForm(r *http.Request) (settingsForm, backup.SourceRequest, error
 		}
 		req.ScheduleMinutes = &n
 	}
+	if f.MaxVersions != "" {
+		n, err := strconv.Atoi(f.MaxVersions)
+		if err != nil || n < 0 || n > backup.MaxVersionsLimit {
+			return f, req, errBadVersions
+		}
+		req.MaxVersions = &n
+	} else {
+		f.MaxVersions = "0"
+	}
 	return f, req, nil
 }
 
@@ -80,13 +98,17 @@ type settingsSource struct {
 	catalog.SourceSummary
 	// Minutes is the interval of the schedule; 0 when there is none.
 	Minutes int
-	NextRun *time.Time
+	// Versions is how many versions of a file are kept; 0 when all of them are.
+	Versions int
+	NextRun  *time.Time
 	// HasPoints locks the folder path: history belongs to a folder.
 	HasPoints bool
 	Form      settingsForm
-	// Open and Error show the edit form again after it was rejected.
-	Open  bool
-	Error string
+	// Open and Error show the edit form again after it was rejected; NeedsConfirm adds the box that confirms a
+	// limit that deletes older versions.
+	Open         bool
+	Error        string
+	NeedsConfirm bool
 }
 
 type settingsData struct {
@@ -109,6 +131,8 @@ type settingsFailure struct {
 	editID    int64
 	editForm  settingsForm
 	editError string
+	// confirm asks the edit form to show the box that confirms deleting older versions.
+	confirm bool
 }
 
 func (s *Server) settingsData(r *http.Request, sess auth.Session, fail settingsFailure) (*settingsData, error) {
@@ -120,7 +144,7 @@ func (s *Server) settingsData(r *http.Request, sess auth.Session, fail settingsF
 	}
 	d := &settingsData{
 		Deployment: s.opts.Deployment, Version: s.opts.Version, RestoreEnabled: s.svc.RestoreEnabled(), RepoFreePct: -1,
-		AddForm: settingsForm{Excludes: strings.Join(backup.DefaultExcludes, "\n"), Minutes: strconv.Itoa(defaultScheduleMinutes)},
+		AddForm: settingsForm{Excludes: strings.Join(backup.DefaultExcludes, "\n"), Minutes: strconv.Itoa(defaultScheduleMinutes), MaxVersions: "0"},
 	}
 	if fail.add != nil {
 		d.AddForm, d.AddError = *fail.add, fail.addError
@@ -131,11 +155,14 @@ func (s *Server) settingsData(r *http.Request, sess auth.Session, fail settingsF
 		if src.ScheduleMinutes != nil {
 			card.Minutes = *src.ScheduleMinutes
 		}
+		if src.MaxVersions != nil {
+			card.Versions = *src.MaxVersions
+		}
 		if card.HasPoints, err = s.cat().HasPoints(ctx, src.ID); err != nil {
 			return nil, err
 		}
 		if fail.editID == src.ID {
-			card.Form, card.Error, card.Open = fail.editForm, fail.editError, true
+			card.Form, card.Error, card.Open, card.NeedsConfirm = fail.editForm, fail.editError, true, fail.confirm
 		}
 		d.Sources = append(d.Sources, card)
 	}
@@ -168,16 +195,22 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request, sess aut
 // settingsRejected shows the settings page again with the form that was rejected and why.
 func (s *Server) settingsRejected(w http.ResponseWriter, r *http.Request, sess auth.Session, fail settingsFailure, err error) {
 	status, key := classify(err)
-	if errors.Is(err, service.ErrNotFound) || (status == http.StatusInternalServerError && !errors.Is(err, errBadMinutes)) {
+	if errors.Is(err, service.ErrNotFound) || (status == http.StatusInternalServerError && !errors.Is(err, errBadMinutes) && !errors.Is(err, errBadVersions)) {
 		s.handleErr(w, r, err)
 		return
 	}
 	p := s.newPage(r, sess, "settings.title", "settings")
 	msg := err.Error()
 	var invalid *backup.SourceError
+	var unconfirmed *service.PruneNotConfirmedError
 	switch {
+	case errors.As(err, &unconfirmed):
+		fail.confirm = true
+		msg = p.T("settings.prune_confirm", unconfirmed.Versions, unconfirmed.Files)
 	case errors.Is(err, errBadMinutes):
 		msg = p.T("settings.minutes_error")
+	case errors.Is(err, errBadVersions):
+		msg = p.T("settings.versions_error")
 	case errors.As(err, &invalid) && messageExists(invalid.Key):
 		msg = p.T(invalid.Key, invalid.Args...)
 	case key != "" && !errors.Is(err, backup.ErrInvalidSource):

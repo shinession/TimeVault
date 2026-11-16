@@ -15,12 +15,20 @@ import (
 // contained, case-insensitively, in Result.Name. Matches are ordered like the
 // real engine's name sort: folders first, then by name.
 type Mock struct {
-	mu          sync.RWMutex
-	entries     []Result
-	unavailable bool
+	mu             sync.RWMutex
+	entries        []Result
+	unavailable    bool
+	subfolders     map[string][]FolderInfo
+	subfolderCalls int
+	probes         map[string]ProbeResult
+	probeCalls     int
 }
 
-var _ Provider = (*Mock)(nil)
+var (
+	_ Provider     = (*Mock)(nil)
+	_ FolderLister = (*Mock)(nil)
+	_ ChangeProber = (*Mock)(nil)
+)
 
 // NewMock returns a provider that searches a copy of entries. Result.Path must
 // be the absolute path including Result.Name.
@@ -34,6 +42,88 @@ func (m *Mock) SetUnavailable(unavailable bool) {
 	m.mu.Lock()
 	m.unavailable = unavailable
 	m.mu.Unlock()
+}
+
+func folderKey(dir string) string { return strings.ToLower(strings.TrimRight(dir, `\/`)) }
+
+// SetSubfolders sets what Subfolders reports for the folder dir; nil removes it.
+func (m *Mock) SetSubfolders(dir string, folders []FolderInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if folders == nil {
+		delete(m.subfolders, folderKey(dir))
+		return
+	}
+	if m.subfolders == nil {
+		m.subfolders = map[string][]FolderInfo{}
+	}
+	m.subfolders[folderKey(dir)] = append([]FolderInfo(nil), folders...)
+}
+
+// Subfolders implements FolderLister. A folder that was not set has no subfolders.
+func (m *Mock) Subfolders(ctx context.Context, dir string, limit int) ([]FolderInfo, bool, error) {
+	if _, err := parseRoot(dir); err != nil {
+		return nil, false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, false, fmt.Errorf("search: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.subfolderCalls++
+	if m.unavailable {
+		return nil, false, unavailable("mock engine is down")
+	}
+	all := m.subfolders[folderKey(dir)]
+	if limit > 0 && len(all) > limit {
+		return append([]FolderInfo(nil), all[:limit]...), true, nil
+	}
+	return append([]FolderInfo(nil), all...), false, nil
+}
+
+// SubfolderCalls is how many times Subfolders was asked.
+func (m *Mock) SubfolderCalls() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.subfolderCalls
+}
+
+// SetProbe sets what Probe reports for root; a root that was not set is not indexed.
+func (m *Mock) SetProbe(root string, res ProbeResult) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.probes == nil {
+		m.probes = map[string]ProbeResult{}
+	}
+	m.probes[folderKey(root)] = res
+}
+
+// ProbeCalls is how many times Probe was asked.
+func (m *Mock) ProbeCalls() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.probeCalls
+}
+
+// Probe implements ChangeProber.
+func (m *Mock) Probe(ctx context.Context, root string, since time.Time) (ProbeResult, error) {
+	if _, err := parseRoot(root); err != nil {
+		return ProbeResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return ProbeResult{}, fmt.Errorf("search: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.probeCalls++
+	if m.unavailable {
+		return ProbeResult{}, unavailable("mock engine is down")
+	}
+	res, ok := m.probes[folderKey(root)]
+	if !ok {
+		return ProbeResult{}, ErrNotIndexed
+	}
+	return res, nil
 }
 
 // Name implements Provider.

@@ -11,6 +11,13 @@ const (
 	PhaseVerifying  = "verifying"
 )
 
+// Phases of the maintenance that removes old history: pruning deletes versions from the catalog, and
+// sweeping deletes the content that no version refers to any more from the repository.
+const (
+	PhasePruning  = "pruning"
+	PhaseSweeping = "sweeping"
+)
+
 // Progress is a snapshot of a running backup or verification.
 type Progress struct {
 	Phase       string `json:"phase"`

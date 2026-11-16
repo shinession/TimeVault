@@ -4,6 +4,79 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 0.1.5
+
+TimeVault can be served under a path of a host name that other applications share, such as `http://prod_eng.co.murata.local/tv/`. Until now it assumed that it is at the root of its address, and behind `/tv/` the first redirect left the prefix and ended on another application. The reasons are in [ADR 0012](./adr/0012-base-path-behind-a-reverse-proxy.md).
+
+### Added
+
+- **`TIMEVAULT_BASE_PATH`** (for example `/tv`; empty by default, which changes nothing). When it is set, every address that the pages, the redirects and the cookies give out carries the prefix: the links, forms, files and icons of the pages, every `Location` header (also those of the API and the redirects of the web server itself), the progress polling of a job, the single sign-on, and the cookies `tv_session`, `tv_lang` and `tv_flash`, which are limited to the prefix so that the other applications of the host name do not receive them. A request is accepted with or without the prefix, so the proxy may keep it (recommended) or take it off. The bare prefix (`/tv`) is sent to `/tv/`. The start-up log says `serving under a path prefix`; the Settings page shows the **Address prefix** and `GET /api/v1/settings` has `base_path`.
+- A tested nginx block, and what to check, in [runbook.md](./runbook.md#behind-a-reverse-proxy-under-a-path).
+
+### Changed
+
+- The page to return to after a sign-in, a language switch or a back link is accepted with the prefix written into it (the script puts the address of the page, with the prefix, into those links) and is checked again after the prefix is taken off, so `/tv//host` cannot become `//host`.
+- The `ok` answer of `POST /auth/sso/poll` gives `next` with the prefix, ready for the browser.
+
+### Upgrade notes
+
+1. **Nothing changes without the setting.** A service that is at the root of its address is served exactly as before.
+2. **To serve it under `/tv/`,** put `TIMEVAULT_BASE_PATH=/tv` into `.env` and restart. An nginx block that takes the prefix off (`rewrite ^/tv(/.*) $1 break;`) keeps working; the block in the runbook that passes the address on unchanged is simpler.
+3. **The client address.** In the first nginx, set `proxy_set_header X-Forwarded-For $remote_addr;` and list the proxy in `TIMEVAULT_TRUSTED_PROXIES`. `$http_x_forwarded_for`, which a block written for a second proxy uses, lets a browser choose the address that TimeVault records (it was reproduced).
+
+### Known limits
+
+- Under a path prefix TimeVault shares its origin (scheme, host and port) with the other applications of the host name; a host name or a port of its own is the stronger setup (see [security.md](./security.md)).
+- Opened on its own address without the prefix (`http://127.0.0.1:8660/explorer`), a page is shown, but the browser does not send the session cookie to it. Links and redirects lead to the prefixed addresses.
+- Checked with the real nginx and a browser against a scratch database, not on the company's server, and not with the company's single sign-on service.
+
+## 0.1.4
+
+Single sign-on with the Windows account, folder sizes from Everything, the duration of every operation in the audit log, a limit of versions per file with rolling deletion, and automatic backups that are spread out instead of all starting together. The reasons are in [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md), [ADR 0010](./adr/0010-version-limit-and-garbage-collection.md) and [ADR 0011](./adr/0011-staggered-scheduler-and-change-probe.md).
+
+### Added
+
+- **Single sign-on.** When `TIMEVAULT_SSO_HOST` is set (the host of the company sign-on service; it can change, so it is one line in `.env`), the login page has a second button, "Sign in with Windows (SSO)". It opens the sign-on page in a window, waits for the sign-on service to record who the browser is in Redis (`sso_login_<token>`), and signs that employee in when the account in Redis is active and the address matches the browser's. The accounts, the roles and the password sign-in are unchanged. New endpoints `POST /auth/sso/start` and `POST /auth/sso/poll`. The Settings page and `GET /api/v1/settings` show the sign-on service (`sso_host`). The audit log records the method (`sso` or `password`), the Windows user and, for a refused sign-in, the reason.
+- **`TIMEVAULT_SSO_REQUIRE_SAME_IP`** (default `true`) and **`TIMEVAULT_TRUSTED_PROXIES`**. Behind a reverse proxy TimeVault only sees the address of the proxy. List the proxies in `TIMEVAULT_TRUSTED_PROXIES` and their `X-Forwarded-For` header gives the real address of the browser, for the sign-in check, for the **From** column of the audit log and for the sign-in throttle.
+- **Folder sizes from Everything** on the Explorer: a folder row shows the size of everything inside it, as the index of Everything knows it (also in search results), and folders can be sorted by size. The modified time of a folder, read from the disk, was already shown. It needs "Index folder size" in Everything and `TIMEVAULT_EVERYTHING_URL`; without them the size cell shows "-" as before. The Time Machine and the versions page do not show folder sizes.
+- **A Duration column in the audit log.** Backups, verifications, restores and the deletion of old versions record how long they ran. For a backup the page also shows the speed of the data it copied, so the first backup of a big folder tells how fast the disk and the repository are. The Settings page shows "Last run took" for every monitored folder. The API has `duration_ms` on audit events and `last_run_ms` on monitored folders, and the `backup.finish` record holds `bytes`, `new_bytes` and `new_objects`.
+- **A limit of versions per file** for each monitored folder: the field "Versions kept per file" on the Settings page (0 keeps everything, up to 10000) and `max_versions` in the API. When a file has more versions, the older ones are deleted and the repository content that nobody needs any more is freed. Recovery points that lost versions are marked **Partial**. A "Version cleanup" job runs when a limit is set or lowered, and lowering it asks for confirmation (`confirm_prune`). The same job is queued when the deletion right after a backup could not run (for example because a verification of the folder was running), so that it is not forgotten. New audit action `retention.prune` ("Old versions deleted").
+- **Automatic backups that are spread out,** with the settings `TIMEVAULT_SCHEDULER_PARALLEL`, `TIMEVAULT_SCHEDULER_GAP`, `TIMEVAULT_SCHEDULER_REST`, `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE` and `TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY`, and the setting **`TIMEVAULT_PROCESS_PRIORITY`** (see Changed).
+- Migration `0004_v014.sql` (`audit_events.duration_ms`, `sources.max_versions`, `last_run_ms`, `last_walk_at`, `last_walk_items`, `recovery_points.partial`, the job kind `prune`, an index on the versions' checksums).
+
+### Changed
+
+- **Automatic backups no longer start all together.** In 0.1.3 every folder whose interval had passed was queued at the next tick. Now one automatic backup runs at a time (`TIMEVAULT_SCHEDULER_PARALLEL=1`), with a gap between two starts (`auto`: the gap that just keeps up with all the schedules, so 10 folders of 60 minutes start one every 6 minutes, within 30 seconds and 10 minutes) and a rest after each run (`auto`: as long as the run took, within 30 seconds and 10 minutes). When several folders are due, the ones without a recovery point come first, then the most overdue in proportion to its interval, then the one whose last run was the quickest. A backup started by hand is not affected.
+- **The service runs at a lower priority** by default (`TIMEVAULT_PROCESS_PRIORITY=below_normal`), so that a backup scan yields to the file shares of the same server. Set `normal` to get the old behaviour.
+- A restore or a verification of a folder is refused (HTTP 409 `prune_running`) while its older versions are being deleted, and so is a change of its version limit. A version cleanup that is only queued refuses nothing. A restore or verification that was queued before the deletion began waits for it to end.
+- **The job queue lets a version cleanup take turns with the other jobs of its folder.** A cleanup is not started while a backup, a restore or a verification of the folder runs, and none of them is started while it runs. A job that has to wait stays in the queue and holds no worker, and a backup that waits for a cleanup neither fails nor uses up its schedule interval.
+- Changing the exclude patterns of a monitored folder makes its next scheduled run scan the folder, also when the Everything probe is on (it forgets the last scan).
+- With the Everything probe on, a tick asks Everything at most 25 times, and an Everything that does not answer is left alone for a minute.
+- The page that a single sign-in returns to is limited to 2,048 bytes (a longer one becomes `/`); the same limit applies to the `next` of the password sign-in.
+- Verifying a partial recovery point still checks the objects, but skips the comparison with the manifest and says so.
+- When `TIMEVAULT_TRUSTED_PROXIES` is set, the client address of a request is taken from `X-Forwarded-For` if the request comes from one of those proxies.
+- Folder sizes, when they are known, take part in sorting by size. The size of a folder in `GET /api/v1/files` is the one from Everything, or 0 when it is not known.
+- The audit log has one more column; the job pages show the new phases "Deleting old versions" and "Freeing space".
+- The `.env` template that `scripts\dotenv.ps1` writes knows `TIMEVAULT_SSO_HOST`, and [configs/timevault.example.env](../configs/timevault.example.env) describes every new setting.
+
+### Upgrade notes
+
+1. **Database.** Apply migration `0004` (`TIMEVAULT_AUTO_MIGRATE=true`, or `timevault-server migrate`). It adds nullable columns, one flag that defaults to false, a wider check on the job kind and two indexes. The previous version keeps working against the migrated database, but it ignores the version limit.
+2. **Every monitored folder keeps all its versions** until an administrator sets a limit.
+3. **Single sign-on.** Set `TIMEVAULT_SSO_HOST` to turn it on; without it the login page is as before. The sign-on service must write its results to the same Redis as `TIMEVAULT_REDIS_URL`. Behind a reverse proxy set `TIMEVAULT_TRUSTED_PROXIES` (recommended; the proxy has to pass `X-Forwarded-For` and keep the `Host` header), or set `TIMEVAULT_SSO_REQUIRE_SAME_IP=false` if the proxy cannot pass the real address. With neither, every single sign-in ends with "The sign-in could not be matched to this browser".
+4. **Folder sizes.** In Everything turn on Tools > Options > Indexes > "Index folder size", and keep `TIMEVAULT_EVERYTHING_URL` set.
+5. **The Everything probe of the scheduler is off.** To turn it on set `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE=true` once Everything monitors the volumes of the folders and has "Index recently changed date" on (see [runbook.md](./runbook.md#scheduler-settings)).
+6. **API callers.** Monitored folders have `max_versions` and `last_run_ms`, recovery points have `partial`, audit events have `duration_ms`, `GET /api/v1/settings` has `sso_host`, `PATCH /api/v1/sources/{id}` takes `max_versions` and `confirm_prune`, and two new 409 error codes exist (see [api.md](./api.md)).
+
+### Known limits
+
+- Deleted versions are gone for good. A recovery point that lost versions no longer shows the files whose versions were deleted, so a restore from it can be incomplete.
+- The space of deleted versions is freed only at a time when no backup runs, and the service forgets that a sweep is pending when it restarts: the next deletion of old versions sweeps everything again.
+- The sizes of folders are those of the index of Everything, which can lag a little behind the disk. The Time Machine and the versions page show none.
+- The sign-on check compares addresses. With `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`, a sign-in can be forced on a person who opens a link that carries somebody else's token (see [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md)).
+- The pace of the automatic backups is kept in memory: after a restart the first one may start at once.
+- With the probe on, a change that Everything has not seen yet is found by the next scan that is not skipped, at the latest after `TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY`.
+
 ## 0.1.3
 
 Lists you can sort, filter and page, a Type column, display folders for the monitored folders, and no more real folders of the server for anyone but administrators. The reasons are in [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md) and [ADR 0008](./adr/0008-folder-lists-are-cut-on-the-server.md).
@@ -135,6 +208,79 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 0.1.5
+
+TimeVault 现在可以放在多个应用共用的主机名的某个路径下提供服务，例如 `http://prod_eng.co.murata.local/tv/`。此前它假定自己位于地址的根路径，所以在 `/tv/` 之后，第一次重定向就会离开前缀，落到另一个应用上。原因见 [ADR 0012](./adr/0012-base-path-behind-a-reverse-proxy.md)。
+
+### 新增
+
+- **`TIMEVAULT_BASE_PATH`**（例如 `/tv`；默认为空，此时什么都不变）。设置后，页面、重定向和 Cookie 给出的每个地址都带有该前缀：页面的链接、表单、文件和图标，每个 `Location` 头（包括 API 的，以及 Web 服务器自己的重定向），任务进度的轮询，单点登录，以及 Cookie `tv_session`、`tv_lang` 和 `tv_flash`，它们被限制在该前缀之内，所以同一主机名下的其他应用收不到它们。带前缀或不带前缀的请求都会被接受，所以代理可以保留前缀（推荐）也可以去掉它。只有前缀本身的请求（`/tv`）会被送到 `/tv/`。启动日志会写出 `serving under a path prefix`；设置页显示**地址前缀**，`GET /api/v1/settings` 有 `base_path`。
+- [runbook.md](./runbook.md#放在带路径前缀的反向代理之后) 中有一个测试过的 nginx 配置块，以及要检查的内容。
+
+### 变更
+
+- 登录、切换语言或返回链接之后要回到的页面，现在也接受把前缀写进去的形式（脚本会把带前缀的页面地址放进这些链接），并且在去掉前缀之后再检查一遍，所以 `/tv//host` 不会变成 `//host`。
+- `POST /auth/sso/poll` 的 `ok` 回答给出的 `next` 带有前缀，浏览器可以直接使用。
+
+### 升级说明
+
+1. **不设置该项就什么都不变。** 位于其地址根路径的服务，运行方式与以前完全一样。
+2. **要放在 `/tv/` 之下提供服务，** 请在 `.env` 中写入 `TIMEVAULT_BASE_PATH=/tv` 并重启。去掉前缀的 nginx 配置块（`rewrite ^/tv(/.*) $1 break;`）仍然可用；runbook 中原样转发地址的配置块更简单。
+3. **客户端地址。** 在第一层 nginx 中设置 `proxy_set_header X-Forwarded-For $remote_addr;`，并把该代理列入 `TIMEVAULT_TRUSTED_PROXIES`。为第二层代理写的配置块所用的 `$http_x_forwarded_for`，会让浏览器自己选择 TimeVault 记录的地址（已复现）。
+
+### 已知限制
+
+- 在路径前缀之下，TimeVault 与该主机名下的其他应用共享源（协议、主机和端口）；给它单独的主机名或端口是更强的做法（见 [security.md](./security.md)）。
+- 通过自己的地址、不带前缀打开（`http://127.0.0.1:8660/explorer`）时，页面会显示，但浏览器不会把会话 Cookie 发给它。链接和重定向都指向带前缀的地址。
+- 用真实的 nginx 和浏览器在临时数据库上检查过，没有在公司的服务器上检查，也没有配合公司的单点登录服务检查。
+
+## 0.1.4
+
+使用 Windows 账号的单点登录，来自 Everything 的文件夹大小，审计日志中每个操作的耗时，每个文件的版本数上限及滚动删除，以及错开时间而不是同时启动的自动备份。原因见 [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md)、[ADR 0010](./adr/0010-version-limit-and-garbage-collection.md) 和 [ADR 0011](./adr/0011-staggered-scheduler-and-change-probe.md)。
+
+### 新增
+
+- **单点登录。** 设置了 `TIMEVAULT_SSO_HOST`（公司单点登录服务的主机；它可能变更，所以是 `.env` 中的一行）后，登录页有第二个按钮"使用 Windows 账号登录（SSO）"。它在一个窗口中打开单点登录页面，等待单点登录服务在 Redis 中记录浏览器是谁（`sso_login_<token>`），并且在 Redis 中的账号有效、地址与浏览器一致时让该员工登录。账号、角色和密码登录都没有变化。新增端点 `POST /auth/sso/start` 和 `POST /auth/sso/poll`。设置页和 `GET /api/v1/settings` 会显示单点登录服务（`sso_host`）。审计日志记录登录方式（`sso` 或 `password`）、Windows 用户，以及被拒绝登录的原因。
+- **`TIMEVAULT_SSO_REQUIRE_SAME_IP`**（默认 `true`）和 **`TIMEVAULT_TRUSTED_PROXIES`**。在反向代理之后，TimeVault 只能看到代理的地址。把代理列在 `TIMEVAULT_TRUSTED_PROXIES` 中，它们的 `X-Forwarded-For` 头就会提供浏览器的真实地址，用于登录检查、审计日志的**来源**列和登录限流。
+- **文件浏览中来自 Everything 的文件夹大小：** 文件夹行显示其中所有内容的大小，数据来自 Everything 的索引（搜索结果中也一样），文件夹也可以按大小排序。文件夹的修改时间（从磁盘读取）原本就已显示。它需要 Everything 中的"索引文件夹大小"和 `TIMEVAULT_EVERYTHING_URL`；没有它们时大小单元格像以前一样显示"-"。时间机器和版本页面不显示文件夹大小。
+- **审计日志中的耗时列。** 备份、校验、恢复和删除旧版本都会记录运行了多久。对备份，页面还显示它所复制数据的速度，所以大文件夹的第一次备份能说明磁盘和仓库有多快。设置页面为每个监控文件夹显示"上次耗时"。API 在审计事件上有 `duration_ms`，在监控文件夹上有 `last_run_ms`，`backup.finish` 记录包含 `bytes`、`new_bytes` 和 `new_objects`。
+- **每个监控文件夹每个文件的版本数上限：** 设置页面上的"每个文件保留的版本数"字段（0 表示全部保留，最大 10000）和 API 中的 `max_versions`。当一个文件的版本多于上限时，较旧的版本会被删除，并释放没有人再需要的仓库内容。失去版本的恢复点会被标记为**不完整**。设置或调低上限时会运行"版本清理"任务，调低时会要求确认（`confirm_prune`）。当备份之后立即进行的删除无法运行时（例如该文件夹的校验正在运行），也会排入同样的任务，这样它就不会被遗忘。新增审计操作 `retention.prune`（"已删除旧版本"）。
+- **错开时间的自动备份，** 带有设置 `TIMEVAULT_SCHEDULER_PARALLEL`、`TIMEVAULT_SCHEDULER_GAP`、`TIMEVAULT_SCHEDULER_REST`、`TIMEVAULT_SCHEDULER_EVERYTHING_PROBE` 和 `TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY`，以及设置 **`TIMEVAULT_PROCESS_PRIORITY`**（见"变更"）。
+- 迁移 `0004_v014.sql`（`audit_events.duration_ms`、`sources.max_versions`、`last_run_ms`、`last_walk_at`、`last_walk_items`、`recovery_points.partial`、任务类型 `prune`、版本校验值上的索引）。
+
+### 变更
+
+- **自动备份不再同时启动。** 在 0.1.3 中，间隔已过的每个文件夹都会在下一个周期被排入队列。现在自动备份一次运行一个（`TIMEVAULT_SCHEDULER_PARALLEL=1`），两次启动之间有间隔（`auto`：刚好跟得上所有计划的间隔，所以 10 个每 60 分钟的文件夹每 6 分钟启动一个，限制在 30 秒到 10 分钟之内），每次运行之后有休息（`auto`：等于这次运行所花的时间，限制在 30 秒到 10 分钟之内）。有多个文件夹到期时，没有恢复点的先来，然后是相对于自己的间隔超期最多的，再然后是上次运行最快的。手动启动的备份不受影响。
+- **服务默认以较低的优先级运行**（`TIMEVAULT_PROCESS_PRIORITY=below_normal`），这样备份扫描会让位于同一台服务器上的文件共享。设为 `normal` 可恢复旧行为。
+- 正在删除某个文件夹的较旧版本时，该文件夹的恢复或校验会被拒绝（HTTP 409 `prune_running`），更改它的版本数上限也会被拒绝。只是排在队列里的版本清理不会拒绝任何操作。在删除开始之前就已排队的恢复或校验，会等到删除结束。
+- **任务队列让版本清理与其所在文件夹的其他任务轮流执行。** 该文件夹的备份、恢复或校验正在运行时不会启动清理，清理运行时也不会启动它们中的任何一个。需要等待的任务留在队列中，不占用任何 worker，而等待清理的备份既不会失败，也不会用掉它的计划间隔。
+- 更改监控文件夹的排除规则会让它的下一次计划运行扫描该文件夹，即使开启了 Everything 探测也一样（它会忘掉上次的扫描记录）。
+- 开启 Everything 探测后，一个周期最多询问 Everything 25 次，没有应答的 Everything 在一分钟内不会再被询问。
+- 一次单点登录返回的页面地址限制在 2,048 字节以内（更长的会变成 `/`）；密码登录的 `next` 适用同样的限制。
+- 校验不完整的恢复点仍然检查对象，但跳过与清单的比较，并且会说明这一点。
+- 设置了 `TIMEVAULT_TRUSTED_PROXIES` 时，如果请求来自其中的某个代理，请求的客户端地址取自 `X-Forwarded-For`。
+- 文件夹大小在已知时参与按大小排序。`GET /api/v1/files` 中文件夹的大小是来自 Everything 的大小，未知时为 0。
+- 审计日志多了一列；任务页面显示新的阶段"删除旧版本"和"释放空间"。
+- `scripts\dotenv.ps1` 写出的 `.env` 模板认识 `TIMEVAULT_SSO_HOST`，[configs/timevault.example.env](../configs/timevault.example.env) 则说明了每一个新设置。
+
+### 升级说明
+
+1. **数据库。** 应用迁移 `0004`（`TIMEVAULT_AUTO_MIGRATE=true`，或 `timevault-server migrate`）。它增加了可为空的列、一个默认为 false 的标志、对任务类型更宽的检查，以及两个索引。上一个版本在已迁移的数据库上仍可工作，但会忽略版本数上限。
+2. **每个监控文件夹都保留全部版本，** 直到管理员设置上限。
+3. **单点登录。** 设置 `TIMEVAULT_SSO_HOST` 即可开启；不设置时登录页与以前一样。单点登录服务必须把结果写入与 `TIMEVAULT_REDIS_URL` 相同的 Redis。在反向代理之后，请设置 `TIMEVAULT_TRUSTED_PROXIES`（推荐；代理必须传递 `X-Forwarded-For` 并保留 `Host` 头），如果代理无法传递真实地址，则设置 `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`。两者都没有时，每次单点登录都会以"无法把这次登录与当前浏览器对应起来"结束。
+4. **文件夹大小。** 在 Everything 中开启 工具 > 选项 > 索引 > "索引文件夹大小"，并保持设置 `TIMEVAULT_EVERYTHING_URL`。
+5. **调度器的 Everything 探测默认关闭。** 当 Everything 监控着这些文件夹所在的卷并开启"索引最近更改日期"之后，设置 `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE=true` 即可开启（见 [runbook.md](./runbook.md#调度器设置)）。
+6. **API 调用方。** 监控文件夹有 `max_versions` 和 `last_run_ms`，恢复点有 `partial`，审计事件有 `duration_ms`，`GET /api/v1/settings` 有 `sso_host`，`PATCH /api/v1/sources/{id}` 接受 `max_versions` 和 `confirm_prune`，并新增两个 409 错误码（见 [api.md](./api.md)）。
+
+### 已知限制
+
+- 被删除的版本永远消失。失去版本的恢复点不再显示其版本已被删除的文件，所以从它恢复可能不完整。
+- 被删除版本占用的空间只在没有备份运行的时候才会释放，并且服务重启后会忘记有一次清扫待办：下一次删除旧版本时会再次清扫全部内容。
+- 文件夹的大小来自 Everything 的索引，可能比磁盘稍微滞后。时间机器和版本页面不显示大小。
+- 单点登录检查比较的是地址。设置 `TIMEVAULT_SSO_REQUIRE_SAME_IP=false` 后，可能有人把登录强加给打开了带有别人令牌的链接的人（见 [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md)）。
+- 自动备份的间隔状态保存在内存中：重启后，第一个备份可能立即启动。
+- 开启探测后，Everything 尚未看到的变化会在下一次没有被跳过的扫描时被发现，最晚在 `TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY` 之后。
 
 ## 0.1.3
 

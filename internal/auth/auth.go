@@ -172,7 +172,10 @@ type Options struct {
 	TTL          time.Duration
 	CookieName   string
 	CookieSecure bool
-	Now          func() time.Time
+	// CookiePath is the path the session cookie is limited to. Default "/"; behind a reverse proxy that serves
+	// the site under a path prefix, give the prefix so the cookie is not sent to the other sites of the same host.
+	CookiePath string
+	Now        func() time.Time
 }
 
 // Manager issues and validates sessions.
@@ -200,6 +203,9 @@ func NewManager(o Options) (*Manager, error) {
 	}
 	if o.CookieName == "" {
 		o.CookieName = "tv_session"
+	}
+	if o.CookiePath == "" {
+		o.CookiePath = "/"
 	}
 	if o.AdminUser == "" {
 		o.AdminUser = "admin"
@@ -263,7 +269,7 @@ func (m *Manager) StartSession(w http.ResponseWriter, id Identity) (Session, err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(raw)
 	http.SetCookie(w, &http.Cookie{
-		Name: m.o.CookieName, Value: payload + "." + m.sign(payload), Path: "/",
+		Name: m.o.CookieName, Value: payload + "." + m.sign(payload), Path: m.o.CookiePath,
 		HttpOnly: true, Secure: m.o.CookieSecure, SameSite: http.SameSiteLaxMode,
 		Expires: s.ExpiresAt, MaxAge: int(m.o.TTL.Seconds()),
 	})
@@ -273,7 +279,7 @@ func (m *Manager) StartSession(w http.ResponseWriter, id Identity) (Session, err
 // ClearSession expires the session cookie.
 func (m *Manager) ClearSession(w http.ResponseWriter) {
 	http.SetCookie(w, &http.Cookie{
-		Name: m.o.CookieName, Value: "", Path: "/", HttpOnly: true, Secure: m.o.CookieSecure,
+		Name: m.o.CookieName, Value: "", Path: m.o.CookiePath, HttpOnly: true, Secure: m.o.CookieSecure,
 		SameSite: http.SameSiteLaxMode, MaxAge: -1, Expires: time.Unix(0, 0),
 	})
 }

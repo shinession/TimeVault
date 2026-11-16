@@ -395,6 +395,26 @@ func (s *Store) Verify(ctx context.Context, h Hash, size int64) error {
 	return nil
 }
 
+// Delete removes an object from the repository. An object that is not there counts as deleted, so an
+// interrupted delete can simply be repeated. The caller must know that nothing refers to the object any
+// more and that no backup can be storing the same content at the moment (see backup.Engine.SweepObjects).
+func (s *Store) Delete(h Hash) error {
+	path := s.ObjectPath(h)
+	lock := &s.publish[h[0]]
+	lock.Lock()
+	defer lock.Unlock()
+
+	// Put leaves objects read-only and Windows refuses to delete such a file. Any other failure shows up in Remove.
+	if err := os.Chmod(path, 0o666); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		_ = os.Chmod(path, 0o444) // an object that could not be deleted stays as Put made it
+		return fmt.Errorf("repository: delete object %s: %w", h, err)
+	}
+	return nil
+}
+
 // CleanTmp removes temporary objects older than maxAge that a crashed run left behind.
 func (s *Store) CleanTmp(maxAge time.Duration) (int, error) {
 	dir := filepath.Join(s.root, tmpDir)

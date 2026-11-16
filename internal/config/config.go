@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"runtime"
@@ -62,6 +63,35 @@ type Config struct {
 	JobWorkers  int
 	HashWorkers int
 
+	// SSOHost is where the single sign-on service lives, as scheme://host[:port] with no path (TIMEVAULT_SSO_HOST).
+	// Empty means the login page offers no single sign-on.
+	SSOHost string
+	// SSORequireSameIP lets a single sign-on succeed only when the browser that asked for it has the address the
+	// sign-on service saw (TIMEVAULT_SSO_REQUIRE_SAME_IP).
+	SSORequireSameIP bool
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For header is believed (TIMEVAULT_TRUSTED_PROXIES).
+	TrustedProxies []netip.Prefix
+	// BasePath is the path prefix the site is served under behind a reverse proxy, such as /tv
+	// (TIMEVAULT_BASE_PATH). Empty means the site is at the root of its address.
+	BasePath string
+
+	// SchedulerParallel is how many automatic backups may run at the same time.
+	SchedulerParallel int
+	// SchedulerGapAuto derives the time between two automatic backups from the schedules; otherwise
+	// SchedulerGap is that time.
+	SchedulerGapAuto bool
+	SchedulerGap     time.Duration
+	// SchedulerRestAuto makes the pause after an automatic backup as long as the backup took; otherwise
+	// SchedulerRest is that pause.
+	SchedulerRestAuto bool
+	SchedulerRest     time.Duration
+	// SchedulerEverythingProbe lets the scheduler ask Everything whether a folder changed before it scans it.
+	SchedulerEverythingProbe bool
+	// SchedulerFullScanEvery is the longest a folder goes without a complete scan when the probe is on.
+	SchedulerFullScanEvery time.Duration
+	// ProcessPriority is normal, below_normal or background (TIMEVAULT_PROCESS_PRIORITY).
+	ProcessPriority string
+
 	LogLevel slog.Level
 	LogJSON  bool
 
@@ -105,6 +135,36 @@ func Load(lookup Lookup) (Config, error) {
 		EverythingTimeout:  l.duration("TIMEVAULT_EVERYTHING_TIMEOUT", 5*time.Second),
 		JobWorkers:         l.integer("TIMEVAULT_JOB_WORKERS", 2, 1, 16),
 		HashWorkers:        l.integer("TIMEVAULT_HASH_WORKERS", min(4, runtime.NumCPU()), 1, 32),
+
+		SSORequireSameIP:         l.boolean("TIMEVAULT_SSO_REQUIRE_SAME_IP", true),
+		SchedulerParallel:        l.integer("TIMEVAULT_SCHEDULER_PARALLEL", 1, 1, 4),
+		SchedulerEverythingProbe: l.boolean("TIMEVAULT_SCHEDULER_EVERYTHING_PROBE", false),
+		SchedulerFullScanEvery:   l.duration("TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY", 24*time.Hour),
+	}
+	var err error
+	if c.SSOHost, err = parseSSOHost(l.str("TIMEVAULT_SSO_HOST", "")); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_SSO_HOST: %w", err))
+	}
+	if c.TrustedProxies, err = parseProxies(l.str("TIMEVAULT_TRUSTED_PROXIES", "")); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_TRUSTED_PROXIES: %w", err))
+	}
+	if c.BasePath, err = ParseBasePath(l.str("TIMEVAULT_BASE_PATH", "")); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_BASE_PATH %w", err))
+	}
+	if c.SchedulerGap, c.SchedulerGapAuto, err = autoOrDuration(l.str("TIMEVAULT_SCHEDULER_GAP", "auto")); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_SCHEDULER_GAP %w", err))
+	}
+	if c.SchedulerRest, c.SchedulerRestAuto, err = autoOrDuration(l.str("TIMEVAULT_SCHEDULER_REST", "auto")); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_SCHEDULER_REST %w", err))
+	}
+	switch p := strings.ToLower(l.str("TIMEVAULT_PROCESS_PRIORITY", "below_normal")); p {
+	case "normal", "below_normal", "background":
+		c.ProcessPriority = p
+	default:
+		l.errs = append(l.errs, errors.New("TIMEVAULT_PROCESS_PRIORITY must be normal, below_normal or background"))
+	}
+	if c.SchedulerFullScanEvery < time.Hour || c.SchedulerFullScanEvery > 30*24*time.Hour {
+		l.errs = append(l.errs, errors.New("TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY must be between 1h and 720h"))
 	}
 	if key := l.str("TIMEVAULT_SESSION_KEY", ""); key != "" {
 		decoded, err := decodeKey(key)
@@ -272,7 +332,23 @@ func (c Config) LogAttrs() []any {
 		"everything_configured", c.EverythingURL != "",
 		"job_workers", c.JobWorkers,
 		"hash_workers", c.HashWorkers,
+		"sso_host", c.SSOHost,
+		"sso_require_same_ip", c.SSORequireSameIP,
+		"trusted_proxies", len(c.TrustedProxies),
+		"base_path", c.BasePath,
+		"scheduler_parallel", c.SchedulerParallel,
+		"scheduler_gap", autoText(c.SchedulerGapAuto, c.SchedulerGap),
+		"scheduler_rest", autoText(c.SchedulerRestAuto, c.SchedulerRest),
+		"scheduler_everything_probe", c.SchedulerEverythingProbe,
+		"process_priority", c.ProcessPriority,
 	}
+}
+
+func autoText(auto bool, d time.Duration) string {
+	if auto {
+		return "auto"
+	}
+	return d.String()
 }
 
 // Deployment is what the Settings page shows about the running configuration. It holds no secret.
@@ -286,6 +362,8 @@ type Deployment struct {
 	RestoreDisplayRoot string // network path of the restore folder as users see it, empty when not set
 	EnvFile            string
 	SearchHost         string // host:port of the Everything server, empty when search is off
+	SSOHost            string // address of the single sign-on service, empty when single sign-on is off
+	BasePath           string // path prefix the site is served under behind a reverse proxy, empty when there is none
 	LocalAdmin         string // name of the local administrator, empty when there is none
 	AuthDisabled       bool
 	SessionTTL         time.Duration
@@ -303,6 +381,8 @@ func (c Config) Describe() Deployment {
 		ServerHost:         c.ServerHost,
 		RestoreDisplayRoot: c.RestoreDisplayRoot,
 		EnvFile:            c.EnvFile,
+		SSOHost:            c.SSOHost,
+		BasePath:           c.BasePath,
 		AuthDisabled:       c.AuthDisabled,
 		SessionTTL:         c.SessionTTL,
 		CookieSecure:       c.CookieSecure,
@@ -372,6 +452,127 @@ func decodeKey(s string) ([]byte, error) {
 		}
 	}
 	return nil, errors.New("must be base64")
+}
+
+// autoOrDuration reads a setting that is either "auto" or a duration from 0s to 6h.
+func autoOrDuration(raw string) (d time.Duration, auto bool, err error) {
+	if strings.EqualFold(raw, "auto") {
+		return 0, true, nil
+	}
+	d, perr := time.ParseDuration(raw)
+	if perr != nil || d < 0 || d > 6*time.Hour {
+		return 0, false, errors.New("must be auto or a duration between 0s and 6h")
+	}
+	return d, false, nil
+}
+
+// parseSSOHost normalises the address of the single sign-on service: host, host:port or
+// scheme://host[:port] becomes scheme://host[:port], with http when no scheme is given, because
+// that is how the company sign-on service is reached. Empty stays empty.
+func parseSSOHost(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "http://" + raw
+	}
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return "", errors.New("not a valid address; write it as host, host:port or http://host:port")
+	case u.Scheme != "http" && u.Scheme != "https":
+		return "", errors.New("the scheme must be http or https")
+	case u.Hostname() == "":
+		return "", errors.New("the host is missing")
+	case u.User != nil:
+		return "", errors.New("must not contain a user name or password")
+	case (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "":
+		return "", errors.New("must be only a host and an optional port, without a path")
+	}
+	host := u.Hostname()
+	if net.ParseIP(host) == nil {
+		// Windows host names may contain an underscore, which a strict host name check would refuse.
+		for _, r := range host {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.') {
+				return "", errors.New("the host contains a character that cannot be part of a host name")
+			}
+		}
+	}
+	if port := u.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+			return "", errors.New("the port is out of range")
+		}
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
+// reservedBasePaths are the first path segments of the pages and endpoints the application serves itself. A request is
+// only taken to carry the base path when it starts with it, so a base path that begins with one of these would make
+// the application's own addresses ambiguous.
+var reservedBasePaths = []string{"static", "api", "login", "logout", "auth", "lang", "explorer", "history", "versions",
+	"backups", "jobs", "restore", "audit", "status", "settings", "healthz"}
+
+// ParseBasePath normalises the path prefix the site is served under: "tv", "/tv" and "/tv/" all become "/tv", while ""
+// and "/" become "" (no prefix). Every segment may only hold letters, digits and - _ . ~, so the prefix is the same
+// in a URL, in a cookie path and in a proxy configuration. The error text starts with a verb, so a caller can put a
+// setting name in front of it.
+func ParseBasePath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "/" {
+		return "", nil
+	}
+	segments := strings.Split(strings.TrimSuffix(strings.TrimPrefix(raw, "/"), "/"), "/")
+	for _, seg := range segments {
+		switch {
+		case seg == "":
+			return "", errors.New("must not have an empty segment (two slashes in a row)")
+		case seg == "." || seg == "..":
+			return "", errors.New("must not have a . or .. segment")
+		}
+		for _, r := range seg {
+			if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '~') {
+				return "", errors.New("may only have letters, digits and - _ . ~ between the slashes, for example /tv")
+			}
+		}
+	}
+	if slices.Contains(reservedBasePaths, segments[0]) {
+		return "", fmt.Errorf("must not start with /%s, which the application serves itself", segments[0])
+	}
+	p := "/" + strings.Join(segments, "/")
+	if len(p) > 128 {
+		return "", errors.New("is too long (at most 128 characters)")
+	}
+	return p, nil
+}
+
+// parseProxies reads a comma or space separated list of addresses and CIDR ranges.
+func parseProxies(raw string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, item := range strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || r == ';' || r == ' ' || r == '\t' }) {
+		if p, err := netip.ParsePrefix(item); err == nil {
+			out = append(out, p.Masked())
+			continue
+		}
+		addr, err := netip.ParseAddr(item)
+		if err != nil {
+			return nil, fmt.Errorf("%q is not an IP address or a CIDR range such as 10.0.0.0/8", item)
+		}
+		addr = addr.Unmap()
+		out = append(out, netip.PrefixFrom(addr, addr.BitLen()))
+	}
+	return out, nil
+}
+
+// IsTrustedProxy reports whether addr is one of the configured reverse proxies.
+func (c Config) IsTrustedProxy(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, p := range c.TrustedProxies {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 type loader struct {

@@ -274,7 +274,7 @@ func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request, sess aut
 	}
 	parent := pathutil.ParentRel(rel)
 	back := buildURL("/explorer", "source", src.ID, "path", parent)
-	if ref := r.FormValue("back"); strings.HasPrefix(ref, "/history") || strings.HasPrefix(ref, "/explorer") {
+	if ref := s.local(r.FormValue("back")); strings.HasPrefix(ref, "/history") || strings.HasPrefix(ref, "/explorer") {
 		if u, err := url.Parse(ref); err == nil && u.Host == "" && u.Scheme == "" {
 			back = ref
 		}

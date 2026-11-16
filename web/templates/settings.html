@@ -30,6 +30,8 @@
     <div><dt>{{$.T "backups.latest"}}</dt>
       <dd>{{if .Latest}}<time datetime="{{iso .Latest.CapturedAt}}">{{$.Time .Latest.CapturedAt}}</time> · #{{.Latest.Seq}}{{else}}{{$.T "backups.never"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.last_run"}}</dt><dd>{{$.TimeP .LastRunAt}}</dd></div>
+    <div><dt>{{$.T "settings.last_took"}}</dt><dd>{{$.DurationMS .LastRunMS}}</dd></div>
+    <div><dt>{{$.T "settings.versions"}}</dt><dd>{{if .Versions}}{{$.T "settings.versions_n" .Versions}}{{else}}{{$.T "settings.versions_all"}}{{end}}</dd></div>
     <div><dt>{{$.T "backups.excludes"}}</dt><dd>{{if .Excludes}}<code>{{join .Excludes ", "}}</code>{{else}}-{{end}}</dd></div>
   </dl>
 
@@ -38,7 +40,7 @@
     <summary>{{template "icon" "settings"}} {{$.T "settings.edit"}}</summary>
     <div class="tv-details-body">
       {{with .Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
-      <form method="post" action="/settings/sources/{{.ID}}" class="tv-form tv-form-grid">
+      <form method="post" action="{{url (printf "/settings/sources/%d" .ID)}}" class="tv-form tv-form-grid">
         {{template "csrf" $}}
         <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.Form.Name}}" maxlength="100" required></label>
         <label class="tv-field"><span>{{$.T "settings.field_display"}}</span>
@@ -58,6 +60,10 @@
           </div>
           <small class="tv-muted">{{$.T "settings.schedule_hint"}}</small>
         </div>
+        <label class="tv-field tv-field-wide"><span>{{$.T "settings.field_versions"}}</span>
+          <input type="number" name="max_versions" value="{{.Form.MaxVersions}}" min="0" max="10000" step="1">
+          <small class="tv-muted">{{$.T "settings.versions_hint"}}</small></label>
+        {{if .NeedsConfirm}}<label class="tv-check tv-field-wide"><input type="checkbox" name="confirm_prune" value="1" required> <span>{{$.T "settings.prune_confirm_label"}}</span></label>{{end}}
         <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "settings.save"}}</button></div>
       </form>
     </div>
@@ -70,7 +76,7 @@
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2></div>
   {{with .AddError}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
-  <form method="post" action="/settings/sources" class="tv-form tv-form-grid">
+  <form method="post" action="{{url "/settings/sources"}}" class="tv-form tv-form-grid">
     {{template "csrf" $}}
     <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.AddForm.Name}}" maxlength="100" required></label>
     <label class="tv-field"><span>{{$.T "settings.field_display"}}</span>
@@ -89,6 +95,9 @@
       </div>
       <small class="tv-muted">{{$.T "settings.schedule_hint"}}</small>
     </div>
+    <label class="tv-field tv-field-wide"><span>{{$.T "settings.field_versions"}}</span>
+      <input type="number" name="max_versions" value="{{.AddForm.MaxVersions}}" min="0" max="10000" step="1">
+      <small class="tv-muted">{{$.T "settings.versions_hint"}}</small></label>
     <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "backups.add"}}</button></div>
   </form>
   <p class="tv-muted tv-small">{{$.T "backups.source_rules"}}</p>
@@ -119,13 +128,15 @@
 
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "settings.service"}}</h2>
-    <a class="tv-btn tv-btn-small tv-btn-ghost" href="/status">{{$.T "nav.status"}}</a></div>
+    <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/status"}}">{{$.T "nav.status"}}</a></div>
   <dl class="tv-facts">
     <div><dt>{{$.T "settings.version"}}</dt><dd>v{{.Version}}</dd></div>
     <div><dt>{{$.T "settings.server_host"}}</dt><dd>{{if .Deployment.ServerHost}}<code>{{.Deployment.ServerHost}}</code>{{else}}{{$.T "settings.host_unset"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.listen"}}</dt><dd><code>{{.Deployment.ListenAddr}}</code></dd></div>
     <div><dt>{{$.T "settings.database"}}</dt><dd><code>{{.Deployment.Database}}</code></dd></div>
     <div><dt>{{$.T "settings.directory"}}</dt><dd>{{if .Deployment.UserDirectory}}<code>{{.Deployment.UserDirectory}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.sso"}}</dt><dd>{{if .Deployment.SSOHost}}<code>{{.Deployment.SSOHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.base_path"}}</dt><dd>{{if .Deployment.BasePath}}<code>{{.Deployment.BasePath}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.local_admin"}}</dt><dd>{{if .Deployment.LocalAdmin}}{{.Deployment.LocalAdmin}}{{else}}{{$.T "settings.none"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.search"}}</dt><dd>{{if .Deployment.SearchHost}}<code>{{.Deployment.SearchHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.session_ttl"}}</dt><dd>{{.Deployment.SessionTTL}}</dd></div>

@@ -44,6 +44,13 @@ type Engine struct {
 	log         *slog.Logger
 	hashWorkers int
 	protected   []string
+	// gate keeps backups and the deletion of repository objects apart.
+	gate gate
+	// sweepBudget is how long one sweep may run, and sweepBatch how many objects it asks the catalog for at a
+	// time. Tests make them small, and replace now, the clock the time limit is measured by.
+	sweepBudget time.Duration
+	sweepBatch  int
+	now         func() time.Time
 	// hook lets tests act at well-defined moments of a run.
 	hook func(event, rel string)
 	// failReadDir lets tests make listing a folder fail.
@@ -60,7 +67,8 @@ func New(cfg Config) *Engine {
 	if workers < 1 {
 		workers = 4
 	}
-	return &Engine{cat: cfg.Catalog, repo: cfg.Repository, log: log, hashWorkers: workers, protected: cfg.Protected}
+	return &Engine{cat: cfg.Catalog, repo: cfg.Repository, log: log, hashWorkers: workers, protected: cfg.Protected,
+		sweepBudget: defaultSweepBudget, sweepBatch: defaultSweepBatch, now: time.Now}
 }
 
 // resolveProtected lists the protected folders as configured and as they
@@ -97,10 +105,18 @@ type RunOptions struct {
 // On any failure the partial work is removed and the point is recorded as
 // failed (or aborted when ctx was cancelled); it never becomes visible.
 // A run that ends with ErrUnchanged leaves no trace at all, not even a failed point.
+// While a sweep of the repository is in progress (see SweepObjects) the run waits for it to end.
 func (e *Engine) Run(ctx context.Context, sourceID int64, opts RunOptions, rep Reporter) (catalog.Point, error) {
 	if rep == nil {
 		rep = NopReporter{}
 	}
+	// A sweep deletes object files, so no run may store content, or rely on content that is already stored,
+	// while one is in progress. The run waits before it locks the source, so that nothing is held meanwhile.
+	waiting := func() { rep.Event("info", "waiting for a sweep of the repository to finish") }
+	if err := e.gate.enter(ctx, waiting); err != nil {
+		return catalog.Point{}, fmt.Errorf("backup: waiting for the repository sweep to end: %w", err)
+	}
+	defer e.gate.leave()
 	lock, err := e.cat.LockSource(ctx, sourceID)
 	if err != nil {
 		return catalog.Point{}, err

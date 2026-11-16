@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sync"
@@ -304,6 +305,105 @@ func TestBarrierFlushesNewObjectFoldersOnce(t *testing.T) {
 	if pending == 0 {
 		t.Fatal("a folder that failed to flush must stay pending")
 	}
+}
+
+func TestDeleteRemovesTheObjectAndCanBeRepeated(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	keep, _, err := s.Put(ctx, bytes.NewReader([]byte("stays")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone, _, err := s.Put(ctx, bytes.NewReader([]byte("goes away")))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Put leaves objects read-only; deleting one must work all the same.
+	path := s.ObjectPath(gone.Hash)
+	if st, err := os.Stat(path); err != nil || st.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("a stored object should be read-only: %v, %v", st, err)
+	}
+	if err := s.Delete(gone.Hash); err != nil {
+		t.Fatalf("Delete of a read-only object: %v", err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the object file is still there: %v", err)
+	}
+	if _, err := s.Open(gone.Hash); !errors.Is(err, ErrMissing) {
+		t.Fatalf("Open after Delete = %v, want ErrMissing", err)
+	}
+	if _, err := s.Stat(gone.Hash); !errors.Is(err, ErrMissing) {
+		t.Fatalf("Stat after Delete = %v, want ErrMissing", err)
+	}
+
+	// Repeating a delete, or deleting what never existed, is not an error.
+	var never Hash
+	never[0] = 0xEE
+	for _, h := range []Hash{gone.Hash, never} {
+		if err := s.Delete(h); err != nil {
+			t.Fatalf("Delete of an absent object %s: %v", h, err)
+		}
+	}
+
+	// Nothing else was touched: the neighbour is intact, the repository still opens, and the content can be stored again.
+	if err := s.Verify(ctx, keep.Hash, keep.Size); err != nil {
+		t.Fatalf("an unrelated object was damaged: %v", err)
+	}
+	if again, err := Open(s.Root()); err != nil || again.ID() != s.ID() {
+		t.Fatalf("the repository no longer opens: %v", err)
+	}
+	back, created, err := s.Put(ctx, bytes.NewReader([]byte("goes away")))
+	if err != nil || !created || back.Hash != gone.Hash {
+		t.Fatalf("Put after Delete = %+v created=%v err=%v; want the object stored anew", back, created, err)
+	}
+	if err := s.Verify(ctx, back.Hash, back.Size); err != nil {
+		t.Fatal(err)
+	}
+	assertNoTemp(t, s)
+}
+
+// Whatever order the writers and deleters of one object interleave in, the object ends up whole or absent.
+func TestConcurrentPutAndDeleteOfTheSameObjectLeaveItWholeOrAbsent(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	content := bytes.Repeat([]byte("racing content "), 4096)
+	want := Hash(sha256.Sum256(content))
+
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 40; i++ {
+				if _, _, err := s.Put(ctx, bytes.NewReader(content)); err != nil {
+					t.Errorf("Put: %v", err)
+					return
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 40; i++ {
+				if err := s.Delete(want); err != nil {
+					t.Errorf("Delete: %v", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	switch err := s.Verify(ctx, want, int64(len(content))); {
+	case err == nil, errors.Is(err, ErrMissing):
+	default:
+		t.Fatalf("the object is neither whole nor absent: %v", err)
+	}
+	assertNoTemp(t, s)
+	if err := s.Delete(want); err != nil {
+		t.Fatal(err)
+	}
+	assertNoObjects(t, s)
 }
 
 func assertNoTemp(t *testing.T, s *Store) {

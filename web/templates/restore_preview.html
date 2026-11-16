@@ -2,7 +2,7 @@
 {{template "flash" .}}
 {{with .Data}}
 <nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
-  <a class="tv-crumb" href="{{.BackURL}}">{{template "icon" "history"}}<span>{{$.T "nav.history"}}</span></a>
+  <a class="tv-crumb" href="{{url .BackURL}}">{{template "icon" "history"}}<span>{{$.T "nav.history"}}</span></a>
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
   <span class="tv-crumb is-current" aria-current="page">{{$.T "restore.title"}}</span>
 </nav>
@@ -13,7 +13,8 @@
   <dl class="tv-facts">
     <div><dt>{{$.T "common.source"}}</dt><dd>{{.Plan.Source.Name}}</dd></div>
     <div><dt>{{$.T "job.point"}}</dt><dd>#{{.Plan.Point.Seq}} · {{$.Time .Plan.Point.CapturedAt}}
-      <span class="tv-chip tv-chip-{{.Plan.Point.Verification}}">{{$.VerifyLabel .Plan.Point.Verification}}</span></dd></div>
+      <span class="tv-chip tv-chip-{{.Plan.Point.Verification}}">{{$.VerifyLabel .Plan.Point.Verification}}</span>
+      {{if .Plan.Point.Partial}}<span class="tv-chip tv-chip-warn" title="{{$.T "points.partial_hint"}}">{{$.T "points.partial"}}</span>{{end}}</dd></div>
     <div><dt>{{$.T "restore.selection"}}</dt><dd>
       {{if gt (len .Paths) 6}}<details class="tv-selection"><summary>{{$.T "restore.selected_count" (len .Paths)}}</summary>
         <div class="tv-selection-list">{{range .Paths}}<code>/{{.}}</code> {{end}}</div></details>
@@ -36,6 +37,7 @@
   </ul>
 
   {{if .Plan.Totals.Missing}}<div class="tv-alert tv-alert-error" role="alert">{{template "icon" "alert"}} {{$.T "restore.missing_objects" .Plan.Totals.Missing}}</div>{{end}}
+  {{if .Plan.Point.Partial}}<div class="tv-alert tv-alert-warn" role="note">{{template "icon" "alert"}} {{$.T "points.partial_hint"}}</div>{{end}}
   {{if .Plan.Totals.NotCaptured}}<div class="tv-alert tv-alert-warn">{{template "icon" "alert"}} {{$.T "restore.not_captured" .Plan.Totals.NotCaptured}}</div>{{end}}
   {{if .Plan.Totals.Overwrite}}<div class="tv-alert tv-alert-warn">{{template "icon" "alert"}} {{$.T "restore.overwrite_warning" .Plan.Totals.Overwrite}}</div>{{end}}
 
@@ -49,7 +51,7 @@
 
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{$.T "restore.options"}}</h2></div>
-  <form method="post" action="/restore/preview" class="tv-form tv-form-grid">
+  <form method="post" action="{{url "/restore/preview"}}" class="tv-form tv-form-grid">
     {{template "csrf" $}}
     <input type="hidden" name="source_id" value="{{.Plan.Request.SourceID}}">
     <input type="hidden" name="point_id" value="{{.Plan.Request.PointID}}">
@@ -88,7 +90,7 @@
 
 <section class="tv-card tv-confirm">
   <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "restore.confirm_title"}}</h2></div>
-  <form method="post" action="/restore/start" class="tv-form">
+  <form method="post" action="{{url "/restore/start"}}" class="tv-form">
     {{template "csrf" $}}
     <input type="hidden" name="source_id" value="{{.Plan.Request.SourceID}}">
     <input type="hidden" name="point_id" value="{{.Plan.Request.PointID}}">
@@ -105,7 +107,7 @@
     {{end}}
     <div class="tv-form-actions">
       <button class="tv-btn tv-btn-primary" type="submit"{{if not .CanStart}} disabled{{end}}>{{template "icon" "restore"}} {{$.T "restore.start"}}</button>
-      <a class="tv-btn tv-btn-ghost" href="{{.BackURL}}">{{$.T "common.cancel"}}</a>
+      <a class="tv-btn tv-btn-ghost" href="{{url .BackURL}}">{{$.T "common.cancel"}}</a>
     </div>
     {{if not .CanStart}}<p class="tv-alert tv-alert-error">{{$.T "restore.cannot_start"}}</p>{{end}}
   </form>

@@ -248,6 +248,27 @@ func TestSecureCookieFlag(t *testing.T) {
 	}
 }
 
+// Behind a reverse proxy that serves the site under a path, the session cookie is limited to that path, so it is
+// not sent to the other sites of the same host; ending the session must name the same path or the browser keeps it.
+func TestSessionCookiePathFollowsTheBasePath(t *testing.T) {
+	m, err := NewManager(Options{AdminPasswordHash: hashOnce(t), SessionKey: make([]byte, 32), CookiePath: "/tv"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	if _, err := m.StartSession(rec, adminID); err != nil {
+		t.Fatal(err)
+	}
+	if got := cookieOf(t, rec).Path; got != "/tv" {
+		t.Fatalf("session cookie path = %q, want /tv", got)
+	}
+	rec = httptest.NewRecorder()
+	m.ClearSession(rec)
+	if c := cookieOf(t, rec); c.Path != "/tv" || c.MaxAge >= 0 {
+		t.Fatalf("the cleared cookie = %+v, want the same path and an end of life", c)
+	}
+}
+
 func TestTamperedForeignOrMalformedCookiesAreRejected(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}
 	m := newTestManager(t, clock)

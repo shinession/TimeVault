@@ -144,6 +144,38 @@ func IsLockViolation(err error) bool {
 	return false
 }
 
+var setPriorityClass = syscall.NewLazyDLL("kernel32.dll").NewProc("SetPriorityClass")
+
+// Priority classes of SetPriorityClass. The background mode is the one that also lowers the disk priority.
+const (
+	normalPriorityClass      = 0x00000020
+	belowNormalPriorityClass = 0x00004000
+	processModeBackground    = 0x00100000
+)
+
+// SetPriority changes the priority of the current process.
+func SetPriority(p Priority) error {
+	var class uintptr
+	switch p {
+	case PriorityNormal:
+		class = normalPriorityClass
+	case PriorityBelowNormal:
+		class = belowNormalPriorityClass
+	case PriorityBackground:
+		class = processModeBackground
+	default:
+		return fmt.Errorf("platform: unknown priority %q", p)
+	}
+	self, err := syscall.GetCurrentProcess()
+	if err != nil {
+		return fmt.Errorf("GetCurrentProcess: %w", err)
+	}
+	if r, _, callErr := setPriorityClass.Call(uintptr(self), class); r == 0 {
+		return fmt.Errorf("SetPriorityClass: %w", callErr)
+	}
+	return nil
+}
+
 func longPath(p string) string {
 	if len(p) < 248 || strings.HasPrefix(p, `\\?\`) {
 		return p

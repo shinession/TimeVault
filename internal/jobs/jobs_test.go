@@ -367,3 +367,96 @@ func TestErrForgetDeletesTheJobInsteadOfRecordingAResult(t *testing.T) {
 		t.Fatalf("the forgotten job was logged:\n%s", logs.String())
 	}
 }
+
+// A cleanup of the old versions of a folder (kind prune) and the backups, restores and verifications of that folder
+// take turns: a job that has to wait stays queued, holds no worker, and starts when the other one is over. Other
+// folders are not held back.
+func TestACleanupOfAFolderTakesTurnsWithItsOtherJobs(t *testing.T) {
+	r, pool := setup(t, 3)
+	ctx := context.Background()
+	src, other := addSource(t, pool, "s1"), addSource(t, pool, "s2")
+
+	var mu sync.Mutex
+	gates := map[string]chan struct{}{}
+	for _, name := range []string{"backup1", "backup2", "verify1", "verify2", "restore1", "prune1", "prune2", "prune3"} {
+		gates[name] = make(chan struct{})
+	}
+	release := func(name string) {
+		mu.Lock()
+		defer mu.Unlock()
+		close(gates[name])
+	}
+	handler := func(ctx context.Context, j jobs.Job, rep *jobs.Reporter) error {
+		var p struct {
+			Gate string `json:"gate"`
+		}
+		_ = json.Unmarshal(j.Params, &p)
+		mu.Lock()
+		gate := gates[p.Gate]
+		mu.Unlock()
+		select {
+		case <-gate:
+		case <-ctx.Done():
+		}
+		return nil
+	}
+	for _, kind := range []string{jobs.KindBackup, jobs.KindVerify, jobs.KindRestore, jobs.KindPrune} {
+		r.Handle(kind, handler)
+	}
+	start(t, r)
+
+	enqueue := func(kind string, source int64, gate string) jobs.Job {
+		t.Helper()
+		j, created, err := r.Enqueue(ctx, jobs.NewJob{Kind: kind, SourceID: &source, Params: map[string]string{"gate": gate}, RequestedBy: "t"})
+		if err != nil || !created {
+			t.Fatalf("enqueue %s: %+v created=%v err=%v", gate, j, created, err)
+		}
+		return j
+	}
+	// stillQueued gives the workers time to take the jobs, which they would do at once if they were allowed to.
+	stillQueued := func(why string, waiting ...jobs.Job) {
+		t.Helper()
+		time.Sleep(400 * time.Millisecond)
+		for _, j := range waiting {
+			if got, err := jobs.Get(ctx, pool, j.ID); err != nil || got.State != jobs.StateQueued {
+				t.Fatalf("%s: job %d is %q (%v), want it to wait in the queue", why, j.ID, got.State, err)
+			}
+		}
+	}
+
+	// A running backup holds the cleanup of its folder back; a cleanup of another folder starts at once.
+	backup := enqueue(jobs.KindBackup, src, "backup1")
+	wait(t, pool, backup.ID, running)
+	cleanup := enqueue(jobs.KindPrune, src, "prune1")
+	elsewhere := enqueue(jobs.KindPrune, other, "prune2")
+	wait(t, pool, elsewhere.ID, running)
+	stillQueued("a backup of the folder is running", cleanup)
+	release("prune2")
+	wait(t, pool, elsewhere.ID, finished)
+
+	// When the backup ends the cleanup starts, and then nothing else of the folder starts: not a backup, not a
+	// verification, not a restore. They wait in the queue and hold no worker (two of the three are idle).
+	release("backup1")
+	wait(t, pool, backup.ID, finished)
+	wait(t, pool, cleanup.ID, running)
+	nextBackup := enqueue(jobs.KindBackup, src, "backup2")
+	verify := enqueue(jobs.KindVerify, src, "verify1")
+	restore := enqueue(jobs.KindRestore, src, "restore1")
+	stillQueued("a cleanup of the folder is running", nextBackup, verify, restore)
+	otherVerify := enqueue(jobs.KindVerify, other, "verify2")
+	wait(t, pool, otherVerify.ID, running)
+	release("verify2")
+
+	// Once the cleanup ends they all go.
+	release("prune1")
+	wait(t, pool, cleanup.ID, finished)
+	for _, j := range []jobs.Job{nextBackup, verify, restore} {
+		wait(t, pool, j.ID, running)
+	}
+	release("backup2")
+	release("verify1")
+	release("restore1")
+	for _, j := range []jobs.Job{nextBackup, verify, restore} {
+		wait(t, pool, j.ID, finished)
+	}
+}

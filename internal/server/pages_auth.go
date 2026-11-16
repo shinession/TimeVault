@@ -15,16 +15,18 @@ type loginData struct {
 	Next     string
 	Username string
 	Error    string
+	// SSO is true when the page offers the single sign-on button.
+	SSO bool
 }
 
 func (s *Server) handleLoginForm(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.auth.Session(r); ok {
-		http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
+		http.Redirect(w, r, s.safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 		return
 	}
 	p := s.newPage(r, auth.Session{}, "login.title", "")
 	p.Bare = true
-	p.Data = loginData{Next: safeNext(r.URL.Query().Get("next"))}
+	p.Data = loginData{Next: s.safeNext(r.URL.Query().Get("next")), SSO: s.ssoEnabled()}
 	s.render(w, r, "login", http.StatusOK, p)
 }
 
@@ -37,14 +39,14 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, http.StatusForbidden, "errors.csrf")
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	login := strings.TrimSpace(r.PostFormValue("username"))
-	next := safeNext(r.PostFormValue("next"))
+	next := s.safeNext(r.PostFormValue("next"))
 
 	again := func(status int, key string) {
 		p := s.newPage(r, auth.Session{}, "login.title", "")
 		p.Bare = true
-		p.Data = loginData{Next: next, Username: login, Error: p.T(key)}
+		p.Data = loginData{Next: next, Username: login, Error: p.T(key), SSO: s.ssoEnabled()}
 		p.RequestURI = buildURL("/login", "next", next)
 		s.render(w, r, "login", status, p)
 	}
@@ -89,13 +91,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		s.handleErr(w, r, err)
 		return
 	}
-	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogin, RemoteAddr: ip, Detail: map[string]any{"role": string(sess.Role)}})
+	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogin, RemoteAddr: ip, Detail: map[string]any{"role": string(sess.Role), "method": "password"}})
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	s.auth.ClearSession(w)
-	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogout, RemoteAddr: clientIP(r)})
+	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogout, RemoteAddr: s.clientIP(r)})
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
@@ -115,10 +117,10 @@ func sameOrigin(r *http.Request) bool {
 func (s *Server) handleLang(w http.ResponseWriter, r *http.Request) {
 	lang := r.URL.Query().Get("set")
 	if lang == "en" || lang == "zh" {
-		http.SetCookie(w, &http.Cookie{Name: cookieLang, Value: lang, Path: "/", MaxAge: 365 * 24 * 3600,
+		http.SetCookie(w, &http.Cookie{Name: cookieLang, Value: lang, Path: s.cookiePath(), MaxAge: 365 * 24 * 3600,
 			Secure: s.opts.CookieSecure, SameSite: http.SameSiteLaxMode})
 	}
-	http.Redirect(w, r, safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
+	http.Redirect(w, r, s.safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request, _ auth.Session) {

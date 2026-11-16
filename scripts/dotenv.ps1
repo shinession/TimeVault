@@ -48,6 +48,8 @@ $DotEnvNotes = @{
     'TIMEVAULT_LISTEN_ADDR'         = @('Listen address. Other computers need a TLS reverse proxy and TIMEVAULT_ALLOW_NON_LOOPBACK=true as well.')
     'TIMEVAULT_SERVER_HOST'         = @('Name of this server as users type it in network paths (\\server\share\...). With it, every monitored folder needs a', 'display folder on this host, and users never see the real folders of the server.')
     'TIMEVAULT_RESTORE_DISPLAY_ROOT' = @('The restore folder as users reach it over the network (\\server\share\...), so they can pick up restored files.')
+    'TIMEVAULT_SSO_HOST'            = @('Single sign-on with the Windows account (optional): the address of the company sign-on service.')
+    'TIMEVAULT_BASE_PATH'           = @('Path the site is served under behind a reverse proxy (for example /tv for http://host/tv/). Empty: at the root.')
     'TIMEVAULT_EVERYTHING_URL'      = @('Search: the Everything instance of scripts\dev-everything.ps1 (its reset removes these lines).')
     'TIMEVAULT_TEST_EVERYTHING_URL' = @('Live search tests (go test ./internal/search/...), written by scripts\dev-everything.ps1.')
     'TIMEVAULT_GO_ROOT'             = @('Development scripts only: the folder that contains bin\go.exe.')
@@ -123,7 +125,15 @@ function Initialize-DotEnv {
         '# folder of every monitored folder mandatory and checked: users see \\server\share paths, never the real',
         '# folders of the server. The restore folder gets a display path of its own.',
         '# TIMEVAULT_SERVER_HOST=server.example.local',
-        '# TIMEVAULT_RESTORE_DISPLAY_ROOT=\\server.example.local\share\restore'
+        '# TIMEVAULT_RESTORE_DISPLAY_ROOT=\\server.example.local\share\restore',
+        '#',
+        '# Single sign-on with the Windows account (optional): the address of the company sign-on service. Behind a',
+        '# reverse proxy also list the proxies in TIMEVAULT_TRUSTED_PROXIES (see configs\timevault.example.env).',
+        '# TIMEVAULT_SSO_HOST=sso.example.local',
+        '#',
+        '# Behind a reverse proxy that serves the site under a path of a shared host name (http://host/tv/), set that',
+        '# path (see "Behind a reverse proxy under a path" in docs\runbook.md).',
+        '# TIMEVAULT_BASE_PATH=/tv'
     )
     if (-not (Test-Path -LiteralPath $DotEnvFile -PathType Leaf)) {
         Write-DotEnvLines ($header + $rest)

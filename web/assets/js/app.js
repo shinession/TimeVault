@@ -3,6 +3,9 @@
 
   var content = document.getElementById('tv-content');
   if (!content) { return; }
+  // The site may be served under a path prefix behind a reverse proxy; the page says which (see basepath.go).
+  var baseMeta = document.querySelector('meta[name="tv-base"]');
+  var BASE = baseMeta ? (baseMeta.getAttribute('content') || '') : '';
   var jobTimer = null;
   var inflight = 0;
 
@@ -52,7 +55,7 @@
 
   function fetchPartial(url) {
     return fetch(url, { credentials: 'same-origin', headers: { 'X-TV-Partial': '1' } }).then(function (res) {
-      if (new URL(res.url).pathname === '/login') {
+      if (new URL(res.url).pathname === BASE + '/login') {
         window.location.assign(res.url);
         return null;
       }
@@ -83,7 +86,13 @@
     if (a.target || a.hasAttribute('download') || a.hasAttribute('data-no-boost')) { return true; }
     var u = new URL(a.href, window.location.href);
     if (u.origin !== window.location.origin) { return true; }
-    return u.pathname.indexOf('/static/') === 0 || u.pathname === '/lang' || u.pathname === '/logout';
+    var path = u.pathname;
+    if (BASE) {
+      // Another site on the same host is not one of our pages.
+      if (path !== BASE && path.indexOf(BASE + '/') !== 0) { return true; }
+      path = path.slice(BASE.length) || '/';
+    }
+    return path.indexOf('/static/') === 0 || path === '/lang' || path === '/logout';
   }
 
   /* ---------- list helpers ---------- */
@@ -143,7 +152,7 @@
 
     function tick() {
       Promise.all(ids.map(function (id) {
-        return fetch('/api/v1/jobs/' + encodeURIComponent(id), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        return fetch(BASE + '/api/v1/jobs/' + encodeURIComponent(id), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
           .then(function (res) {
             // An automatic backup that finds nothing changed is forgotten: no job any more means it has finished.
             if (res.status === 404) { return { job: { active: false } }; }
@@ -237,6 +246,80 @@
     }).catch(function () { /* the path stays selectable in the page */ });
   }
 
+  /* ---------- single sign-on ---------- */
+
+  var ssoRun = null;
+
+  function ssoShow(box, key) {
+    var out = box.querySelector('[data-sso-status]');
+    if (!out) { return; }
+    var text = box.getAttribute('data-msg-' + key) || '';
+    out.textContent = text;
+    out.classList.toggle('tv-alert-error', key !== 'waiting');
+    out.classList.toggle('tv-alert-info', key === 'waiting');
+    out.hidden = text === '';
+  }
+
+  function ssoPost(url, body) {
+    return fetch(url, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body
+    }).then(function (res) {
+      return res.json().then(function (data) { return { status: res.status, data: data || {} }; });
+    });
+  }
+
+  function startSso(button) {
+    var box = button.closest('[data-sso-box]');
+    if (!box || ssoRun) { return; }
+    // The browser only allows a window that the click itself opens; its address is set once the server has
+    // issued the token for this sign-in.
+    var popup = window.open('', 'tv-sso', 'width=520,height=640');
+    var run = ssoRun = { stopped: false, timer: 0 };
+    button.disabled = true;
+    ssoShow(box, 'waiting');
+
+    function finish(key) {
+      run.stopped = true;
+      clearTimeout(run.timer);
+      ssoRun = null;
+      button.disabled = false;
+      if (popup && !popup.closed) { try { popup.close(); } catch (e) { /* already gone */ } }
+      ssoShow(box, key);
+    }
+
+    ssoPost(box.getAttribute('data-start'), 'next=' + encodeURIComponent(box.getAttribute('data-next') || '/')).then(function (r) {
+      if (r.status !== 200 || !r.data.token) { finish(r.status === 429 ? 'busy' : 'error'); return; }
+      if (!popup) { finish('popup'); return; }
+      popup.location.href = r.data.url;
+      var token = r.data.token;
+      var limit = Math.ceil((r.data.expires_in || 300) / 2);
+      var tries = 0;
+      var closedLooks = 0;
+      (function look() {
+        if (run.stopped) { return; }
+        if (++tries > limit) { finish('timeout'); return; }
+        // The window closes itself a moment after it has recorded the sign-in, so a closed window is only
+        // given up on after a few more looks.
+        if (popup.closed && ++closedLooks > 3) { finish('cancelled'); return; }
+        ssoPost(box.getAttribute('data-poll'), 'token=' + encodeURIComponent(token)).then(function (p) {
+          var status = p.data.status;
+          if (status === 'ok' && p.data.next) {
+            run.stopped = true;
+            window.location.href = p.data.next;
+          } else if (status === 'pending') {
+            run.timer = setTimeout(look, 2000);
+          } else {
+            finish(status || 'error');
+          }
+        }).catch(function () { finish('error'); });
+      })();
+    }).catch(function () { finish('error'); });
+  }
+
   function init(root) {
     initSelection(root);
     initAutosubmit(root);
@@ -251,6 +334,8 @@
     var t = e.target;
     if (!t || !t.closest) { return; }
     if (t.closest('[data-theme-toggle]')) { toggleTheme(); return; }
+    var sso = t.closest('[data-sso-login]');
+    if (sso) { e.preventDefault(); startSso(sso); return; }
     var copy = t.closest('[data-copy]');
     if (copy) { copyFrom(copy); return; }
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) { return; }

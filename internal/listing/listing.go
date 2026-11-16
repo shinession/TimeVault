@@ -70,7 +70,9 @@ type View struct {
 	// Special is a symlink, junction or other irregular item. It is never a
 	// folder for listing purposes.
 	Special bool
-	Size    int64
+	// Size is the size in bytes. A folder counts with the size the caller knows (0 when it knows none); the
+	// size of a special item never counts.
+	Size int64
 	// MTimeNS is the modification time in Unix nanoseconds; 0 means unknown.
 	MTimeNS int64
 }
@@ -247,7 +249,7 @@ func Apply[T any](items []T, view func(T) View, o Options) Page[T] {
 		v := view(it)
 		typ := TypeKey(v.Name, v.IsDir, v.Special)
 		r := row{index: i, typ: typ, key: pathutil.NameKey(v.Name), name: v.Name, mtime: v.MTimeNS, rank: typeRank(typ), dir: v.IsDir && !v.Special}
-		if !v.IsDir && !v.Special {
+		if !v.Special {
 			r.size = v.Size
 		}
 		rows[i] = r

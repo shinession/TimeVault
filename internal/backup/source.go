@@ -23,6 +23,11 @@ type SourceRequest struct {
 	// DisplayPath is the network path users know the folder by, such as \\server\share\folder. Empty means
 	// none, and on an update it removes the current one.
 	DisplayPath string
+	// MaxVersions is the most versions of one file to keep; nil or 0 means unlimited.
+	MaxVersions *int
+	// ConfirmPrune says that deleting the versions a lower limit makes unnecessary is meant. Without it such an
+	// update is refused (see service.PruneNotConfirmedError).
+	ConfirmPrune bool
 }
 
 // Bounds of SourceRequest.ScheduleMinutes; the sources table has the same constraint.
@@ -30,6 +35,9 @@ const (
 	MinScheduleMinutes = 1
 	MaxScheduleMinutes = 43200
 )
+
+// MaxVersionsLimit is the largest version limit a source can have; the sources table has the same constraint.
+const MaxVersionsLimit = 10000
 
 // ErrInvalidSource wraps every validation failure of a SourceRequest.
 var ErrInvalidSource = errors.New("invalid source")
@@ -116,7 +124,16 @@ func (e *Engine) prepare(ctx context.Context, req SourceRequest, actor string, c
 	if m := req.ScheduleMinutes; m != nil && (*m < MinScheduleMinutes || *m > MaxScheduleMinutes) {
 		return catalog.NewSource{}, invalid("the schedule must be between %d and %d minutes", MinScheduleMinutes, MaxScheduleMinutes)
 	}
-	return catalog.NewSource{Name: name, RootPath: root, Excludes: excludes, CreatedBy: actor, ScheduleMinutes: req.ScheduleMinutes, DisplayPath: display}, nil
+	var maxVersions *int
+	if m := req.MaxVersions; m != nil {
+		if *m < 0 || *m > MaxVersionsLimit {
+			return catalog.NewSource{}, invalid("the version limit must be between 1 and %d, or 0 for no limit", MaxVersionsLimit)
+		}
+		if *m > 0 {
+			maxVersions = m
+		}
+	}
+	return catalog.NewSource{Name: name, RootPath: root, Excludes: excludes, CreatedBy: actor, ScheduleMinutes: req.ScheduleMinutes, DisplayPath: display, MaxVersions: maxVersions}, nil
 }
 
 // checkRoot validates the folder of a source and returns it cleaned. cur is the

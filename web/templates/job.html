@@ -2,7 +2,7 @@
 {{template "flash" .}}
 {{with .Data}}
 <nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
-  <a class="tv-crumb" href="/backups">{{template "icon" "backup"}}<span>{{$.T "nav.backups"}}</span></a>
+  <a class="tv-crumb" href="{{url "/backups"}}">{{template "icon" "backup"}}<span>{{$.T "nav.backups"}}</span></a>
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
   <span class="tv-crumb is-current" aria-current="page">{{$.T "job.heading" .View.Job.ID}}</span>
 </nav>
@@ -11,7 +11,7 @@
   <div class="tv-card-head">
     <h1>{{$.JobKindLabel .View.Job.Kind}} <span class="tv-chip tv-chip-{{.View.Job.State}}" data-job-field="state">{{$.StateLabel .View.Job.State}}</span></h1>
     {{if and .View.Active $.CanBackup}}
-    <form method="post" action="/jobs/{{.View.Job.ID}}/cancel" class="tv-inline-form">
+    <form method="post" action="{{url (printf "/jobs/%d/cancel" .View.Job.ID)}}" class="tv-inline-form">
       {{template "csrf" $}}
       <button class="tv-btn" type="submit">{{$.T "job.cancel"}}</button>
     </form>
@@ -59,7 +59,7 @@
   <div class="tv-card-head">
     <h2>{{template "icon" "file"}} {{$.T "job.items"}}</h2>
     <div class="tv-tabs">
-      <a class="tv-tab{{if eq .Status ""}} is-active{{end}}" href="/jobs/{{.View.Job.ID}}">{{$.T "job.all"}}</a>
+      <a class="tv-tab{{if eq .Status ""}} is-active{{end}}" href="{{url (printf "/jobs/%d" .View.Job.ID)}}">{{$.T "job.all"}}</a>
       <a class="tv-tab{{if eq .Status "failed"}} is-active{{end}}" href="{{url (printf "/jobs/%d" .View.Job.ID) "status" "failed"}}">{{$.T "job.failed_only"}}</a>
     </div>
   </div>

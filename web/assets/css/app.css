@@ -1158,6 +1158,10 @@ a.tv-row:focus-visible { outline-offset: -2px; }
 .tv-login-card .tv-form { margin-top: 1.25rem; text-align: left; }
 .tv-login-card .tv-alert { margin-top: 1rem; text-align: left; }
 .tv-login-card .tv-btn { width: 100%; min-height: 2.5rem; }
+.tv-sso { margin-top: 1.25rem; }
+.tv-or { display: flex; align-items: center; gap: .75rem; margin-bottom: 1rem; color: var(--faint); font-size: .8125rem; }
+.tv-or::before, .tv-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.tv-sso-status { margin-top: .75rem; text-align: left; }
 
 .tv-empty { display: flex; flex-direction: column; align-items: center; padding: 3rem 1.5rem; text-align: center; }
 .tv-empty > * { margin: 0; }

@@ -29,11 +29,15 @@ const maxDeletedShown = 500
 
 // LiveEntry is one item currently on disk.
 type LiveEntry struct {
-	Name    string
-	IsDir   bool
-	Size    int64
-	ModTime time.Time
-	Status  LiveStatus
+	Name  string
+	IsDir bool
+	// Size is the size in bytes. A folder has one only when the search engine knows it, see SizeKnown.
+	Size int64
+	// SizeKnown is false when there is no size to show: for a link, and for a folder the search engine holds
+	// no size of (it is not configured, does not answer or does not index folder sizes).
+	SizeKnown bool
+	ModTime   time.Time
+	Status    LiveStatus
 	// Special marks reparse points and other items the backup does not follow.
 	Special bool
 }
@@ -127,10 +131,11 @@ func (s *Service) ListLive(ctx context.Context, src catalog.Source, rel string, 
 		case mode&(os.ModeSymlink|os.ModeIrregular) != 0:
 			e.Special, e.IsDir = true, false
 		case mode.IsRegular():
-			e.Size = info.Size()
+			e.Size, e.SizeKnown = info.Size(), true
 		}
 		live = append(live, e)
 	}
+	s.fillFolderSizes(ctx, live, filepath.Join(src.RootPath, osRel))
 
 	var previous map[string]catalog.Entry
 	if latest, err := s.cat.LatestCommitted(ctx, src.ID); err == nil {
@@ -180,6 +185,34 @@ func liveView(e LiveEntry) listing.View {
 		v.MTimeNS = e.ModTime.UnixNano()
 	}
 	return v
+}
+
+// fillFolderSizes gives the folders of a listing the size the search engine holds for them. The disk lists a
+// folder without its size, and walking every folder to add it up would make a listing as slow as a backup scan.
+// The modification time stays the one of the disk. A folder the engine does not know keeps no size.
+func (s *Service) fillFolderSizes(ctx context.Context, entries []LiveEntry, dir string) {
+	hasFolder := false
+	for i := range entries {
+		if entries[i].IsDir {
+			hasFolder = true
+			break
+		}
+	}
+	if !hasFolder {
+		return
+	}
+	infos := s.folders.lookup(ctx, s.search, dir, time.Now())
+	if len(infos) == 0 {
+		return
+	}
+	for i := range entries {
+		if !entries[i].IsDir {
+			continue
+		}
+		if info, ok := infos[pathutil.NameKey(entries[i].Name)]; ok && info.Size >= 0 {
+			entries[i].Size, entries[i].SizeKnown = info.Size, true
+		}
+	}
 }
 
 func liveStatus(e LiveEntry, previous map[string]catalog.Entry) LiveStatus {

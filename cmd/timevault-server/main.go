@@ -31,6 +31,7 @@ import (
 	"timevault/internal/config"
 	"timevault/internal/db"
 	"timevault/internal/jobs"
+	"timevault/internal/platform"
 	"timevault/internal/redisuser"
 	"timevault/internal/repository"
 	"timevault/internal/restore"
@@ -42,7 +43,7 @@ import (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "0.1.3"
+var version = "0.1.5"
 
 func main() {
 	cmd := "serve"
@@ -203,6 +204,13 @@ func runServe() error {
 	}
 	log := newLogger(cfg)
 	log.Info("starting TimeVault", append([]any{"version", version}, cfg.LogAttrs()...)...)
+	if prio, err := platform.ParsePriority(cfg.ProcessPriority); err == nil && prio != platform.PriorityNormal {
+		if err := platform.SetPriority(prio); err != nil {
+			log.Warn("could not lower the priority of the service; it keeps running at normal priority", "priority", string(prio), "error", err)
+		} else {
+			log.Info("the service runs at a lower priority, so it yields to the other services of this computer", "priority", string(prio))
+		}
+	}
 	if len(cfg.EnvOverrides) > 0 {
 		log.Warn("these settings come from the process environment and override the .env file, so editing the file does not change them: remove the environment variables, or set them to the value you want",
 			"settings", strings.Join(cfg.EnvOverrides, ","), "env_file", cfg.EnvFile)
@@ -261,7 +269,7 @@ func runServe() error {
 	}
 	authOptions := auth.Options{
 		AdminUser: cfg.AdminUser, AdminPasswordHash: cfg.AdminPasswordHash, Disabled: cfg.AuthDisabled,
-		SessionKey: sessionKey, TTL: cfg.SessionTTL, CookieSecure: cfg.CookieSecure,
+		SessionKey: sessionKey, TTL: cfg.SessionTTL, CookieSecure: cfg.CookieSecure, CookiePath: cfg.BasePath,
 	}
 	// directory stays nil, and so do the interface values it feeds, when no user directory is configured.
 	var directory *redisuser.Directory
@@ -320,6 +328,14 @@ func runServe() error {
 		Pool: pool, Catalog: cat, Repo: repo, Engine: engine, Restore: restoreMgr, Jobs: runner,
 		Audit: audit.New(pool, log), Search: provider, Logger: log,
 		ServerHost: cfg.ServerHost, RestoreDisplayRoot: cfg.RestoreDisplayRoot,
+		Scheduler: service.SchedulerOptions{
+			Parallel: cfg.SchedulerParallel, GapAuto: cfg.SchedulerGapAuto, Gap: cfg.SchedulerGap,
+			RestAuto: cfg.SchedulerRestAuto, Rest: cfg.SchedulerRest,
+			Probe: cfg.SchedulerEverythingProbe, FullScanEvery: cfg.SchedulerFullScanEvery,
+		},
+	}
+	if cfg.SchedulerEverythingProbe && cfg.EverythingURL == "" {
+		log.Warn("TIMEVAULT_SCHEDULER_EVERYTHING_PROBE is on but TIMEVAULT_EVERYTHING_URL is not set: every scheduled run scans its folder")
 	}
 	if directory != nil {
 		serviceConfig.Directory = directory
@@ -329,9 +345,20 @@ func runServe() error {
 	// Everything that can fail to build comes before the workers start, so that a failure leaves nothing running.
 	handler, err := server.New(svc, am, web.FS, server.Options{
 		Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure, Deployment: cfg.Describe(),
+		SSOHost: cfg.SSOHost, SSORequireSameIP: cfg.SSORequireSameIP, TrustedProxies: cfg.TrustedProxies, BasePath: cfg.BasePath,
 	}, log)
 	if err != nil {
 		return err
+	}
+	if cfg.BasePath != "" {
+		log.Info("serving under a path prefix", "base_path", cfg.BasePath,
+			"note", "pages, redirects and cookies use the prefix; requests with or without it are accepted")
+	}
+	if cfg.SSOHost != "" && directory == nil {
+		log.Warn("TIMEVAULT_SSO_HOST is set but TIMEVAULT_REDIS_URL is not: single sign-on needs the user directory, so the login page offers none")
+	}
+	if cfg.SSOHost != "" && !cfg.SSORequireSameIP {
+		log.Warn("single sign-on does not check that the browser has the address the sign-on service saw (TIMEVAULT_SSO_REQUIRE_SAME_IP=false): someone who can make a colleague open a sign-on link could sign in as that colleague; configure TIMEVAULT_TRUSTED_PROXIES and turn the check on")
 	}
 	srv := &http.Server{
 		Addr: cfg.ListenAddr, Handler: handler.Handler(),

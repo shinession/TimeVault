@@ -1,4 +1,4 @@
-{{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="/static/img/icons.svg#{{.}}"></use></svg>{{end}}
+{{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="{{url "/static/img/icons.svg"}}#{{.}}"></use></svg>{{end}}
 
 {{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
 
@@ -8,7 +8,7 @@
 
 {{/* The controls above a file list. The page passes itself; the list is Data.List (see listView). */}}
 {{define "listtools"}}{{$l := .Data.List}}
-<form class="tv-listtools" method="get" action="{{$l.Action}}" data-autosubmit>
+<form class="tv-listtools" method="get" action="{{url $l.Action}}" data-autosubmit>
   {{range $l.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
   {{if $l.HasTypeFilter}}
   <label class="tv-listtool"><span>{{.T "list.type"}}</span>
@@ -28,12 +28,12 @@
 {{/* Page links below (and above) a file list; nothing when everything fits on one page. */}}
 {{define "pager"}}{{with .Data.List.Pager}}{{if gt .Pages 1}}
 <nav class="tv-pager" aria-label="{{$.T "pager.label"}}">
-  {{if .PrevURL}}<a class="tv-btn tv-btn-small tv-pager-step" rel="prev" href="{{.PrevURL}}">{{template "icon" "chevron-left"}} {{$.T "pager.prev"}}</a>
+  {{if .PrevURL}}<a class="tv-btn tv-btn-small tv-pager-step" rel="prev" href="{{url .PrevURL}}">{{template "icon" "chevron-left"}} {{$.T "pager.prev"}}</a>
   {{else}}<span class="tv-btn tv-btn-small tv-pager-step is-disabled" aria-disabled="true">{{template "icon" "chevron-left"}} {{$.T "pager.prev"}}</span>{{end}}
   <ol class="tv-pager-pages">
-    {{range .Links}}{{if .Gap}}<li class="tv-pager-gap" aria-hidden="true">&hellip;</li>{{else}}<li><a class="tv-pager-page{{if .Current}} is-current{{end}}" href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a></li>{{end}}{{end}}
+    {{range .Links}}{{if .Gap}}<li class="tv-pager-gap" aria-hidden="true">&hellip;</li>{{else}}<li><a class="tv-pager-page{{if .Current}} is-current{{end}}" href="{{url .URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a></li>{{end}}{{end}}
   </ol>
-  {{if .NextURL}}<a class="tv-btn tv-btn-small tv-pager-step" rel="next" href="{{.NextURL}}">{{$.T "pager.next"}} {{template "icon" "chevron-right"}}</a>
+  {{if .NextURL}}<a class="tv-btn tv-btn-small tv-pager-step" rel="next" href="{{url .NextURL}}">{{$.T "pager.next"}} {{template "icon" "chevron-right"}}</a>
   {{else}}<span class="tv-btn tv-btn-small tv-pager-step is-disabled" aria-disabled="true">{{$.T "pager.next"}} {{template "icon" "chevron-right"}}</span>{{end}}
 </nav>
 {{end}}{{end}}{{end}}

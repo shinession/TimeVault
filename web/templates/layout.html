@@ -5,27 +5,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <meta name="csrf-token" content="{{.CSRF}}">
+  <meta name="tv-base" content="{{basePath}}">
   <title>{{if .Title}}{{.Title}} · {{end}}TimeVault</title>
-  <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
-  <script src="/static/js/theme-init.js?v={{.AssetVer}}"></script>
-  <link rel="stylesheet" href="/static/css/app.css?v={{.AssetVer}}">
-  <script src="/static/js/app.js?v={{.AssetVer}}" defer></script>
+  <link rel="icon" type="image/svg+xml" href="{{url "/static/img/logo.svg"}}">
+  <script src="{{url "/static/js/theme-init.js"}}?v={{.AssetVer}}"></script>
+  <link rel="stylesheet" href="{{url "/static/css/app.css"}}?v={{.AssetVer}}">
+  <script src="{{url "/static/js/app.js"}}?v={{.AssetVer}}" defer></script>
 </head>
 <body class="tv{{if .Bare}} tv-bare{{end}}">
   <header class="tv-header">
     <div class="tv-header-inner">
-      <a class="tv-brand" href="/" aria-label="TimeVault">
-        <img class="tv-logo" src="/static/img/logo.svg" alt="" width="32" height="32">
+      <a class="tv-brand" href="{{url "/"}}" aria-label="TimeVault">
+        <img class="tv-logo" src="{{url "/static/img/logo.svg"}}" alt="" width="32" height="32">
         <span class="tv-brand-name">TimeVault</span>
       </a>
       {{if not .Bare}}
       <nav class="tv-nav" aria-label="{{.T "nav.label"}}">
-        <a class="tv-nav-link{{if eq .Nav "explorer"}} is-active{{end}}" data-nav="explorer" href="/explorer">{{template "icon" "folder"}}<span>{{.T "nav.explorer"}}</span></a>
-        <a class="tv-nav-link{{if eq .Nav "history"}} is-active{{end}}" data-nav="history" href="/history">{{template "icon" "history"}}<span>{{.T "nav.history"}}</span></a>
-        <a class="tv-nav-link{{if eq .Nav "backups"}} is-active{{end}}" data-nav="backups" href="/backups">{{template "icon" "backup"}}<span>{{.T "nav.backups"}}</span></a>
+        <a class="tv-nav-link{{if eq .Nav "explorer"}} is-active{{end}}" data-nav="explorer" href="{{url "/explorer"}}">{{template "icon" "folder"}}<span>{{.T "nav.explorer"}}</span></a>
+        <a class="tv-nav-link{{if eq .Nav "history"}} is-active{{end}}" data-nav="history" href="{{url "/history"}}">{{template "icon" "history"}}<span>{{.T "nav.history"}}</span></a>
+        <a class="tv-nav-link{{if eq .Nav "backups"}} is-active{{end}}" data-nav="backups" href="{{url "/backups"}}">{{template "icon" "backup"}}<span>{{.T "nav.backups"}}</span></a>
         {{if .CanAudit}}
-        <a class="tv-nav-link{{if eq .Nav "audit"}} is-active{{end}}" data-nav="audit" href="/audit">{{template "icon" "audit"}}<span>{{.T "nav.audit"}}</span></a>
-        <a class="tv-nav-link{{if eq .Nav "settings"}} is-active{{end}}" data-nav="settings" href="/settings">{{template "icon" "settings"}}<span>{{.T "nav.settings"}}</span></a>
+        <a class="tv-nav-link{{if eq .Nav "audit"}} is-active{{end}}" data-nav="audit" href="{{url "/audit"}}">{{template "icon" "audit"}}<span>{{.T "nav.audit"}}</span></a>
+        <a class="tv-nav-link{{if eq .Nav "settings"}} is-active{{end}}" data-nav="settings" href="{{url "/settings"}}">{{template "icon" "settings"}}<span>{{.T "nav.settings"}}</span></a>
         {{end}}
       </nav>
       {{end}}
@@ -38,7 +39,7 @@
           <a class="tv-lang-link{{if .IsZh}} is-active{{end}}" data-no-boost lang="zh" href="{{url "/lang" "set" "zh" "next" .RequestURI}}">中文</a>
         </div>
         {{if and (not .Bare) .SignedIn}}
-        <form class="tv-userbox" method="post" action="/logout">
+        <form class="tv-userbox" method="post" action="{{url "/logout"}}">
           {{template "csrf" .}}
           <span class="tv-user" title="{{.Name}} ({{.User}})">{{template "icon" "user"}}<span>{{.Name}}</span></span>
           {{if not .AuthDisabled}}<button class="tv-iconbtn" type="submit" title="{{.T "nav.logout"}}" aria-label="{{.T "nav.logout"}}">{{template "icon" "logout"}}</button>{{end}}
@@ -58,7 +59,7 @@
     <span>{{.T "footer.powered"}}</span>
     {{if .CanAudit}}
     <span class="tv-sep">|</span>
-    <a href="/status">{{.T "nav.status"}}</a>
+    <a href="{{url "/status"}}">{{.T "nav.status"}}</a>
     {{end}}
     <span class="tv-sep">|</span>
     <span>v{{.Version}}</span>

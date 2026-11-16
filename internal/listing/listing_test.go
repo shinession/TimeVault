@@ -428,6 +428,16 @@ func TestApplyTreatsSpecialItemsAsLinksNeverFolders(t *testing.T) {
 	}
 }
 
+func TestApplyOrdersFoldersByTheSizeTheCallerKnows(t *testing.T) {
+	items := []item{
+		{name: "small.txt", size: 5}, {name: "big", dir: true, size: 900}, {name: "mid", dir: true, size: 50},
+		{name: "unknown", dir: true}, {name: "link", special: true, size: 99999},
+	}
+	equalNames(t, listing.Apply(items, view, listing.Options{Sort: listing.SortSize}).Items, "link unknown small.txt mid big")
+	equalNames(t, listing.Apply(items, view, listing.Options{Sort: listing.SortSize, Desc: true}).Items, "big mid small.txt unknown link")
+	equalNames(t, listing.Apply(items, view, listing.Options{Sort: listing.SortSize, Desc: true, DirsFirst: true}).Items, "big mid unknown small.txt link")
+}
+
 func TestApplyTiesFallBackToTheExactName(t *testing.T) {
 	items := []item{{name: "a.txt", size: 1}, {name: "A.txt", size: 1}, {name: "b.txt", size: 1}}
 	for _, sort := range []listing.Sort{listing.SortName, listing.SortType, listing.SortSize, listing.SortMTime} {

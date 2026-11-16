@@ -37,3 +37,6 @@ func DiskSpace(string) (free, total uint64, err error) {
 
 // IsLockViolation is always false outside Windows, where files are not locked mandatorily.
 func IsLockViolation(error) bool { return false }
+
+// SetPriority is only implemented on Windows; elsewhere the process keeps its priority.
+func SetPriority(Priority) error { return errors.ErrUnsupported }

@@ -24,6 +24,7 @@ const (
 	KindBackup  = "backup"
 	KindVerify  = "verify"
 	KindRestore = "restore"
+	KindPrune   = "prune"
 )
 
 // Job states.
@@ -140,7 +141,7 @@ func NewRunner(pool *pgxpool.Pool, log *slog.Logger, workers int) *Runner {
 // Handle registers the handler of a job kind.
 func (r *Runner) Handle(kind string, h Handler) { r.handlers[kind] = h }
 
-// Enqueue adds a job. For backups and verifications an already active job for
+// Enqueue adds a job. For backups, verifications and prunes an already active job for
 // the same source or point is returned instead (created is then false); a
 // repeated idempotency key returns the original job.
 func (r *Runner) Enqueue(ctx context.Context, nj NewJob) (job Job, created bool, err error) {
@@ -302,6 +303,12 @@ func (r *Runner) worker(ctx context.Context) {
 // claim takes the next runnable job. Its cancel function is registered before
 // the lock is released, so Cancel can always stop a job the database already
 // reports as running.
+//
+// A job that cannot run yet stays queued, so it holds no worker: a backup waits for the backup of its source that is
+// running, and the deletion of the old versions of a folder (kind prune) takes turns with every other job of that
+// folder, so it is not claimed while a backup, a restore or a verification of the folder runs and none of them is
+// claimed while it runs. Claims are serialised by r.mu, so two workers cannot start a cleanup and a backup of one
+// folder at the same moment.
 func (r *Runner) claim(parent context.Context) (Job, context.Context, context.CancelFunc, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -312,6 +319,11 @@ func (r *Runner) claim(parent context.Context) (Job, context.Context, context.Ca
 		     WHERE q.state = 'queued'
 		       AND (q.kind <> 'backup' OR NOT EXISTS (
 		            SELECT 1 FROM jobs b WHERE b.kind = 'backup' AND b.state = 'running' AND b.source_id = q.source_id))
+		       AND NOT EXISTS (
+		            SELECT 1 FROM jobs b
+		            WHERE b.state = 'running' AND b.source_id = q.source_id
+		              AND ((q.kind = 'prune' AND b.kind IN ('backup', 'verify', 'restore'))
+		                OR (q.kind IN ('backup', 'verify', 'restore') AND b.kind = 'prune')))
 		     ORDER BY q.id FOR UPDATE SKIP LOCKED LIMIT 1)
 		 RETURNING `+jobColumns))
 	if errors.Is(err, pgx.ErrNoRows) {

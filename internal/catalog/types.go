@@ -66,6 +66,15 @@ type Source struct {
 	// DisplayPath is the network path users know the folder by, such as \\server\share\folder, in its normalised
 	// form; empty when the source has none. RootPath is the physical folder and is not for ordinary users.
 	DisplayPath string
+	// MaxVersions is the most versions of one file that are kept; nil means unlimited.
+	MaxVersions *int
+	// LastRunMS is how long the last backup run took, in milliseconds; nil before the first run.
+	LastRunMS *int64
+	// LastWalkAt is when the last complete scan of the folder started; nil before the first one.
+	LastWalkAt *time.Time
+	// LastWalkItems is how many entries the search engine held below the folder when that scan started; nil when
+	// it was not asked or did not know the folder.
+	LastWalkItems *int64
 }
 
 // SourceSummary is a source with its newest committed recovery point.
@@ -99,6 +108,9 @@ type Point struct {
 	Verification   string
 	VerifiedAt     *time.Time
 	FailureReason  string
+	// Partial is true when versions that belong to the point were deleted to keep the source within its
+	// version limit, so the point no longer shows the whole folder as it was.
+	Partial bool
 }
 
 // Restorable reports whether files can be restored from the point.

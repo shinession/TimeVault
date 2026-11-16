@@ -111,6 +111,7 @@ var auditActions = []string{
 	audit.ActionLogin, audit.ActionLoginFailed, audit.ActionLogout, audit.ActionSourceCreate, audit.ActionSourceUpdate,
 	audit.ActionBackupRequest, audit.ActionBackupFinish, audit.ActionVerifyRequest, audit.ActionVerifyFinish,
 	audit.ActionRestorePreview, audit.ActionRestoreRequest, audit.ActionRestoreFinish, audit.ActionJobCancel, audit.ActionAccessDenied,
+	audit.ActionRetentionPrune,
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.Session) {

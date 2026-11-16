@@ -12,8 +12,8 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -43,6 +43,18 @@ type Options struct {
 	CookieSecure bool
 	// Deployment is shown, without any secret, on the Settings page.
 	Deployment config.Deployment
+	// SSOHost is the address of the single sign-on service as scheme://host[:port]; empty turns single sign-on off.
+	SSOHost string
+	// SSORequireSameIP makes a single sign-on succeed only when the browser that started it and the sign-on service
+	// saw the same address.
+	SSORequireSameIP bool
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For header is believed when they connect.
+	TrustedProxies []netip.Prefix
+	// BasePath is the path prefix the site is served under behind a reverse proxy, such as /tv. Empty means the
+	// site is at the root of its address. See basepath.go.
+	BasePath string
+	// Now is the clock of the single sign-on flows; nil means time.Now.
+	Now func() time.Time
 }
 
 // Server serves the web UI and the JSON API.
@@ -50,11 +62,13 @@ type Server struct {
 	svc      *service.Service
 	auth     *auth.Manager
 	opts     Options
+	base     string
 	log      *slog.Logger
 	pages    map[string]*template.Template
 	assets   fs.FS
 	assetVer string
 	mux      *http.ServeMux
+	sso      ssoFlows
 }
 
 // New builds the server. webFS must contain the "templates" and "assets" folders.
@@ -65,8 +79,13 @@ func New(svc *service.Service, am *auth.Manager, webFS fs.FS, opts Options, log 
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	s := &Server{svc: svc, auth: am, opts: opts, log: log}
-	var err error
+	base, err := config.ParseBasePath(opts.BasePath)
+	if err != nil {
+		return nil, fmt.Errorf("server: base path %w", err)
+	}
+	opts.BasePath = base
+	opts.Deployment.BasePath = base
+	s := &Server{svc: svc, auth: am, opts: opts, base: base, log: log}
 	if s.pages, err = parseTemplates(webFS, s.funcs()); err != nil {
 		return nil, err
 	}
@@ -112,7 +131,8 @@ func (s *Server) Handler() http.Handler {
 	h = s.securityHeaders(h)
 	h = s.requestLog(h)
 	h = s.recoverer(h)
-	return http.MaxBytesHandler(h, maxFormBytes)
+	h = http.MaxBytesHandler(h, maxFormBytes)
+	return s.withBase(h)
 }
 
 func (s *Server) routes() {
@@ -125,6 +145,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /lang", s.handleLang)
 	m.HandleFunc("GET /login", s.handleLoginForm)
 	m.HandleFunc("POST /login", s.handleLogin)
+	m.HandleFunc("POST /auth/sso/start", s.handleSSOStart)
+	m.HandleFunc("POST /auth/sso/poll", s.handleSSOPoll)
 	m.HandleFunc("POST /logout", s.need(auth.PermAccount, s.handleLogout))
 
 	// Anyone may look at what is protected and at its history.
@@ -311,15 +333,7 @@ func (s *Server) denied(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 func isAPI(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/api/") }
 
 func (s *Server) actor(r *http.Request, sess auth.Session) service.Actor {
-	return service.Actor{User: sess.User, Remote: clientIP(r)}
-}
-
-func clientIP(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return service.Actor{User: sess.User, Remote: s.clientIP(r)}
 }
 
 func newID() string {
@@ -366,6 +380,10 @@ func intParamDefault(r *http.Request, name string, def, lo, hi int) int {
 	return v
 }
 
+// maxNextLength is the longest address a sign-in returns to. No link or page makes a longer one, and the server keeps
+// it in memory while a single sign-on waits.
+const maxNextLength = 2048
+
 // safeNext returns next when it is a local path, otherwise "/".
 //
 // http.Redirect cleans a relative target (dropping "." elements), and browsers
@@ -373,7 +391,7 @@ func intParamDefault(r *http.Request, name string, def, lo, hi int) int {
 // so "/./\evil.example" or "/<TAB>/evil.example" would end up as "//evil.example".
 // Any backslash or control character is therefore refused.
 func safeNext(next string) string {
-	if next == "" || next[0] != '/' || strings.HasPrefix(next, "//") {
+	if next == "" || len(next) > maxNextLength || next[0] != '/' || strings.HasPrefix(next, "//") {
 		return "/"
 	}
 	for _, r := range next {
@@ -411,6 +429,12 @@ func classify(err error) (int, string) {
 		return http.StatusServiceUnavailable, "errors.source_unavailable"
 	case errors.Is(err, service.ErrSourceDisabled):
 		return http.StatusConflict, "errors.source_disabled"
+	case errors.Is(err, service.ErrPruneRunning):
+		return http.StatusConflict, "errors.prune_running"
+	}
+	var unconfirmed *service.PruneNotConfirmedError
+	if errors.As(err, &unconfirmed) {
+		return http.StatusConflict, "errors.prune_not_confirmed"
 	}
 	return http.StatusInternalServerError, "errors.internal"
 }

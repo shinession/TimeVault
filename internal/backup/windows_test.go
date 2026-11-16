@@ -12,7 +12,59 @@ import (
 	"testing"
 
 	"timevault/internal/catalog"
+	"timevault/internal/repository"
 )
+
+// A process that has an object open without allowing it to be deleted (a restore, a virus scanner) makes the
+// file undeletable. The sweep leaves that object alone and counts it, and takes it the next time.
+func TestSweepSkipsAnObjectThatIsInUse(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.leaveUnreferenced("a.txt", "v1", "v2", "v3") // v1 and v2 are unreferenced
+	busy, err := repository.ParseHash(contentHash("v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, err := syscall.UTF16PtrFromString(e.repo.ObjectPath(busy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, err := syscall.CreateFile(name, syscall.GENERIC_READ, syscall.FILE_SHARE_READ, nil, syscall.OPEN_EXISTING, syscall.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := true
+	defer func() {
+		if open {
+			_ = syscall.CloseHandle(h)
+		}
+	}()
+
+	rec := &recorder{}
+	st, err := e.eng.SweepObjects(ctx, rec)
+	if err != nil || st.Objects != 1 || st.Failed != 1 || st.More {
+		t.Fatalf("SweepObjects = %+v, %v; want v2 removed and v1 counted as failed", st, err)
+	}
+	if !rec.has("warn: repository: delete object "+busy.String()) || !rec.has("1 object(s) could not be deleted") {
+		t.Fatalf("events = %v", rec.events)
+	}
+	eq(t, "object files", e.objectFiles(), hashes("v1", "v3"))
+	eq(t, "object records", e.objectRecords(), hashes("v1", "v3"))
+	if info, err := os.Stat(e.repo.ObjectPath(busy)); err != nil || info.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("an object that could not be deleted must stay read-only: %v, %v", info, err)
+	}
+
+	if err := syscall.CloseHandle(h); err != nil {
+		t.Fatal(err)
+	}
+	open = false
+	st, err = e.eng.SweepObjects(ctx, nil)
+	if err != nil || st.Objects != 1 || st.Failed != 0 {
+		t.Fatalf("the next SweepObjects = %+v, %v", st, err)
+	}
+	eq(t, "object files", e.objectFiles(), hashes("v3"))
+	eq(t, "object records", e.objectRecords(), hashes("v3"))
+}
 
 func TestLockedFileIsSkippedThenCapturedWhenReleased(t *testing.T) {
 	e := newEnv(t)

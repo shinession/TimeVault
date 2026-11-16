@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -59,6 +61,8 @@ type Config struct {
 	Directory DirectoryChecker
 	// SchedulerTick is how often RunScheduler looks for due sources; zero means 15 seconds.
 	SchedulerTick time.Duration
+	// Scheduler spreads the automatic backups out; the zero value starts every due source without any spacing.
+	Scheduler SchedulerOptions
 	// ServerHost is the name of this server as users type it in \\server\share paths (TIMEVAULT_SERVER_HOST).
 	// When it is set, the display path of every monitored folder is required and must use it.
 	ServerHost string
@@ -80,8 +84,19 @@ type Service struct {
 	log                *slog.Logger
 	directory          DirectoryChecker
 	schedulerTick      time.Duration
+	sched              SchedulerOptions
+	pace               pace
 	serverHost         string
 	restoreDisplayRoot string
+	folders            folderInfos
+	// probeDownUntil is when the search engine is asked about changes again after it failed to answer (unix
+	// nanoseconds).
+	probeDownUntil atomic.Int64
+	// pruning holds the folders whose older versions are being deleted; sweepPending says that repository content
+	// nobody needs any more is still to be removed, and sweeping that a sweep is running.
+	pruning      sync.Map
+	sweepPending atomic.Bool
+	sweeping     atomic.Bool
 }
 
 // New builds a Service and registers the job handlers on the runner.
@@ -89,7 +104,7 @@ func New(cfg Config) *Service {
 	s := &Service{
 		pool: cfg.Pool, cat: cfg.Catalog, repo: cfg.Repo, engine: cfg.Engine, restore: cfg.Restore,
 		jobs: cfg.Jobs, audit: cfg.Audit, search: cfg.Search, log: cfg.Logger,
-		directory: cfg.Directory, schedulerTick: cfg.SchedulerTick,
+		directory: cfg.Directory, schedulerTick: cfg.SchedulerTick, sched: cfg.Scheduler,
 		serverHost: cfg.ServerHost, restoreDisplayRoot: cfg.RestoreDisplayRoot,
 	}
 	if s.search == nil {
@@ -101,6 +116,7 @@ func New(cfg Config) *Service {
 	s.jobs.Handle(jobs.KindBackup, s.runBackup)
 	s.jobs.Handle(jobs.KindVerify, s.runVerify)
 	s.jobs.Handle(jobs.KindRestore, s.runRestore)
+	s.jobs.Handle(jobs.KindPrune, s.runPrune)
 	return s
 }
 
@@ -123,9 +139,14 @@ func (s *Service) RestoreDisplayRoot() string { return s.restoreDisplayRoot }
 func (s *Service) SearchProvider() search.Provider { return s.search }
 
 func (s *Service) record(ctx context.Context, a Actor, action, targetType, targetID string, sourceID *int64, result string, detail map[string]any) error {
+	return s.recordTimed(ctx, a, action, targetType, targetID, sourceID, result, detail, 0)
+}
+
+// recordTimed is record for an operation that ran for took; zero means it has no duration.
+func (s *Service) recordTimed(ctx context.Context, a Actor, action, targetType, targetID string, sourceID *int64, result string, detail map[string]any, took time.Duration) error {
 	return s.audit.Record(ctx, audit.Event{
 		Actor: a.User, Action: action, TargetType: targetType, TargetID: targetID,
-		SourceID: sourceID, Result: result, RemoteAddr: a.Remote, Detail: detail,
+		SourceID: sourceID, Result: result, RemoteAddr: a.Remote, Detail: detail, Duration: took,
 	})
 }
 
@@ -175,6 +196,9 @@ func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceReque
 	if src.DisplayPath != "" {
 		detail["display"] = src.DisplayPath
 	}
+	if src.MaxVersions != nil {
+		detail["max_versions"] = *src.MaxVersions
+	}
 	_ = s.record(ctx, a, audit.ActionSourceCreate, "source", fmt.Sprint(id), &id, audit.ResultOK, detail)
 	return src, nil
 }
@@ -198,6 +222,14 @@ func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backu
 	if err != nil {
 		return catalog.Source{}, err
 	}
+	// While the older versions of the folder are being deleted the limit cannot change: the run that is under way
+	// would go on with the old one.
+	if !sameLimit(cur.MaxVersions, ns.MaxVersions) && s.pruneActive(ctx, id) {
+		return catalog.Source{}, ErrPruneRunning
+	}
+	if err := s.checkLowering(ctx, id, cur, ns.MaxVersions, req.ConfirmPrune); err != nil {
+		return catalog.Source{}, err
+	}
 	if catalog.RootKey(ns.RootPath) != catalog.RootKey(cur.RootPath) {
 		// A backup that starts while the folder is being changed would record the files of the old folder for the
 		// new one. The writer lock of the source is held from this check until the change is stored; it is busy
@@ -217,7 +249,7 @@ func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backu
 	}
 	src, err := s.cat.UpdateSource(ctx, id, catalog.SourceUpdate{
 		Name: ns.Name, RootPath: ns.RootPath, Excludes: ns.Excludes, Enabled: enabled, ScheduleMinutes: ns.ScheduleMinutes,
-		DisplayPath: ns.DisplayPath,
+		DisplayPath: ns.DisplayPath, MaxVersions: ns.MaxVersions,
 	})
 	if errors.Is(err, catalog.ErrNotFound) {
 		return catalog.Source{}, ErrNotFound
@@ -227,6 +259,14 @@ func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backu
 	}
 	if changes := sourceChanges(cur, src); len(changes) > 0 {
 		_ = s.record(ctx, a, audit.ActionSourceUpdate, "source", fmt.Sprint(id), &id, audit.ResultOK, changes)
+	}
+	// A lower limit takes effect at once, not only with the next backup.
+	if limitLowered(cur.MaxVersions, src.MaxVersions) {
+		if has, err := s.cat.HasPoints(ctx, id); err == nil && has {
+			if _, _, err := s.StartPrune(ctx, a, id); err != nil {
+				s.log.Warn("queue the deletion of old versions", "source", id, "error", err)
+			}
+		}
 	}
 	return src, nil
 }
@@ -253,6 +293,10 @@ func sourceChanges(before, after catalog.Source) map[string]any {
 	}
 	if before.DisplayPath != after.DisplayPath {
 		change("display", before.DisplayPath, after.DisplayPath)
+	}
+	if (before.MaxVersions == nil) != (after.MaxVersions == nil) ||
+		(before.MaxVersions != nil && *before.MaxVersions != *after.MaxVersions) {
+		change("max_versions", before.MaxVersions, after.MaxVersions)
 	}
 	return changes
 }
@@ -447,6 +491,9 @@ func (s *Service) StartVerify(ctx context.Context, a Actor, sourceID, pointID in
 	if p.State != catalog.StateCommitted {
 		return jobs.Job{}, false, errors.New("only committed recovery points can be verified")
 	}
+	if s.pruneActive(ctx, sourceID) {
+		return jobs.Job{}, false, ErrPruneRunning
+	}
 	job, created, err = s.jobs.Enqueue(ctx, jobs.NewJob{
 		Kind: jobs.KindVerify, SourceID: &sourceID, PointID: &pointID,
 		Params: verifyParams{PointID: pointID, Deep: deep}, RequestedBy: a.User,
@@ -509,24 +556,43 @@ func (s *Service) runBackup(ctx context.Context, job jobs.Job, rep *jobs.Reporte
 	if err := json.Unmarshal(job.Params, &p); err != nil {
 		return fmt.Errorf("invalid job parameters: %w", err)
 	}
+	started := time.Now()
+	var items *int64
+	if s.sched.Probe {
+		if src, err := s.cat.GetSource(ctx, p.SourceID); err == nil {
+			items = s.probeItems(ctx, src.RootPath)
+		}
+	}
 	point, err := s.engine.Run(ctx, p.SourceID, backup.RunOptions{Rehash: p.Rehash, SkipUnchanged: p.Scheduled}, backupReporter{rep})
-	s.markRun(ctx, p.SourceID)
+	took := time.Since(started)
+	end := catalog.RunEnd{Duration: took}
+	if err == nil || errors.Is(err, backup.ErrUnchanged) {
+		end.WalkStarted, end.WalkItems = started, items
+	}
+	s.recordRun(ctx, p.SourceID, end)
+	if p.Scheduled {
+		s.pace.ended(time.Now(), took)
+	}
 	if errors.Is(err, backup.ErrUnchanged) {
 		return jobs.ErrForget
 	}
 	actor := Actor{User: job.RequestedBy}
 	sourceID := p.SourceID
 	if err != nil {
-		_ = s.record(ctx, actor, audit.ActionBackupFinish, "source", fmt.Sprint(sourceID), &sourceID, audit.ResultFailed,
-			map[string]any{"job": job.ID, "error": truncate(err.Error(), 300)})
+		_ = s.recordTimed(ctx, actor, audit.ActionBackupFinish, "source", fmt.Sprint(sourceID), &sourceID, audit.ResultFailed,
+			map[string]any{"job": job.ID, "error": truncate(err.Error(), 300)}, took)
 		return err
 	}
 	if _, err := s.pool.Exec(context.WithoutCancel(ctx), `UPDATE jobs SET point_id = $2 WHERE id = $1`, job.ID, point.ID); err != nil {
 		s.log.Warn("link job to its recovery point", "job", job.ID, "error", err)
 	}
-	_ = s.record(ctx, actor, audit.ActionBackupFinish, "point", fmt.Sprint(point.ID), &sourceID, audit.ResultOK,
+	_ = s.recordTimed(ctx, actor, audit.ActionBackupFinish, "point", fmt.Sprint(point.ID), &sourceID, audit.ResultOK,
 		map[string]any{"job": job.ID, "seq": point.Seq, "files": point.FileCount, "added": point.AddedCount,
-			"modified": point.ModifiedCount, "deleted": point.DeletedCount, "skipped": point.SkippedCount})
+			"modified": point.ModifiedCount, "deleted": point.DeletedCount, "skipped": point.SkippedCount,
+			"bytes": point.TotalBytes, "new_bytes": point.NewObjectBytes, "new_objects": point.NewObjectCount}, took)
+	// The folder's limit of versions per file is applied right after the backup that may have gone over it. The
+	// duration recorded above is the backup's own.
+	s.pruneAfterBackup(ctx, rep, actor, sourceID, point.Seq)
 	return nil
 }
 
@@ -535,24 +601,29 @@ func (s *Service) runVerify(ctx context.Context, job jobs.Job, rep *jobs.Reporte
 	if err := json.Unmarshal(job.Params, &p); err != nil {
 		return fmt.Errorf("invalid job parameters: %w", err)
 	}
+	if err := s.waitWhilePruning(ctx, rep, job.SourceID); err != nil {
+		return err
+	}
+	started := time.Now()
 	res, err := s.engine.Verify(ctx, p.PointID, p.Deep, backupReporter{rep})
 	actor := Actor{User: job.RequestedBy}
 	if err != nil {
-		_ = s.record(ctx, actor, audit.ActionVerifyFinish, "point", fmt.Sprint(p.PointID), job.SourceID, audit.ResultFailed,
-			map[string]any{"job": job.ID, "error": truncate(err.Error(), 300)})
+		_ = s.recordTimed(ctx, actor, audit.ActionVerifyFinish, "point", fmt.Sprint(p.PointID), job.SourceID, audit.ResultFailed,
+			map[string]any{"job": job.ID, "error": truncate(err.Error(), 300)}, time.Since(started))
 		return err
 	}
 	for _, problem := range res.Problems {
 		rep.Event("error", problem)
 	}
 	rep.Event("info", fmt.Sprintf("checked %d object(s): %d missing, %d corrupt, catalog manifest %s",
-		res.Objects, res.Missing, res.Corrupt, choose(res.ManifestOK, "matches", "DOES NOT MATCH")))
+		res.Objects, res.Missing, res.Corrupt, manifestText(res)))
 	result := audit.ResultOK
 	if !res.OK() {
 		result = audit.ResultFailed
 	}
-	_ = s.record(ctx, actor, audit.ActionVerifyFinish, "point", fmt.Sprint(p.PointID), job.SourceID, result,
-		map[string]any{"job": job.ID, "deep": p.Deep, "objects": res.Objects, "missing": res.Missing, "corrupt": res.Corrupt, "manifest_ok": res.ManifestOK})
+	_ = s.recordTimed(ctx, actor, audit.ActionVerifyFinish, "point", fmt.Sprint(p.PointID), job.SourceID, result,
+		map[string]any{"job": job.ID, "deep": p.Deep, "objects": res.Objects, "missing": res.Missing, "corrupt": res.Corrupt, "manifest_ok": res.ManifestOK},
+		time.Since(started))
 	if !res.OK() {
 		return fmt.Errorf("integrity check failed: %d missing, %d corrupt object(s)%s", res.Missing, res.Corrupt,
 			choose(res.ManifestOK, "", ", catalog manifest mismatch"))
@@ -565,6 +636,14 @@ func choose(cond bool, yes, no string) string {
 		return yes
 	}
 	return no
+}
+
+// manifestText says how the catalog manifest of a verified point came out.
+func manifestText(res backup.VerifyResult) string {
+	if res.ManifestSkipped {
+		return "was not compared: the recovery point is partial because old versions were deleted"
+	}
+	return choose(res.ManifestOK, "matches", "DOES NOT MATCH")
 }
 
 // --- Restore -----------------------------------------------------------------
@@ -602,6 +681,9 @@ func (s *Service) StartRestore(ctx context.Context, a Actor, req restore.Request
 	if err != nil {
 		return jobs.Job{}, err
 	}
+	if s.pruneActive(ctx, plan.Request.SourceID) {
+		return jobs.Job{}, ErrPruneRunning
+	}
 	if plan.Totals.Overwrite > 0 && !confirmOverwrite {
 		return jobs.Job{}, fmt.Errorf("%w: replacing %d existing file(s) must be confirmed explicitly", restore.ErrNotConfirmed, plan.Totals.Overwrite)
 	}
@@ -628,6 +710,10 @@ func (s *Service) runRestore(ctx context.Context, job jobs.Job, rep *jobs.Report
 	if err := json.Unmarshal(job.Params, &p); err != nil {
 		return fmt.Errorf("invalid job parameters: %w", err)
 	}
+	if err := s.waitWhilePruning(ctx, rep, &p.Request.SourceID); err != nil {
+		return err
+	}
+	started := time.Now()
 	res, err := s.restore.Execute(ctx, job.ID, p.Request, restoreReporter{rep})
 	actor := Actor{User: p.Actor, Remote: p.Remote}
 	result := audit.ResultOK
@@ -638,7 +724,7 @@ func (s *Service) runRestore(ctx context.Context, job jobs.Job, rep *jobs.Report
 		detail["error"] = truncate(err.Error(), 300)
 	}
 	sourceID := p.Request.SourceID
-	_ = s.record(ctx, actor, audit.ActionRestoreFinish, "point", fmt.Sprint(p.Request.PointID), &sourceID, result, detail)
+	_ = s.recordTimed(ctx, actor, audit.ActionRestoreFinish, "point", fmt.Sprint(p.Request.PointID), &sourceID, result, detail, time.Since(started))
 	return err
 }
 

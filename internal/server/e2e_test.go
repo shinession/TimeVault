@@ -58,6 +58,10 @@ type harness struct {
 	csrf   string
 	// addr is the address this browser appears to come from; empty means the real loopback address.
 	addr string
+	// prefix is put in front of the path of every request: the base path the browser asks for.
+	prefix string
+	// strip makes the requests go through a reverse proxy that takes the prefix off again (see forwarded).
+	strip bool
 	// dir stands in for the company user accounts, clock for the time the sign-in manager sees.
 	dir   *fakeDirectory
 	clock *testClock
@@ -89,11 +93,24 @@ func (s *swappable) Search(ctx context.Context, q search.Query) (search.Page, er
 }
 func (s *swappable) Health(ctx context.Context) search.Health { return s.current().Health(ctx) }
 
+// Subfolders passes the question on to a provider that can answer it.
+func (s *swappable) Subfolders(ctx context.Context, dir string, limit int) ([]search.FolderInfo, bool, error) {
+	if lister, ok := s.current().(search.FolderLister); ok {
+		return lister.Subfolders(ctx, dir, limit)
+	}
+	return nil, false, search.ErrDisabled
+}
+
 func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
 
 // newHarnessWith builds the server of the tests; tune, when given, may change the service configuration and the
 // deployment before they are used.
 func newHarnessWith(t *testing.T, tune func(*service.Config, *config.Deployment)) *harness {
+	return newHarnessOpts(t, tune, nil)
+}
+
+// newHarnessOpts is newHarnessWith that can also change the options of the HTTP server.
+func newHarnessOpts(t *testing.T, tune func(*service.Config, *config.Deployment), serverTune func(*server.Options)) *harness {
 	t.Helper()
 	env := testenv.New(t)
 	log := slog.New(slog.DiscardHandler)
@@ -120,14 +137,18 @@ func newHarnessWith(t *testing.T, tune func(*service.Config, *config.Deployment)
 		defer stop()
 		runner.Shutdown(stopCtx)
 	})
+	opts := server.Options{Version: "test", Location: time.UTC, Deployment: deployment, Now: clock.Now}
+	if serverTune != nil {
+		serverTune(&opts)
+	}
 	am, err := auth.NewManager(auth.Options{
 		AdminUser: "admin", AdminPasswordHash: passwordHash(t), Directory: dir,
-		SessionKey: []byte(strings.Repeat("k", 32)), TTL: time.Hour, Now: clock.Now,
+		SessionKey: []byte(strings.Repeat("k", 32)), TTL: time.Hour, Now: clock.Now, CookiePath: opts.BasePath,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := server.New(svc, am, web.FS, server.Options{Version: "test", Location: time.UTC, Deployment: deployment}, log)
+	s, err := server.New(svc, am, web.FS, opts, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,12 +175,15 @@ func (h *harness) visitor() *harness {
 
 func (h *harness) do(method, path string, body io.Reader, hdr map[string]string) (*http.Response, string) {
 	h.t.Helper()
-	req, err := http.NewRequest(method, h.srv.URL+path, body)
+	req, err := http.NewRequest(method, h.srv.URL+h.prefix+path, body)
 	if err != nil {
 		h.t.Fatal(err)
 	}
 	if h.addr != "" {
 		req.Header.Set("X-Test-Client", h.addr)
+	}
+	if h.strip {
+		req.Header.Set("X-Test-Strip", "1")
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)

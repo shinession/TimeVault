@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"timevault/internal/audit"
 	"timevault/internal/auth"
 	"timevault/internal/catalog"
 	"timevault/internal/pathutil"
@@ -103,6 +104,69 @@ func (p *Page) TimeSP(t *time.Time) string {
 
 func (p *Page) hasFlash() bool { return p.Flash != nil }
 
+// AuditDuration formats how long the operation of an audit event ran, "-" when it has no duration.
+func (p *Page) AuditDuration(e audit.Event) string {
+	if !e.HasDuration() {
+		return "-"
+	}
+	return formatDuration(e.Duration)
+}
+
+// DurationMS formats a length of time given in milliseconds, "-" when it is not known.
+func (p *Page) DurationMS(ms *int64) string {
+	if ms == nil {
+		return "-"
+	}
+	return formatDuration(time.Duration(*ms) * time.Millisecond)
+}
+
+// AuditSpeed is how fast a backup or restore moved data: the bytes it wrote over the time it ran, for example
+// "41.2 MB/s". It is empty when the event has no duration or no data to speak of.
+func (p *Page) AuditSpeed(e audit.Event) string {
+	var key string
+	switch e.Action {
+	case audit.ActionBackupFinish:
+		key = "new_bytes"
+	case audit.ActionRestoreFinish:
+		key = "bytes"
+	default:
+		return ""
+	}
+	written, ok := detailNumber(e.Detail, key)
+	if !ok || written <= 0 || !e.HasDuration() {
+		return ""
+	}
+	return humanBytes(int64(written/e.Duration.Seconds())) + "/s"
+}
+
+// detailNumber reads a number of an audit detail, which is a float64 once it has been through JSON.
+func detailNumber(detail map[string]any, key string) (float64, bool) {
+	switch n := detail[key].(type) {
+	case float64:
+		return n, true
+	case int64:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	}
+	return 0, false
+}
+
+// formatDuration writes a duration compactly and without a language: 850ms, 12.3s, 3m 12s, 1h 02m.
+func formatDuration(d time.Duration) string {
+	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	case d < time.Minute:
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	case d < time.Hour:
+		s := int(d.Round(time.Second) / time.Second)
+		return fmt.Sprintf("%dm %02ds", s/60, s%60)
+	}
+	m := int(d.Round(time.Minute) / time.Minute)
+	return fmt.Sprintf("%dh %02dm", m/60, m%60)
+}
+
 // Soon reports whether t is about to arrive, for texts such as "any moment now".
 func (p *Page) Soon(t *time.Time) bool { return t != nil && time.Until(*t) < 30*time.Second }
 
@@ -166,7 +230,9 @@ func (s *Server) funcs() template.FuncMap {
 		"hex":       func(b []byte) string { return hex.EncodeToString(b) },
 		"add":       func(a, b int) int { return a + b },
 		"int":       toInt,
-		"url":       buildURL,
+		"url":       s.href,
+		"route":     buildURL,
+		"basePath":  func() string { return s.base },
 		"joinRel":   pathutil.JoinRel,
 		"pct":       percent,
 		"iso":       func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
@@ -298,12 +364,12 @@ const cookieFlash = "tv_flash"
 
 // setFlash stores a message key for the next page view.
 func (s *Server) setFlash(w http.ResponseWriter, kind, key string) {
-	http.SetCookie(w, &http.Cookie{Name: cookieFlash, Value: kind + ":" + key, Path: "/", MaxAge: 60, HttpOnly: true,
+	http.SetCookie(w, &http.Cookie{Name: cookieFlash, Value: kind + ":" + key, Path: s.cookiePath(), MaxAge: 60, HttpOnly: true,
 		Secure: s.opts.CookieSecure, SameSite: http.SameSiteLaxMode})
 }
 
 func (s *Server) clearFlash(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: cookieFlash, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
+	http.SetCookie(w, &http.Cookie{Name: cookieFlash, Value: "", Path: s.cookiePath(), MaxAge: -1, HttpOnly: true,
 		Secure: s.opts.CookieSecure, SameSite: http.SameSiteLaxMode})
 }
 

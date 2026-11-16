@@ -1,13 +1,13 @@
 {{define "content"}}
 <section class="tv-login">
   <div class="tv-card tv-login-card">
-    <img class="tv-login-logo" src="/static/img/logo.svg" alt="" width="56" height="56">
+    <img class="tv-login-logo" src="{{url "/static/img/logo.svg"}}" alt="" width="56" height="56">
     <h1>{{.T "login.heading"}}</h1>
     <p class="tv-muted">{{.T "login.subtitle"}}</p>
     <p class="tv-muted tv-small">{{.T "login.hint"}}</p>
     {{with .Data}}
     {{with .Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
-    <form method="post" action="/login" class="tv-form">
+    <form method="post" action="{{url "/login"}}" class="tv-form">
       <input type="hidden" name="next" value="{{.Next}}">
       <label class="tv-field"><span>{{$.T "login.username"}}</span>
         <input name="username" value="{{.Username}}" autocomplete="username" required autofocus></label>
@@ -15,6 +15,19 @@
         <input type="password" name="password" autocomplete="current-password" required></label>
       <button class="tv-btn tv-btn-primary" type="submit">{{$.T "login.submit"}}</button>
     </form>
+    {{if .SSO}}
+    <div class="tv-sso" data-sso-box data-start="{{url "/auth/sso/start"}}" data-poll="{{url "/auth/sso/poll"}}" data-next="{{.Next}}"
+         data-msg-waiting="{{$.T "login.sso_waiting"}}" data-msg-popup="{{$.T "login.sso_popup"}}"
+         data-msg-no_user="{{$.T "login.sso_no_user"}}" data-msg-denied="{{$.T "login.sso_denied"}}"
+         data-msg-mismatch="{{$.T "login.sso_mismatch"}}" data-msg-expired="{{$.T "login.sso_expired"}}"
+         data-msg-unavailable="{{$.T "login.unavailable"}}" data-msg-busy="{{$.T "login.sso_busy"}}"
+         data-msg-timeout="{{$.T "login.sso_timeout"}}" data-msg-cancelled="{{$.T "login.sso_cancelled"}}"
+         data-msg-error="{{$.T "login.sso_error"}}">
+      <div class="tv-or"><span>{{$.T "login.or"}}</span></div>
+      <button class="tv-btn" type="button" data-sso-login>{{template "icon" "user"}} {{$.T "login.sso"}}</button>
+      <div class="tv-alert tv-sso-status" data-sso-status role="status" hidden></div>
+    </div>
+    {{end}}
     {{end}}
   </div>
 </section>

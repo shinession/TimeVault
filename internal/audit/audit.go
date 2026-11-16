@@ -28,6 +28,7 @@ const (
 	ActionRestoreFinish  = "restore.finish"
 	ActionJobCancel      = "job.cancel"
 	ActionAccessDenied   = "access.denied"
+	ActionRetentionPrune = "retention.prune"
 )
 
 // Results.
@@ -49,7 +50,12 @@ type Event struct {
 	Result     string
 	RemoteAddr string
 	Detail     map[string]any
+	// Duration is how long the audited operation ran; zero when it has no duration.
+	Duration time.Duration
 }
+
+// HasDuration reports whether the event records how long its operation ran.
+func (e Event) HasDuration() bool { return e.Duration > 0 }
 
 // DetailText is the detail as compact JSON, for display.
 func (e Event) DetailText() string {
@@ -87,10 +93,17 @@ func (l *Logger) Record(ctx context.Context, e Event) error {
 	if err != nil {
 		return fmt.Errorf("audit: encode detail: %w", err)
 	}
+	// A duration of zero means the event has none: sign-ins and requests are not timed. A real operation that
+	// took less than a millisecond is stored as 1 ms, so it still shows.
+	var durationMS *int64
+	if e.Duration > 0 {
+		ms := max(e.Duration.Milliseconds(), 1)
+		durationMS = &ms
+	}
 	_, err = l.pool.Exec(context.WithoutCancel(ctx),
-		`INSERT INTO audit_events (actor, action, target_type, target_id, source_id, result, remote_addr, detail)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		e.Actor, e.Action, e.TargetType, e.TargetID, e.SourceID, e.Result, e.RemoteAddr, b)
+		`INSERT INTO audit_events (actor, action, target_type, target_id, source_id, result, remote_addr, detail, duration_ms)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		e.Actor, e.Action, e.TargetType, e.TargetID, e.SourceID, e.Result, e.RemoteAddr, b, durationMS)
 	if err != nil {
 		l.log.Error("write audit event", "action", e.Action, "actor", e.Actor, "error", err)
 		return fmt.Errorf("audit: write event: %w", err)
@@ -113,7 +126,7 @@ func (l *Logger) List(ctx context.Context, f Filter) ([]Event, error) {
 		f.Limit = 50
 	}
 	rows, err := l.pool.Query(ctx,
-		`SELECT id, at, actor, action, target_type, target_id, source_id, result, remote_addr, detail
+		`SELECT id, at, actor, action, target_type, target_id, source_id, result, remote_addr, detail, duration_ms
 		 FROM audit_events
 		 WHERE ($1 = '' OR action = $1) AND ($2 = '' OR actor = $2) AND ($3 = 0 OR id < $3)
 		 ORDER BY id DESC LIMIT $4`, f.Action, f.Actor, f.BeforeID, f.Limit)
@@ -123,7 +136,11 @@ func (l *Logger) List(ctx context.Context, f Filter) ([]Event, error) {
 	out, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Event, error) {
 		var e Event
 		var detail []byte
-		err := r.Scan(&e.ID, &e.At, &e.Actor, &e.Action, &e.TargetType, &e.TargetID, &e.SourceID, &e.Result, &e.RemoteAddr, &detail)
+		var durationMS *int64
+		err := r.Scan(&e.ID, &e.At, &e.Actor, &e.Action, &e.TargetType, &e.TargetID, &e.SourceID, &e.Result, &e.RemoteAddr, &detail, &durationMS)
+		if durationMS != nil {
+			e.Duration = time.Duration(*durationMS) * time.Millisecond
+		}
 		if err == nil && len(detail) > 0 {
 			err = json.Unmarshal(detail, &e.Detail)
 		}

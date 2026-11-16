@@ -95,8 +95,11 @@ type apiPoint struct {
 	Verification   string     `json:"verification"`
 	VerifiedAt     *time.Time `json:"verified_at,omitempty"`
 	Restorable     bool       `json:"restorable"`
-	ManifestSHA256 string     `json:"manifest_sha256,omitempty"`
-	FailureReason  string     `json:"failure_reason,omitempty"`
+	// Partial is true when older versions of some files were deleted to stay within the folder's version limit, so
+	// the point no longer shows every file as it was.
+	Partial        bool   `json:"partial"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+	FailureReason  string `json:"failure_reason,omitempty"`
 }
 
 func toAPIPoint(p catalog.Point) apiPoint {
@@ -105,7 +108,7 @@ func toAPIPoint(p catalog.Point) apiPoint {
 		CapturedAt: p.CapturedAt, CommittedAt: p.CommittedAt, Files: p.FileCount, Folders: p.DirCount, TotalBytes: p.TotalBytes,
 		Added: p.AddedCount, Modified: p.ModifiedCount, Deleted: p.DeletedCount, NewObjects: p.NewObjectCount,
 		NewObjectBytes: p.NewObjectBytes, NotCaptured: p.SkippedCount, Verification: p.Verification, VerifiedAt: p.VerifiedAt,
-		Restorable: p.Restorable(), ManifestSHA256: p.ManifestHex(), FailureReason: p.FailureReason,
+		Restorable: p.Restorable(), Partial: p.Partial, ManifestSHA256: p.ManifestHex(), FailureReason: p.FailureReason,
 	}
 }
 
@@ -120,14 +123,18 @@ type apiSource struct {
 	Enabled         bool       `json:"enabled"`
 	ScheduleMinutes *int       `json:"schedule_minutes"`
 	LastRunAt       *time.Time `json:"last_run_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	LatestPoint     *apiPoint  `json:"latest_point,omitempty"`
+	// LastRunMS is how long the last backup run of the folder took, in milliseconds.
+	LastRunMS *int64 `json:"last_run_ms,omitempty"`
+	// MaxVersions is how many versions of one file are kept; null keeps them all.
+	MaxVersions *int      `json:"max_versions"`
+	CreatedAt   time.Time `json:"created_at"`
+	LatestPoint *apiPoint `json:"latest_point,omitempty"`
 }
 
 func toAPISource(src catalog.Source) apiSource {
 	return apiSource{
 		ID: src.ID, Name: src.Name, DisplayPath: src.DisplayPath, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled,
-		ScheduleMinutes: src.ScheduleMinutes, LastRunAt: src.LastRunAt, CreatedAt: src.CreatedAt,
+		ScheduleMinutes: src.ScheduleMinutes, LastRunAt: src.LastRunAt, LastRunMS: src.LastRunMS, MaxVersions: src.MaxVersions, CreatedAt: src.CreatedAt,
 	}
 }
 
@@ -245,7 +252,8 @@ func (s *Server) apiSession(w http.ResponseWriter, r *http.Request, sess auth.Se
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	d := s.opts.Deployment
 	out := map[string]any{
-		"version": s.opts.Version, "listen": d.ListenAddr, "database": d.Database, "user_directory": d.UserDirectory,
+		"version": s.opts.Version, "listen": d.ListenAddr, "database": d.Database, "user_directory": d.UserDirectory, "sso_host": d.SSOHost,
+		"base_path":   d.BasePath,
 		"server_host": d.ServerHost, "restore_display_root": d.RestoreDisplayRoot, "search": d.SearchHost,
 		"local_admin": d.LocalAdmin != "", "sign_in_disabled": d.AuthDisabled, "session_ttl": d.SessionTTL.String(), "cookie_secure": d.CookieSecure,
 	}
@@ -307,6 +315,7 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.
 		RootPath        string   `json:"root_path"`
 		Excludes        []string `json:"excludes"`
 		ScheduleMinutes *int     `json:"schedule_minutes"`
+		MaxVersions     *int     `json:"max_versions"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -316,6 +325,7 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.
 	}
 	src, err := s.svc.AddSource(r.Context(), s.actor(r, sess), backup.SourceRequest{
 		Name: body.Name, DisplayPath: body.DisplayPath, RootPath: body.RootPath, Excludes: body.Excludes, ScheduleMinutes: body.ScheduleMinutes,
+		MaxVersions: body.MaxVersions,
 	})
 	if err != nil {
 		s.handleErr(w, r, err)
@@ -364,11 +374,15 @@ func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess au
 		Excludes        *[]string   `json:"excludes"`
 		Enabled         *bool       `json:"enabled"`
 		ScheduleMinutes optionalInt `json:"schedule_minutes"`
+		MaxVersions     optionalInt `json:"max_versions"`
+		// ConfirmPrune says that deleting the older versions a lower limit makes unnecessary is meant.
+		ConfirmPrune bool `json:"confirm_prune"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	req := backup.SourceRequest{Name: cur.Name, DisplayPath: cur.DisplayPath, RootPath: cur.RootPath, Excludes: cur.Excludes, ScheduleMinutes: cur.ScheduleMinutes}
+	req := backup.SourceRequest{Name: cur.Name, DisplayPath: cur.DisplayPath, RootPath: cur.RootPath, Excludes: cur.Excludes,
+		ScheduleMinutes: cur.ScheduleMinutes, MaxVersions: cur.MaxVersions, ConfirmPrune: body.ConfirmPrune}
 	enabled := cur.Enabled
 	if body.Name != nil {
 		req.Name = *body.Name
@@ -387,6 +401,9 @@ func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess au
 	}
 	if body.ScheduleMinutes.Set {
 		req.ScheduleMinutes = body.ScheduleMinutes.Value
+	}
+	if body.MaxVersions.Set {
+		req.MaxVersions = body.MaxVersions.Value
 	}
 	src, err := s.svc.UpdateSource(r.Context(), s.actor(r, sess), id, req, enabled)
 	if err != nil {
@@ -764,10 +781,17 @@ func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request, sess auth.Sess
 		Result     string         `json:"result"`
 		RemoteAddr string         `json:"remote_addr,omitempty"`
 		Detail     map[string]any `json:"detail,omitempty"`
+		DurationMS *int64         `json:"duration_ms,omitempty"`
 	}
 	out := make([]ev, 0, len(events))
 	for _, e := range events {
-		out = append(out, ev{e.ID, e.At, e.Actor, e.Action, e.TargetType, e.TargetID, e.SourceID, e.Result, e.RemoteAddr, e.Detail})
+		item := ev{ID: e.ID, At: e.At, Actor: e.Actor, Action: e.Action, TargetType: e.TargetType, TargetID: e.TargetID,
+			SourceID: e.SourceID, Result: e.Result, RemoteAddr: e.RemoteAddr, Detail: e.Detail}
+		if e.HasDuration() {
+			ms := e.Duration.Milliseconds()
+			item.DurationMS = &ms
+		}
+		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": out})
 }
