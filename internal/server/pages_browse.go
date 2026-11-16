@@ -65,8 +65,9 @@ type explorerData struct {
 	Query      string
 	Search     *service.SearchPage
 	SearchMsg  string
-	NextURL    string
 	SourceDown bool
+	// List holds the controls (type filter, sort links, pager) of the folder listing or of the search results.
+	List listView
 }
 
 func (s *Server) handleExplorer(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -88,16 +89,22 @@ func (s *Server) handleExplorer(w http.ResponseWriter, r *http.Request, sess aut
 	}
 	d := &explorerData{Sources: opts, Source: sel.Source, Rel: rel, Crumbs: crumbsFor(rel), Latest: sel.Latest}
 	p.Data = d
-	offset := intParamDefault(r, "offset", 0, 0, 1<<30)
+	p.locate(sel.Source, rel)
 
 	if q := strings.TrimSpace(r.FormValue("q")); q != "" {
 		d.Query = q
-		page, err := s.svc.Search(r.Context(), sel.Source, q, offset, 50)
+		lq := parseListQuery(r, searchPerPage)
+		page, err := s.svc.Search(r.Context(), sel.Source, q, (lq.Page-1)*lq.PerPage, lq.PerPage)
 		switch {
 		case err == nil:
 			d.Search = &page
-			if page.NextOffset >= 0 {
-				d.NextURL = buildURL("/explorer", "source", sel.ID, "q", q, "offset", page.NextOffset)
+			d.List = p.newListView(lq, listSpec{
+				Path: "/explorer", Fixed: []any{"source", sel.ID, "q", q}, Choices: searchPerPage,
+				Total: page.Total, Unfiltered: page.Total,
+			})
+			if d.List.Pager.Page != lq.Page {
+				http.Redirect(w, r, d.List.Pager.LastURL, http.StatusSeeOther)
+				return
 			}
 		case errors.Is(err, service.ErrSearchUnavailable):
 			d.SearchMsg = p.T("search.unavailable")
@@ -113,12 +120,18 @@ func (s *Server) handleExplorer(w http.ResponseWriter, r *http.Request, sess aut
 		return
 	}
 
-	listing, err := s.svc.BrowseLive(r.Context(), sel.Source, rel, offset, 200)
+	lq := parseListQuery(r, folderPerPage)
+	listing, err := s.svc.ListLive(r.Context(), sel.Source, rel, lq.options())
 	switch {
 	case err == nil:
 		d.Listing = &listing
-		if listing.NextOffset >= 0 {
-			d.NextURL = buildURL("/explorer", "source", sel.ID, "path", rel, "offset", listing.NextOffset)
+		d.List = p.newListView(lq, listSpec{
+			Path: "/explorer", Fixed: []any{"source", sel.ID, "path", rel}, Choices: folderPerPage,
+			Facets: listing.Types, Total: listing.Total, Unfiltered: listing.Unfiltered,
+		})
+		if d.List.Pager.Page != lq.Page {
+			http.Redirect(w, r, d.List.Pager.LastURL, http.StatusSeeOther)
+			return
 		}
 	case errors.Is(err, service.ErrSourceUnavailable):
 		d.SourceDown = true
@@ -147,11 +160,12 @@ type historyData struct {
 	Latest         catalog.Point
 	Rel            string
 	Crumbs         []crumb
-	Listing        *service.HistoryListing
-	NextURL        string
+	Listing        *service.HistoryList
 	DefaultDest    string
 	RestoreEnabled bool
 	IsLatest       bool
+	// List holds the controls (type filter, sort links, pager) of the folder listing.
+	List listView
 }
 
 func defaultDest(now time.Time) string { return "restore-" + now.Format("20060102-150405") }
@@ -180,6 +194,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request, sess auth
 		s.handleErr(w, r, err)
 		return
 	}
+	p.locate(sel.Source, rel)
 	point := *sel.Latest
 	if id := intParam(r, "point"); id != 0 {
 		if point, err = s.svc.Point(r.Context(), sel.ID, id); err != nil {
@@ -208,15 +223,22 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request, sess auth
 		d.Chips = append([]pointChip{{Point: point, Selected: true}}, d.Chips...)
 	}
 
-	listing, err := s.svc.BrowseHistory(r.Context(), sel.Source, point, rel, r.FormValue("cursor"), 200)
+	lq := parseListQuery(r, folderPerPage)
+	listing, err := s.svc.ListHistory(r.Context(), sel.Source, point, rel, lq.options())
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
 	d.Point, d.Latest, d.Rel, d.Crumbs, d.Listing = point, *sel.Latest, rel, crumbsFor(rel), &listing
+	s.viewerFor(r.Context(), sess).entries(listing.Entries)
 	d.IsLatest = point.ID == sel.Latest.ID
-	if listing.Next != "" {
-		d.NextURL = buildURL("/history", "source", sel.ID, "point", point.ID, "path", rel, "cursor", listing.Next)
+	d.List = p.newListView(lq, listSpec{
+		Path: "/history", Fixed: []any{"source", sel.ID, "point", point.ID, "path", rel}, Choices: folderPerPage,
+		Facets: listing.Types, Total: listing.Total, Unfiltered: listing.Unfiltered,
+	})
+	if d.List.Pager.Page != lq.Page {
+		http.Redirect(w, r, d.List.Pager.LastURL, http.StatusSeeOther)
+		return
 	}
 	s.render(w, r, "history", http.StatusOK, p)
 }
@@ -258,6 +280,8 @@ func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request, sess aut
 		}
 	}
 	p := s.newPage(r, sess, "versions.title", "history")
+	p.locate(src, rel)
+	s.viewerFor(r.Context(), sess).versions(hist.Versions)
 	p.Data = &versionsData{
 		Source: src, Hist: hist, Crumbs: crumbsFor(rel), ParentRel: parent,
 		DefaultDest: defaultDest(time.Now()), RestoreEnabled: s.svc.RestoreEnabled(), BackURL: back,

@@ -2,7 +2,7 @@
 
 ## Overview
 
-How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.1). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
+How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.3). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
 
 ## Prerequisites
 
@@ -43,16 +43,18 @@ Build: `go build -o timevault-server.exe ./cmd/timevault-server`. The web templa
 
 | What | Where | Changed by | Takes effect |
 |---|---|---|---|
-| Deployment: database URL, Redis URL, listen address, backup folder (`TIMEVAULT_REPOSITORY_PATH`), restore folder (`TIMEVAULT_RESTORE_ROOT`), session key, search, workers, logging | The `.env` file (a process environment variable overrides it) | Whoever installs the service, by editing the file | After a restart |
-| Monitored folders: name, folder, exclude patterns, on or off, automatic schedule | The database (table `sources`) | Administrators, on the **Settings** page or with `PATCH /api/v1/sources/{id}` | At once |
+| Deployment: database URL, Redis URL, listen address, backup folder (`TIMEVAULT_REPOSITORY_PATH`), restore folder (`TIMEVAULT_RESTORE_ROOT`), this server's host name (`TIMEVAULT_SERVER_HOST`), the restore folder's display path (`TIMEVAULT_RESTORE_DISPLAY_ROOT`), session key, search, workers, logging | The `.env` file (a process environment variable overrides it) | Whoever installs the service, by editing the file | After a restart |
+| Monitored folders: name, display folder, folder on the server, exclude patterns, on or off, automatic schedule | The database (table `sources`) | Administrators, on the **Settings** page or with `PATCH /api/v1/sources/{id}` | At once |
 | Accounts and roles | Redis (`app_user_*`), written by another application | That application | Within a minute for a session that is already signed in |
 
 - The `.env` file is the one named by `TIMEVAULT_ENV_FILE` (it must exist), otherwise `.env` in the working directory, otherwise `.env` next to `timevault-server.exe`. The first one found is used; files are not merged. In development it is the `.env` in the repository folder, and it is the only settings file: the dev scripts read and write it, and `dev-run.ps1` points the service at it.
 - **A `TIMEVAULT_*` variable in the process environment wins over the same key in the file**, and nothing tells you unless you look: a variable left in a terminal makes the service ignore what you wrote in `.env` (typically a port that does not change). The service therefore names every setting that the environment overrides in a warning when it starts (`check-redis-users` prints them too), and the dev scripts remove such variables from the terminal. If the warning keeps coming back, the variable is set in your Windows user or system environment.
 - Syntax: one `KEY=VALUE` per line. Blank lines and lines that start with `#` are ignored, a leading `export ` is allowed, and a UTF-8 byte order mark and Windows line ends are accepted. The value is taken literally up to the end of the line, so a path with `\` or a password with `#` needs no escaping (and a trailing ` # comment` would become part of the value); one pair of matching single or double quotes around the value is removed; the last assignment of a key wins. An error names the line number and never shows the line.
 - The file holds secrets (the database and Redis passwords, the session key). `/.env` is in `.gitignore`; keep the file readable only by the account that runs the service, and never commit a filled-in copy. [configs/timevault.example.env](../configs/timevault.example.env) is the template.
-- The **Settings** page (any signed-in account may open it) shows the monitored folders, the backup folder and the restore folder read-only with the free space of the repository, and the running configuration: version, listen address, database and Redis as `host:port/name`, the settings file, the local administrator's name, the search server. Secrets are never shown. Only administrators see the forms that change the monitored folders.
+- The **Settings** page (any signed-in account may open it) shows the monitored folders, the backup storage and the restore folder with the free space of the repository, and the running configuration: version, this server's host name, listen address, database and Redis as `host:port/name`, the local administrator's name, the search server. Secrets are never shown. Only administrators see the forms that change the monitored folders, and only administrators see the folders on the server's disk (the real folder of each monitored folder, the backup folder, the real restore folder and the settings file); everybody else sees the display folders.
 - **Backup folder and restore folder.** They are two different places. The backup folder (`TIMEVAULT_REPOSITORY_PATH`, the repository) is where TimeVault keeps the contents of everything it backed up. The restore folder (`TIMEVAULT_RESTORE_ROOT`) is where restored files are put: a restore never overwrites the original files and never writes into a monitored folder, so it writes the restored copies into a new folder below the restore folder (named on the restore form, by default `restore-<date>-<time>`), and you copy back what you need from there. Neither may lie inside a monitored folder.
+- **Display folders.** People reach the monitored folders and the restore folder over the network, not as `D:\TimeVault\monitor`. Every monitored folder therefore has a **display folder**, the network path people open it with (for `D:\TimeVault\monitor` shared as `TimeVault`: `\\sgmeslt595.co.murata.local\TimeVault\monitor`), and the restore folder has `TIMEVAULT_RESTORE_DISPLAY_ROOT` (`\\sgmeslt595.co.murata.local\TimeVault\restore`). Set `TIMEVAULT_SERVER_HOST` to the name of this server (`sgmeslt595.co.murata.local`): then the Settings page and the API refuse a monitored folder without a display folder, and one whose display folder is on another server (its search, backup and restore only work with this server's own folders). Without `TIMEVAULT_SERVER_HOST` a display folder is optional and is not compared with a host. Administrators fill the field on the Settings page, which also marks a monitored folder that has none ("No display folder yet"; after setting the host name every folder that was added before needs one before it can be edited again). The service checks the host, not that the share really leads to the monitored folder: share the folder first, then write the path you open it with. Where a display folder is shown, the Explorer, the Time Machine and the page of a file's versions have a **Location** line with a **Copy** button.
+- **Who sees which folder.** Administrators see both the display folder and the real folder. Everybody else, signed in or not, sees only the display folder, and texts that quote a real folder (job errors and logs, restore messages, audit details, status details, the reasons a file was not captured) show the display folder, `[<name of the monitored folder>]`, `[backup folder]` or `[restore folder]` instead. See [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md).
 
 ## Configuration reference
 
@@ -67,6 +69,8 @@ Every setting is an environment variable or a line of the `.env` file (see [Wher
 | `TIMEVAULT_AUTO_MIGRATE` | `false` | Apply migrations at start. When `false` the service refuses to start if the schema is not current; run `migrate` first. |
 | `TIMEVAULT_REPOSITORY_PATH` | none (required) | Backup folder (the repository): where the contents of the backed-up files are stored. A new or empty folder is initialised; a non-empty folder that is not a TimeVault repository is refused. Needs a restart to change. |
 | `TIMEVAULT_RESTORE_ROOT` | empty | Restore folder. A restore never overwrites the original files and never writes into a monitored folder: it creates a new folder below this one for each restore (named on the restore form) and writes the restored copies there. Empty disables restore. It must not be inside or contain the repository or a monitored folder. |
+| `TIMEVAULT_SERVER_HOST` | empty | The name of this server as people type it in network paths, for example `sgmeslt595.co.murata.local`. Letters, digits, `-`, `_` and `.` only. When set, every monitored folder needs a display folder on this host (compared without regard to case), and `TIMEVAULT_RESTORE_DISPLAY_ROOT` must be on it. When empty, display folders are optional and not compared with a host. |
+| `TIMEVAULT_RESTORE_DISPLAY_ROOT` | empty | The restore folder as people reach it over the network, `\\server\share\folder` (either slash). Checked at start: it must be a network path, on `TIMEVAULT_SERVER_HOST` when that is set; ignored when there is no restore folder. Without it, ordinary accounts are told only that the restore folder is on the server. |
 | `TIMEVAULT_AUTH_DISABLED` | `false` | Turns sign-in off: everyone is the local administrator. Only accepted on a loopback listener. For development only. |
 | `TIMEVAULT_REDIS_URL` | empty | The Redis user directory, `redis://[:password@]host:port/db` (`rediss://` for TLS). Empty means no company accounts. Secret. |
 | `TIMEVAULT_REDIS_KEY_PREFIX` | `app_user_` | Prefix of the keys of the user hashes. |
@@ -121,13 +125,26 @@ Search is optional. TimeVault asks a **local Everything instance** (the HTTP ser
 2. Set `TIMEVAULT_EVERYTHING_URL` (for example `http://127.0.0.1:<port>/`) and, if you set credentials, `TIMEVAULT_EVERYTHING_USERNAME` and `TIMEVAULT_EVERYTHING_PASSWORD`. Make sure Everything indexes the source folders.
 3. Open **Explorer** and type in the search box. The **Status** page shows the search engine as `ok`, `degraded` (reachable but answering wrongly or slowly) or `disabled`.
 
+**Turn it on for an Everything you already run.** Search stays "not configured" until `TIMEVAULT_EVERYTHING_URL` is set, and an Everything that is running does not answer over HTTP until its HTTP server is switched on (the default is off), so both have to be done:
+
+1. In Everything open **Tools → Options → HTTP Server** (the same settings are the `http_server_*` keys of `Everything.ini`): tick **Enable HTTP server**, choose a port that is free (for example `38480`), bind it to `127.0.0.1` only (`http_server_bindings`), set a user name and a password, and switch **Allow file download** off (`http_server_allow_file_download=0`). Apply. Everything has to keep running, and it has to index the drive of the monitored folders (an NTFS volume, or the folders themselves).
+2. Put these lines into `.env` (use your own port, user name and password):
+
+   ```env
+   TIMEVAULT_EVERYTHING_URL=http://127.0.0.1:38480/
+   TIMEVAULT_EVERYTHING_USERNAME=<username>
+   TIMEVAULT_EVERYTHING_PASSWORD=<password>
+   ```
+
+3. Restart the TimeVault service, open the **Status** page (the search engine should be `ok`) and search in **Explorer**. If it says "unavailable", open `http://127.0.0.1:38480/` in a browser: it must ask for the user name and password and show Everything's page.
+
 **What happens to a query**
 
 - The typed text is split into terms (whitespace separates them, double quotes make a phrase; at most 256 bytes and 16 terms). `*` and `?` act as separators because Everything keeps treating them as wildcards even inside quotes.
 - Every term is put in double quotes, so Everything operators such as `|`, `!`, `<>`, `regex:`, `size:` or `content:` are searched as plain text.
 - The query is confined to the source with `path:"<source root>\"`. The trailing backslash matters: `path:` is a plain substring match, so without it a source `D:\src` would also match `D:\src2`. `infolder:` was not used because it only matches direct children.
 - Every result is checked again against the source root. Anything outside is dropped and counted, never shown.
-- Pages hold at most 200 results; folder sizes are shown as unknown when Everything does not index them.
+- Pages hold at most 200 results (50, 100 or 200 can be chosen) with page links; they are not sorted or filtered by type, because Everything answers one page at a time in its own order. Folder sizes are shown as unknown when Everything does not index them.
 
 **Development instance** (`scripts\dev-everything.ps1`, needs Everything 1.4.x installed; point `TIMEVAULT_EVERYTHING_EXE` (environment or `.env`) at `Everything.exe` if it is not found):
 
@@ -156,9 +173,10 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 
 ## Operating
 
-- **Who may do what.** Anyone can browse (Explorer, Time Machine, file versions, the state of the Backups page and of backup jobs) without signing in. Everything else needs an active account: backing up, verifying, cancelling a job, restoring, the restore jobs, why a job failed and its log, who asked for it, the audit log, the status page, the settings page. Only an `admin` account (Redis `Type` is `admin`, or the local administrator) can add, edit, switch off and schedule monitored folders. Visitors do not see the folders' paths on the server's disk. See [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md) and [api.md](./api.md#who-may-call-what).
+- **Who may do what.** Anyone can browse (Explorer, Time Machine, file versions, the state of the Backups page and of backup jobs) without signing in. Everything else needs an active account: backing up, verifying, cancelling a job, restoring, the restore jobs, why a job failed and its log, who asked for it, the audit log, the status page, the settings page. Only an `admin` account (Redis `Type` is `admin`, or the local administrator) can add, edit, switch off and schedule monitored folders, and only an administrator sees the folders on the server's disk; everybody else sees display folders. See [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md), [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md) and [api.md](./api.md#who-may-call-what).
+- **Browsing long folders.** The Explorer and the Time Machine list a folder in pages (100 items by default; 50, 100, 200 or 500 can be chosen, with the count and page links above and below). The **Type** column shows the extension in capitals ("Folder" for folders, "File" for a file without an extension); the **Type** drop-down above the list keeps only one kind (all folders, all files, a file without an extension, or one extension, each with its count). Click **Name**, **Type**, **Size** or **Modified** to sort the whole folder, and click again to reverse it; folders always come first. The choice is in the address, so a link keeps it. **Select all** in the Time Machine selects the items on the current page, and a restore can take up to 500 paths. On a long page two round buttons at the bottom right jump to the top and to the bottom. A folder of 10,000 files opens in about 0.1 s and one of 50,000 in about 0.5 s (measured on the development machine, with all files in one folder); several hundred thousand entries in one folder take seconds, because every page reads the whole folder.
 - **Health.** `GET /healthz` returns `ok` without signing in and only proves the process is up. The **Status** page (accounts only) checks the database, the repository (a write test and free space; "degraded" below 5% free), the search engine, the Redis user directory ("degraded" when it does not answer: browsing, existing sessions and the local administrator still work), the restore folder and the job queue, and lists VSS and USN as "disabled". Without a session only `/healthz`, the sign-in page, the language switch, the static assets and the browsing pages work.
-- **Monitored folders.** An administrator adds them on the **Settings** page (a local folder; it must not overlap the repository, the restore folder or another monitored folder) and can edit the name, the exclude patterns, the on/off switch and the schedule at any time. The folder itself can be corrected until the first recovery point exists (in any state, even a failed one); after that, switch the old one off and add the new one. A switched-off folder keeps its history and is still browsable; it cannot be backed up.
+- **Monitored folders.** An administrator adds them on the **Settings** page (a local folder; it must not overlap the repository, the restore folder or another monitored folder; give it its display folder too, see [Where settings live](#where-settings-live)) and can edit the name, the display folder, the exclude patterns, the on/off switch and the schedule at any time. The folder on the server itself can be corrected until the first recovery point exists (in any state, even a failed one); after that, switch the old one off and add the new one. A switched-off folder keeps its history and is still browsable; it cannot be backed up.
 - **Backups.** Any signed-in account can press **Back up now** in **Backups**. A normal backup trusts size and modification time to skip unchanged files; **Full re-read** reads and hashes every file again. Only one backup per source runs at a time. A backup that cannot read a file (locked, changed while reading, link, special file) records it as skipped with the reason, keeps the previous good version, and still completes with a warning.
 - **Automatic backups.** Tick "Back up automatically every N minutes" for a folder (1 to 43200). The service looks every 15 seconds; a folder is due when it never ran or its last run ended N minutes ago, whatever the outcome, and a run that finds nothing changed records nothing: no recovery point, no job, no audit event. Setting a schedule, or switching a folder on again, starts a backup at once when the last run is older than the interval. There is no retention yet, so a short interval on a folder that keeps changing grows the repository without bound. See [ADR 0006](./adr/0006-settings-in-env-and-database-and-scheduled-backups.md).
 - **Verify.** The verify job on a recovery point checks the catalog against the manifest digest and that every referenced object exists with the right size; "deep" also re-hashes the content. Run it after copying or restoring the repository.
@@ -166,7 +184,7 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
   1. Sign in, open **Time Machine**, choose a source and a recovery point, then tick files or folders and choose **Restore selected…**, or choose **Restore this folder…** / **Restore everything…**. The version page of a single file has **Restore…**. Visitors who are not signed in see a **Sign in to restore files** link instead.
   2. Review the preview: counts, size, conflicts, blocked items (missing content, unsafe names, never captured) and the planned changes.
   3. Choose the destination folder name (a folder below `TIMEVAULT_RESTORE_ROOT`, created if it does not exist), the conflict policy (skip, rename, overwrite) and, if you accept restoring only part of the selection, the partial option. Overwriting needs an extra confirmation.
-  4. **Start restore** within 15 minutes of the preview (the token expires and is bound to your user and the exact plan; any change needs a new preview). Follow the job page. Do not start another restore into the same folder until it has finished. Copy the result from `<TIMEVAULT_RESTORE_ROOT>\<destination>` to its final place yourself. Restores never write into a source.
+  4. **Start restore** within 15 minutes of the preview (the token expires and is bound to your user and the exact plan; any change needs a new preview). Follow the job page. Do not start another restore into the same folder until it has finished. Copy the result from the destination to its final place yourself: the preview and the job page name it by its display folder (`<TIMEVAULT_RESTORE_DISPLAY_ROOT>\<destination>`), which is where you find it over the network; administrators also see `<TIMEVAULT_RESTORE_ROOT>\<destination>`. Restores never write into a source.
 - **Audit.** The **Audit** page (accounts only) lists sign-ins and failed sign-ins (with the account name as it was typed, cut to 64 characters), refused requests, changes to monitored folders (the old and new value of every field that changed), backups, verifies, restore previews and results, and cancellations. The application has no way to change or delete these records, and a database trigger rejects UPDATE and DELETE statements on them. Automatic runs that find nothing changed leave no record.
 - **Backing up TimeVault itself.** Back up both the PostgreSQL database (for example with `pg_dump`) and the whole repository folder. The repository only grows, so an older database copy with a newer repository is consistent, but a newer database with an older repository reports missing objects (verify shows them and restores block). After restoring either, run a deep verify.
 
@@ -178,6 +196,8 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | The service stops with a schema message | Run `timevault-server migrate`, or set `TIMEVAULT_AUTO_MIGRATE=true`. |
 | The service stops with "no way to sign in" | Set `TIMEVAULT_REDIS_URL` (company accounts) and/or `TIMEVAULT_ADMIN_PASSWORD_HASH` (a local administrator; create the value with `timevault-server hash-password`). |
 | The service stops with an error about `.env` | The message names the file and the line number, never the line. `TIMEVAULT_ENV_FILE` must name an existing file. |
+| The service stops with an error about `TIMEVAULT_SERVER_HOST` or `TIMEVAULT_RESTORE_DISPLAY_ROOT` | The message names the setting and what is wrong, never the value. The host name may only hold letters, digits, `-`, `_` and `.`; the display root must look like `\\server\share\folder`, with a share that does not end in `$`, and must be on `TIMEVAULT_SERVER_HOST`. |
+| Adding or editing a monitored folder is refused with "Enter the display folder" or "Folders on other servers cannot be monitored here" | `TIMEVAULT_SERVER_HOST` is set, so the display folder is required and its host must be that server (the message names both). Folders that were added before the setting existed have no display folder; give each one on the Settings page. |
 | The service stops with "another TimeVault service is already running against this database" | A second `timevault-server` uses the same database (schema). Stop the other one first; its lock is released when its process ends. |
 | The service stops with "not a TimeVault repository" | `TIMEVAULT_REPOSITORY_PATH` points at a non-empty folder without `timevault-repository.json`. Use an empty folder. |
 | `go` is not found by the scripts | Add Go to `PATH`, or put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env`. Setting the variable in one terminal only lasts for that terminal. |
@@ -197,7 +217,7 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | Files are listed as skipped (locked) | The file was open by another program, or changed while it was read. Run the backup again later; there is no VSS in the MVP. |
 | A restore reports a missing or corrupt object | The repository lost or damaged a file. Run a deep verify, restore the repository from its backup, or choose another recovery point. Nothing is restored from a bad object. |
 | An interrupted restore left `.tvpart-*` files | Temporary files in the destination folder from a crashed restore. They can be deleted. |
-| Search says "not configured" or "unavailable" | See [Everything search](#everything-search). History and restore keep working. |
+| Search says "not configured" or "unavailable" | See [Everything search](#everything-search). History and restore keep working. "Not configured" means `TIMEVAULT_EVERYTHING_URL` is empty; "unavailable" means the Everything it names does not answer (its HTTP server is switched off, or the port, user name or password differ). |
 | A job stays "failed: interrupted by a service restart" | The service was stopped while the job ran. Start the job again; unfinished recovery points were already cleaned up. |
 
 ---
@@ -206,7 +226,7 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 
 ## 概述
 
-介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.1 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
+介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.3 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
 
 ## 前置条件
 
@@ -247,16 +267,18 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 
 | 内容 | 位置 | 由谁修改 | 何时生效 |
 |---|---|---|---|
-| 部署设置：数据库 URL、Redis URL、监听地址、备份文件夹（`TIMEVAULT_REPOSITORY_PATH`）、恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）、会话密钥、搜索、worker、日志 | `.env` 文件（进程环境变量会覆盖它） | 安装服务的人，通过编辑文件 | 重启之后 |
-| 监控文件夹：名称、文件夹、排除规则、启用或停用、自动备份计划 | 数据库（表 `sources`） | 管理员，在**设置**页或通过 `PATCH /api/v1/sources/{id}` | 立即 |
+| 部署设置：数据库 URL、Redis URL、监听地址、备份文件夹（`TIMEVAULT_REPOSITORY_PATH`）、恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）、本服务器的主机名（`TIMEVAULT_SERVER_HOST`）、恢复文件夹的显示路径（`TIMEVAULT_RESTORE_DISPLAY_ROOT`）、会话密钥、搜索、worker、日志 | `.env` 文件（进程环境变量会覆盖它） | 安装服务的人，通过编辑文件 | 重启之后 |
+| 监控文件夹：名称、显示文件夹、服务器上的文件夹、排除规则、启用或停用、自动备份计划 | 数据库（表 `sources`） | 管理员，在**设置**页或通过 `PATCH /api/v1/sources/{id}` | 立即 |
 | 账号和角色 | Redis（`app_user_*`），由另一个应用写入 | 那个应用 | 对已经登录的会话，在一分钟之内 |
 
 - `.env` 文件是 `TIMEVAULT_ENV_FILE` 所指的文件（它必须存在），否则是工作目录下的 `.env`，否则是 `timevault-server.exe` 旁边的 `.env`。使用找到的第一个；不会合并多个文件。开发时它就是仓库文件夹中的 `.env`，也是唯一的设置文件：开发脚本读写它，`dev-run.ps1` 让服务使用它。
 - **进程环境变量中的 `TIMEVAULT_*` 变量优先于文件中的同名键**，而且除非你去查，否则没有任何提示：终端里遗留的某个变量会让服务无视你在 `.env` 里写的内容（典型表现是端口改不动）。因此服务在启动时会用一条警告点名所有被环境变量覆盖的设置（`check-redis-users` 也会打印它们），开发脚本则会从终端里移除这类变量。如果这条警告反复出现，说明该变量设在你的 Windows 用户或系统环境变量里。
 - 语法：每行一个 `KEY=VALUE`。空行和以 `#` 开头的行会被忽略，允许行首的 `export `，接受 UTF-8 字节顺序标记和 Windows 行尾。值按字面一直取到行尾，所以带 `\` 的路径或带 `#` 的密码无需转义（行尾的 ` # 注释` 会成为值的一部分）；值两侧成对的单引号或双引号会被去掉；同一个键以最后一次赋值为准。出错时只指出行号，绝不显示该行内容。
 - 该文件包含机密信息（数据库和 Redis 密码、会话密钥）。`/.env` 已在 `.gitignore` 中；请让它只能被运行服务的账户读取，并且绝不要提交填好的副本。[configs/timevault.example.env](../configs/timevault.example.env) 是模板。
-- **设置**页（任何已登录账号都可以打开）以只读方式显示监控文件夹、备份文件夹和恢复文件夹（含仓库的剩余空间），以及当前运行的配置：版本、监听地址、数据库和 Redis（显示为 `host:port/name`）、设置文件、本地管理员的名称、搜索服务器。机密信息绝不显示。只有管理员能看到修改监控文件夹的表单。
+- **设置**页（任何已登录账号都可以打开）显示监控文件夹、备份存储和恢复文件夹（含仓库的剩余空间），以及当前运行的配置：版本、本服务器的主机名、监听地址、数据库和 Redis（显示为 `host:port/name`）、本地管理员的名称、搜索服务器。机密信息绝不显示。只有管理员能看到修改监控文件夹的表单，也只有管理员能看到服务器磁盘上的文件夹（每个监控文件夹的真实文件夹、备份文件夹、真实的恢复文件夹和设置文件）；其他人看到的是显示文件夹。
 - **备份文件夹和恢复文件夹。** 它们是两个不同的地方。备份文件夹（`TIMEVAULT_REPOSITORY_PATH`，即仓库）是 TimeVault 保存所有被备份内容的地方。恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）是放恢复出来的文件的地方：恢复不会覆盖原文件，也绝不会写入监控文件夹，所以它把恢复出来的副本写入恢复文件夹下的一个新文件夹（名称在恢复表单中填写，默认是 `restore-<日期>-<时间>`），需要哪些再从那里复制回去。两者都不能位于监控文件夹之内。
+- **显示文件夹。** 人们通过网络访问监控文件夹和恢复文件夹，而不是 `D:\TimeVault\monitor` 这样的路径。因此每个监控文件夹都有一个**显示文件夹**，即人们打开它时使用的网络路径（`D:\TimeVault\monitor` 共享为 `TimeVault` 时是 `\\sgmeslt595.co.murata.local\TimeVault\monitor`），恢复文件夹则有 `TIMEVAULT_RESTORE_DISPLAY_ROOT`（`\\sgmeslt595.co.murata.local\TimeVault\restore`）。把 `TIMEVAULT_SERVER_HOST` 设为本服务器的名称（`sgmeslt595.co.murata.local`）：设置页和 API 就会拒绝没有显示文件夹的监控文件夹，也会拒绝显示文件夹位于另一台服务器上的监控文件夹（它的搜索、备份和恢复只能处理本服务器自己的文件夹）。没有设置 `TIMEVAULT_SERVER_HOST` 时，显示文件夹是可选的，也不会与主机名比较。管理员在设置页填写该字段，设置页还会标出没有显示文件夹的监控文件夹（"还没有显示文件夹"；设置主机名之后，之前添加的每个文件夹都要先填上一个，才能再次编辑）。服务检查的是主机，而不是共享是否真的通向该监控文件夹：请先共享文件夹，再写下你打开它所用的路径。显示文件夹出现的地方，文件浏览、时间机器和文件版本页面都有一行带**复制**按钮的**位置**。
+- **谁能看到哪个文件夹。** 管理员同时看到显示文件夹和真实文件夹。其他人无论是否登录，都只看到显示文件夹；引用真实文件夹的文本（任务错误和日志、恢复消息、审计详情、状态详情、文件未能备份的原因）中，会显示显示文件夹、`[<监控文件夹名称>]`、`[backup folder]` 或 `[restore folder]`。见 [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md)。
 
 ## 配置参考
 
@@ -271,6 +293,8 @@ Without `TIMEVAULT_TEST_EVERYTHING_ROOT` the live tests are skipped, so `go test
 | `TIMEVAULT_AUTO_MIGRATE` | `false` | 启动时应用迁移。为 `false` 时，如果数据库结构不是最新，服务会拒绝启动；请先运行 `migrate`。 |
 | `TIMEVAULT_REPOSITORY_PATH` | 无（必填） | 备份文件夹（仓库）：保存被备份文件内容的地方。新文件夹或空文件夹会被初始化；不是 TimeVault 仓库的非空文件夹会被拒绝。修改后需要重启。 |
 | `TIMEVAULT_RESTORE_ROOT` | 空 | 恢复文件夹。恢复不会覆盖原文件，也绝不会写入监控文件夹：每次恢复都会在此文件夹下新建一个文件夹（名称在恢复表单中填写），并把恢复出来的副本写到那里。为空表示禁用恢复。不得位于仓库或监控文件夹之内，也不得包含它们。 |
+| `TIMEVAULT_SERVER_HOST` | 空 | 人们在网络路径中输入的本服务器名称，例如 `sgmeslt595.co.murata.local`。只能包含字母、数字、`-`、`_` 和 `.`。设置后，每个监控文件夹都需要一个位于该主机上的显示文件夹（比较时不区分大小写），并且 `TIMEVAULT_RESTORE_DISPLAY_ROOT` 也必须位于该主机上。为空时，显示文件夹是可选的，也不会与主机比较。 |
+| `TIMEVAULT_RESTORE_DISPLAY_ROOT` | 空 | 人们通过网络访问恢复文件夹的路径，`\\server\share\folder`（两种斜杠都可以）。启动时检查：必须是网络路径，设置了 `TIMEVAULT_SERVER_HOST` 时还必须位于该主机上；没有恢复文件夹时会被忽略。没有它时，普通账号只会被告知恢复文件夹在服务器上。 |
 | `TIMEVAULT_AUTH_DISABLED` | `false` | 关闭登录：每个人都是本地管理员。只在回环监听时被接受。仅用于开发。 |
 | `TIMEVAULT_REDIS_URL` | 空 | Redis 用户目录，`redis://[:password@]host:port/db`（TLS 用 `rediss://`）。为空表示没有公司账号。机密。 |
 | `TIMEVAULT_REDIS_KEY_PREFIX` | `app_user_` | 用户哈希的键前缀。 |
@@ -325,13 +349,26 @@ go test ./... -count=1
 2. 设置 `TIMEVAULT_EVERYTHING_URL`（例如 `http://127.0.0.1:<port>/`），如果设置了凭据，还要设置 `TIMEVAULT_EVERYTHING_USERNAME` 和 `TIMEVAULT_EVERYTHING_PASSWORD`。并确保 Everything 已为备份源文件夹建立索引。
 3. 打开**文件浏览**并在搜索框中输入。**状态**页会把搜索引擎显示为 `ok`、`degraded`（可达但应答错误或过慢）或 `disabled`。
 
+**为你已经在运行的 Everything 启用搜索。** 在设置 `TIMEVAULT_EVERYTHING_URL` 之前，搜索一直是"未配置"；而正在运行的 Everything 在它的 HTTP 服务被打开之前（默认是关闭的）不会通过 HTTP 应答，所以两件事都要做：
+
+1. 在 Everything 中打开**工具 → 选项 → HTTP 服务器**（相同的设置也是 `Everything.ini` 中的 `http_server_*` 键）：勾选**启用 HTTP 服务器**，选一个空闲的端口（例如 `38480`），只绑定到 `127.0.0.1`（`http_server_bindings`），设置用户名和密码，并把**允许文件下载**关掉（`http_server_allow_file_download=0`）。应用设置。Everything 必须一直运行，并且要为监控文件夹所在的磁盘建立索引（NTFS 卷，或这些文件夹本身）。
+2. 把下面几行写入 `.env`（使用你自己的端口、用户名和密码）：
+
+   ```env
+   TIMEVAULT_EVERYTHING_URL=http://127.0.0.1:38480/
+   TIMEVAULT_EVERYTHING_USERNAME=<username>
+   TIMEVAULT_EVERYTHING_PASSWORD=<password>
+   ```
+
+3. 重启 TimeVault 服务，打开**状态**页（搜索引擎应为 `ok`），然后在**文件浏览**中搜索。如果显示"不可用"，请在浏览器中打开 `http://127.0.0.1:38480/`：它应该要求输入用户名和密码，并显示 Everything 的页面。
+
 **一次查询会经历什么**
 
 - 输入的文本会被拆分成词（空白分隔，双引号表示一个短语；最多 256 字节和 16 个词）。`*` 和 `?` 被当作分隔符，因为即使在引号里 Everything 仍把它们当作通配符。
 - 每个词都会被加上双引号，所以 `|`、`!`、`<>`、`regex:`、`size:`、`content:` 这样的 Everything 操作符都被当作普通文本来搜索。
 - 查询通过 `path:"<备份源根目录>\"` 限定在备份源之内。末尾的反斜杠很重要：`path:` 是普通的子串匹配，没有它的话，备份源 `D:\src` 也会匹配 `D:\src2`。没有使用 `infolder:`，因为它只匹配直接子项。
 - 每个结果都会再次对照备份源根目录检查。范围之外的结果会被丢弃并计数，绝不会显示。
-- 每页最多 200 条结果；Everything 没有索引文件夹大小时，文件夹大小显示为未知。
+- 每页最多 200 条结果（可选 50、100 或 200），带页码链接；结果不按类型排序或筛选，因为 Everything 每次按它自己的顺序只返回一页。Everything 没有索引文件夹大小时，文件夹大小显示为未知。
 
 **开发用实例**（`scripts\dev-everything.ps1`，需要已安装 Everything 1.4.x；找不到时请把 `TIMEVAULT_EVERYTHING_EXE`（环境变量或 `.env`）指向 `Everything.exe`）：
 
@@ -360,9 +397,10 @@ Invoke-Expression "$s -Action stop"
 
 ## 运维
 
-- **谁可以做什么。** 任何人无需登录就可以浏览（文件浏览、时间机器、文件版本、备份页和备份任务的状态）。其他一切都需要已启用的账号：备份、校验、取消任务、恢复、恢复任务、任务失败的原因和日志、任务是谁发起的、审计日志、状态页、设置页。只有 `admin` 账号（Redis 中 `Type` 为 `admin`，或本地管理员）才能添加、编辑、停用监控文件夹并设置它们的计划。访问者看不到文件夹在服务器磁盘上的路径。见 [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md) 和 [api.md](./api.md#谁可以调用什么)。
+- **谁可以做什么。** 任何人无需登录就可以浏览（文件浏览、时间机器、文件版本、备份页和备份任务的状态）。其他一切都需要已启用的账号：备份、校验、取消任务、恢复、恢复任务、任务失败的原因和日志、任务是谁发起的、审计日志、状态页、设置页。只有 `admin` 账号（Redis 中 `Type` 为 `admin`，或本地管理员）才能添加、编辑、停用监控文件夹并设置它们的计划，也只有管理员能看到服务器磁盘上的文件夹；其他人看到的是显示文件夹。见 [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)、[ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md) 和 [api.md](./api.md#谁可以调用什么)。
+- **浏览很长的文件夹。** 文件浏览和时间机器把文件夹分页列出（默认每页 100 项；可选 50、100、200 或 500，列表上方和下方有数量和页码链接）。**类型**列以大写显示扩展名（文件夹显示"文件夹"，没有扩展名的文件显示"文件"）；列表上方的**类型**下拉框只保留一种（所有文件夹、所有文件、没有扩展名的文件，或某一种扩展名，每项都带数量）。点击**名称**、**类型**、**大小**或**修改时间**会对整个文件夹排序，再点一次反向；文件夹始终排在最前面。你的选择写在地址里，所以链接会保留它。时间机器中的**全选**选中当前页的项目，一次恢复最多可带 500 个路径。在较长的页面上，右下角的两个圆形按钮可以跳到顶部和底部。包含 10,000 个文件的文件夹约 0.1 秒打开，包含 50,000 个文件的约 0.5 秒（在开发机器上测得，所有文件都在同一个文件夹里）；单个文件夹中有几十万个条目时需要几秒钟，因为每一页都会读取整个文件夹。
 - **健康检查。** `GET /healthz` 无需登录即返回 `ok`，只能证明进程在运行。**状态**页（仅限账号）检查数据库、仓库（写入测试和剩余空间；剩余不足 5% 时为"降级"）、搜索引擎、Redis 用户目录（没有应答时为"降级"：浏览、已有会话和本地管理员仍可使用）、恢复目录和任务队列，并把 VSS 和 USN 列为"已禁用"。没有会话时，只有 `/healthz`、登录页、语言切换、静态资源和浏览页面可以访问。
-- **监控文件夹。** 管理员在**设置**页添加（本地文件夹；不能与仓库、恢复目录或其他监控文件夹重叠），并且可以随时编辑名称、排除规则、启停开关和计划。文件夹本身在第一个恢复点出现（任何状态，包括失败的）之前可以更正；之后请停用旧的并添加新的。停用的文件夹保留历史，仍可浏览，但不能被备份。
+- **监控文件夹。** 管理员在**设置**页添加（本地文件夹；不能与仓库、恢复目录或其他监控文件夹重叠；同时填上它的显示文件夹，见[设置放在哪里](#设置放在哪里)），并且可以随时编辑名称、显示文件夹、排除规则、启停开关和计划。服务器上的文件夹本身在第一个恢复点出现（任何状态，包括失败的）之前可以更正；之后请停用旧的并添加新的。停用的文件夹保留历史，仍可浏览，但不能被备份。
 - **备份。** 任何已登录的账号都可以在**备份**页点击**立即备份**。普通备份依据大小和修改时间跳过未变化的文件；**完整重读**会重新读取并哈希每个文件。每个备份源同一时间只运行一个备份。无法读取的文件（被锁定、读取时发生变化、链接、特殊文件）会被记录为"跳过"并写明原因，保留之前的良好版本，备份本身仍以警告完成。
 - **自动备份。** 为文件夹勾选"自动备份，间隔 N 分钟"（1 到 43200）。服务每 15 秒查看一次；文件夹从未运行过，或上次运行结束已满 N 分钟（无论结果如何）时到期，而没有发现变化的运行不记录任何内容：没有恢复点、没有任务、没有审计事件。设置计划或重新启用文件夹时，如果上次运行早于间隔，会立即启动备份。目前没有保留策略，所以对一直在变化的文件夹使用很短的间隔，会让仓库无限增长。见 [ADR 0006](./adr/0006-settings-in-env-and-database-and-scheduled-backups.md)。
 - **校验。** 对恢复点运行校验任务，会对照清单摘要检查目录库，并检查每个被引用的对象都存在且大小正确；"深度"校验还会重新哈希内容。复制或恢复仓库之后请运行一次。
@@ -370,7 +408,7 @@ Invoke-Expression "$s -Action stop"
   1. 登录后打开**时间机器**，选择备份源和恢复点，然后勾选文件或文件夹并选择**恢复所选项…**，或选择**恢复此文件夹…** / **恢复全部内容…**。单个文件的版本页面有**恢复…**。未登录的访问者看到的是一个**登录后可恢复文件**的链接。
   2. 查看预览：数量、大小、冲突、受阻项目（内容缺失、不安全的名称、从未备份成功）以及计划的变更。
   3. 选择目标文件夹名称（`TIMEVAULT_RESTORE_ROOT` 之下的文件夹，不存在时会创建）、冲突策略（跳过、改名、覆盖），以及在接受只恢复所选内容的一部分时勾选的部分恢复选项。覆盖需要额外确认。
-  4. 在预览后 15 分钟内点击**开始恢复**（令牌会过期，并与你的用户和精确的计划绑定；任何更改都需要重新预览）。在任务页面查看进度。在它结束之前，不要向同一个文件夹再启动另一个恢复。请自行把结果从 `<TIMEVAULT_RESTORE_ROOT>\<destination>` 复制到最终位置。恢复绝不会写入备份源。
+  4. 在预览后 15 分钟内点击**开始恢复**（令牌会过期，并与你的用户和精确的计划绑定；任何更改都需要重新预览）。在任务页面查看进度。在它结束之前，不要向同一个文件夹再启动另一个恢复。请自行把结果从目标位置复制到最终位置：预览和任务页面用显示文件夹（`<TIMEVAULT_RESTORE_DISPLAY_ROOT>\<destination>`）来称呼它，你可以通过网络在那里找到它；管理员还会看到 `<TIMEVAULT_RESTORE_ROOT>\<destination>`。恢复绝不会写入备份源。
 - **审计。** **审计**页（仅限账号）列出登录和登录失败（账号名按输入的内容记录，截断到 64 个字符）、被拒绝的请求、监控文件夹的变更（每个发生变化的字段的旧值和新值）、备份、校验、恢复预览与结果以及取消操作。应用程序没有修改或删除这些记录的途径，并且数据库触发器会拒绝对它们的 UPDATE 和 DELETE 语句。没有发现变化的自动运行不留下记录。
 - **备份 TimeVault 自身。** 需要同时备份 PostgreSQL 数据库（例如用 `pg_dump`）和整个仓库文件夹。仓库只会增长，所以较旧的数据库副本配上较新的仓库是一致的，而较新的数据库配上较旧的仓库会报告对象缺失（校验会列出，恢复会被阻止）。无论恢复了哪一个，之后都请运行一次深度校验。
 
@@ -382,6 +420,8 @@ Invoke-Expression "$s -Action stop"
 | 服务以数据库结构相关的提示退出 | 运行 `timevault-server migrate`，或设置 `TIMEVAULT_AUTO_MIGRATE=true`。 |
 | 服务以"no way to sign in"退出 | 设置 `TIMEVAULT_REDIS_URL`（公司账号）和/或 `TIMEVAULT_ADMIN_PASSWORD_HASH`（本地管理员；用 `timevault-server hash-password` 生成该值）。 |
 | 服务以与 `.env` 有关的错误退出 | 提示会指出文件和行号，绝不会显示该行内容。`TIMEVAULT_ENV_FILE` 必须指向一个存在的文件。 |
+| 服务以与 `TIMEVAULT_SERVER_HOST` 或 `TIMEVAULT_RESTORE_DISPLAY_ROOT` 有关的错误退出 | 提示会指出设置名和问题所在，绝不会显示它的值。主机名只能包含字母、数字、`-`、`_` 和 `.`；显示根路径必须形如 `\\server\share\folder`，共享名不能以 `$` 结尾，并且必须位于 `TIMEVAULT_SERVER_HOST` 上。 |
+| 添加或编辑监控文件夹被拒绝，提示"请填写显示文件夹"或"其他服务器上的文件夹不能在这里监控" | 设置了 `TIMEVAULT_SERVER_HOST`，所以显示文件夹是必填的，并且它的主机必须是那台服务器（提示里会点出两个主机名）。在该设置出现之前添加的文件夹没有显示文件夹；请在设置页给每个文件夹填上一个。 |
 | 服务以"another TimeVault service is already running against this database"退出 | 另一个 `timevault-server` 正在使用同一个数据库（schema）。请先停止那一个；它的锁会在其进程结束时释放。 |
 | 服务以"not a TimeVault repository"退出 | `TIMEVAULT_REPOSITORY_PATH` 指向的非空文件夹中没有 `timevault-repository.json`。请使用空文件夹。 |
 | 脚本找不到 `go` | 把 Go 加入 `PATH`，或把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入 `.env`。只在某一个终端里设置该变量，仅对那个终端有效。 |
@@ -401,5 +441,5 @@ Invoke-Expression "$s -Action stop"
 | 文件被列为跳过（被锁定） | 文件被其他程序打开，或在读取时发生变化。请稍后再次备份；MVP 没有 VSS。 |
 | 恢复报告对象缺失或损坏 | 仓库丢失或损坏了文件。请运行深度校验，从备份恢复仓库，或选择其他恢复点。不会从损坏的对象恢复任何内容。 |
 | 中断的恢复留下了 `.tvpart-*` 文件 | 这是崩溃的恢复在目标文件夹中留下的临时文件，可以删除。 |
-| 搜索显示"未配置"或"不可用" | 见 [Everything 搜索](#everything-搜索)。历史和恢复仍可使用。 |
+| 搜索显示"未配置"或"不可用" | 见 [Everything 搜索](#everything-搜索)。历史和恢复仍可使用。"未配置"表示 `TIMEVAULT_EVERYTHING_URL` 为空；"不可用"表示它所指的 Everything 没有应答（它的 HTTP 服务被关闭，或端口、用户名、密码不一致）。 |
 | 任务一直显示"failed: interrupted by a service restart" | 任务运行时服务被停止。请重新启动该任务；未完成的恢复点已经被清理。 |

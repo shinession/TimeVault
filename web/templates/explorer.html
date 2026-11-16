@@ -34,6 +34,7 @@
   {{else}}<a class="tv-crumb" href="{{url "/explorer" "source" $.Data.Source.ID "path" .Rel}}">{{.Name}}</a>{{end}}
   {{end}}
 </nav>
+{{template "location" $}}
 
 {{if .SourceDown}}<div class="tv-alert tv-alert-error" role="alert">{{$.T "explorer.source_down"}}</div>{{end}}
 {{if .SearchMsg}}<div class="tv-alert tv-alert-warn" role="alert">{{template "icon" "alert"}} {{.SearchMsg}}</div>{{end}}
@@ -57,15 +58,18 @@
   </div>
   {{with .Search}}
   {{if .Hits}}
+  {{template "listtools" $}}
+  {{template "pager" $}}
   <div class="tv-list" role="list">
     <div class="tv-list-head" role="row">
-      <span class="c-name">{{$.T "list.name"}}</span><span class="c-path">{{$.T "list.folder"}}</span>
+      <span class="c-name">{{$.T "list.name"}}</span><span class="c-type">{{$.T "list.type"}}</span><span class="c-path">{{$.T "list.folder"}}</span>
       <span class="c-size">{{$.T "list.size"}}</span><span class="c-time">{{$.T "list.modified"}}</span>
     </div>
-    <div id="list-rows">
+    <div class="tv-list-rows">
     {{range .Hits}}
     <a class="tv-row" role="listitem" href="{{if .IsDir}}{{url "/explorer" "source" $.Data.Source.ID "path" .Rel}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" .Rel}}{{end}}">
       <span class="c-name">{{if .IsDir}}{{template "icon" "folder"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span></span>
+      <span class="c-type">{{$.TypeOf .Name .IsDir false}}</span>
       <span class="c-path tv-muted">/{{.DirRel}}</span>
       <span class="c-size">{{if .IsDir}}-{{else}}{{bytes .Size}}{{end}}</span>
       <span class="c-time">{{$.Time .ModTime}}</span>
@@ -73,32 +77,41 @@
     {{end}}
     </div>
   </div>
+  {{template "pager" $}}
   {{else}}<p class="tv-empty-text">{{$.T "explorer.no_results"}}</p>{{end}}
   {{end}}
-  {{if .NextURL}}<a class="tv-btn tv-more" href="{{.NextURL}}" data-load-more>{{$.T "common.load_more"}}</a>{{end}}
 </section>
 {{else if .Listing}}
+{{if or .Listing.Entries .List.Filtered}}
+<div class="tv-listbar">
+  {{template "listtools" $}}
+  {{template "pager" $}}
+</div>
+{{end}}
 <section class="tv-card">
   {{if .Listing.Entries}}
-  <div class="tv-list" role="list" data-sortable>
+  <div class="tv-list" role="list">
     <div class="tv-list-head" role="row">
-      <button type="button" class="c-name tv-sort" data-sort="name">{{$.T "list.name"}}</button>
+      <a class="c-name tv-sort" href="{{.List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
+      <a class="c-type tv-sort" href="{{.List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
       <span class="c-status">{{$.T "list.backup_status"}}</span>
-      <button type="button" class="c-size tv-sort" data-sort="size">{{$.T "list.size"}}</button>
-      <button type="button" class="c-time tv-sort" data-sort="mtime">{{$.T "list.modified"}}</button>
+      <a class="c-size tv-sort" href="{{.List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
+      <a class="c-time tv-sort" href="{{.List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
     </div>
-    <div id="list-rows">
+    <div class="tv-list-rows">
     {{range .Listing.Entries}}
     {{if and (not .IsDir) (eq (printf "%s" .Status) "new")}}
-    <div class="tv-row is-static" role="listitem" data-name="{{lower .Name}}" data-size="{{.Size}}" data-mtime="{{.ModTime.Unix}}" data-dir="0">
+    <div class="tv-row is-static" role="listitem">
       <span class="c-name">{{template "icon" "file"}}<span class="tv-name">{{.Name}}</span></span>
+      <span class="c-type">{{$.TypeOf .Name false false}}</span>
       <span class="c-status"><span class="tv-chip tv-chip-new">{{$.LiveLabel .Status}}</span></span>
       <span class="c-size">{{bytes .Size}}</span><span class="c-time">{{$.Time .ModTime}}</span>
     </div>
     {{else}}
-    <a class="tv-row" role="listitem" data-name="{{lower .Name}}" data-size="{{.Size}}" data-mtime="{{.ModTime.Unix}}" data-dir="{{if .IsDir}}1{{else}}0{{end}}"
+    <a class="tv-row" role="listitem"
        href="{{if .IsDir}}{{url "/explorer" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name)}}{{end}}">
       <span class="c-name">{{if .IsDir}}{{template "icon" "folder"}}{{else if .Special}}{{template "icon" "link"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span></span>
+      <span class="c-type">{{$.TypeOf .Name .IsDir .Special}}</span>
       <span class="c-status"><span class="tv-chip tv-chip-{{.Status}}">{{$.LiveLabel .Status}}</span></span>
       <span class="c-size">{{if .IsDir}}-{{else if .Special}}-{{else}}{{bytes .Size}}{{end}}</span>
       <span class="c-time">{{$.Time .ModTime}}</span>
@@ -107,12 +120,13 @@
     {{end}}
     </div>
   </div>
+  {{template "pager" $}}
+  {{else if .List.Filtered}}<p class="tv-empty-text">{{$.T "explorer.filtered_empty"}}</p>
   {{else}}<p class="tv-empty-text">{{$.T "explorer.empty_folder"}}</p>{{end}}
-  {{if .NextURL}}<a class="tv-btn tv-more" href="{{.NextURL}}" data-load-more>{{$.T "common.load_more"}}</a>{{end}}
   {{if .Listing.Hidden}}<p class="tv-muted tv-small">{{$.T "explorer.hidden_items" .Listing.Hidden}}</p>{{end}}
 </section>
 
-{{if .Listing.Deleted}}
+{{if and .Listing.Deleted (eq .List.Query.Page 1)}}
 <section class="tv-card tv-deleted">
   <div class="tv-card-head">
     <h2>{{template "icon" "trash"}} {{$.T "explorer.deleted_title" (len .Listing.Deleted)}}</h2>
@@ -123,6 +137,7 @@
     <a class="tv-row" role="listitem"
        href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "point" $.Data.Latest.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name)}}{{end}}">
       <span class="c-name">{{if .IsDir}}{{template "icon" "folder"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span></span>
+      <span class="c-type">{{$.TypeOf .Name .IsDir false}}</span>
       <span class="c-status"><span class="tv-chip tv-chip-deleted">{{$.T "live.deleted"}}</span></span>
       <span class="c-size">{{if .IsDir}}-{{else}}{{bytes .Size}}{{end}}</span>
       <span class="c-time">{{if .MTimeNS}}{{$.Time .ModTime}}{{else}}-{{end}}</span>

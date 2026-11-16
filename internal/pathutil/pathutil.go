@@ -1,6 +1,7 @@
 // Package pathutil holds the path rules shared by the backup, catalog and
 // restore code: Windows-compatible name validation, source-relative path
-// normalization and case-insensitive containment checks.
+// normalization, case-insensitive containment checks and the network (UNC)
+// paths that users know the folders by.
 package pathutil
 
 import (

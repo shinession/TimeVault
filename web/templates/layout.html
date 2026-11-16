@@ -63,5 +63,12 @@
     <span class="tv-sep">|</span>
     <span>v{{.Version}}</span>
   </footer>
+
+  {{if not .Bare}}
+  <div class="tv-fab" data-fab hidden>
+    <button type="button" class="tv-fab-btn" data-fab-top title="{{.T "fab.top"}}" aria-label="{{.T "fab.top"}}">{{template "icon" "arrow-up"}}</button>
+    <button type="button" class="tv-fab-btn" data-fab-bottom title="{{.T "fab.bottom"}}" aria-label="{{.T "fab.bottom"}}">{{template "icon" "arrow-down"}}</button>
+  </div>
+  {{end}}
 </body>
 </html>

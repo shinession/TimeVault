@@ -64,6 +64,14 @@
   {{else}}<a class="tv-crumb" href="{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" .Rel}}">{{.Name}}</a>{{end}}
   {{end}}
 </nav>
+{{template "location" $}}
+
+{{if or .Listing.Entries .List.Filtered}}
+<div class="tv-listbar">
+  {{template "listtools" $}}
+  {{template "pager" $}}
+</div>
+{{end}}
 
 {{if $.CanRestore}}<form class="tv-restore-form" method="post" action="/restore/preview" data-selection-form>
   {{template "csrf" $}}
@@ -79,27 +87,30 @@
     {{else if and .RestoreEnabled .Point.Restorable}}
     <button class="tv-btn tv-btn-primary" type="submit" name="scope" value="selected" data-needs-selection disabled>{{template "icon" "restore"}} {{$.T "history.restore_selected"}} <span class="tv-count" data-selection-count>0</span></button>
     <button class="tv-btn" type="submit" name="scope" value="folder">{{template "icon" "restore"}} {{if .Rel}}{{$.T "history.restore_folder"}}{{else}}{{$.T "history.restore_all"}}{{end}}</button>
+    {{if gt .List.Pager.Pages 1}}<span class="tv-muted tv-small">{{$.T "history.select_page_note"}}</span>{{end}}
     {{else if not .RestoreEnabled}}<span class="tv-muted tv-small">{{$.T "history.restore_disabled"}}</span>
     {{end}}
   </div>
 
   <section class="tv-card">
     {{if .Listing.Entries}}
-    <div class="tv-list" role="list" data-sortable>
+    <div class="tv-list" role="list">
       <div class="tv-list-head" role="row">
         {{if $.CanRestore}}<label class="c-check"><input type="checkbox" data-select-all aria-label="{{$.T "common.select_all"}}"></label>{{end}}
-        <button type="button" class="c-name tv-sort" data-sort="name">{{$.T "list.name"}}</button>
+        <a class="c-name tv-sort" href="{{.List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
+        <a class="c-type tv-sort" href="{{.List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
         <span class="c-status">{{$.T "list.vs_now"}}</span>
-        <button type="button" class="c-size tv-sort" data-sort="size">{{$.T "list.size"}}</button>
-        <button type="button" class="c-time tv-sort" data-sort="mtime">{{$.T "list.modified"}}</button>
+        <a class="c-size tv-sort" href="{{.List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
+        <a class="c-time tv-sort" href="{{.List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
       </div>
-      <div id="list-rows">
+      <div class="tv-list-rows">
       {{range .Listing.Entries}}
-      <div class="tv-row{{if $.CanRestore}} tv-row-select{{end}}" role="listitem" data-name="{{lower .Name}}" data-size="{{.Size}}" data-mtime="{{.ModTime.Unix}}" data-dir="{{if .IsDir}}1{{else}}0{{end}}">
+      <div class="tv-row{{if $.CanRestore}} tv-row-select{{end}}" role="listitem">
         {{if $.CanRestore}}<label class="c-check"><input type="checkbox" name="paths" value="{{joinRel $.Data.Rel .Name}}" data-select-item aria-label="{{.Name}}"></label>{{end}}
         <a class="c-name" href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name) "back" (url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" $.Data.Rel)}}{{end}}">
           {{if .IsDir}}{{template "icon" "folder"}}{{else if eq .State "skipped"}}{{template "icon" "alert"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span>
         </a>
+        <span class="c-type">{{$.TypeOf .Name .IsDir false}}</span>
         <span class="c-status">
           {{if eq .State "skipped"}}<span class="tv-chip tv-chip-warn" title="{{.SkipReason}}">{{$.T "live.not_captured"}}</span>
           {{else}}<span class="tv-chip tv-chip-{{.Now}}">{{$.NowLabel .Now}}</span>{{end}}
@@ -110,8 +121,9 @@
       {{end}}
       </div>
     </div>
+    {{template "pager" $}}
+    {{else if .List.Filtered}}<p class="tv-empty-text">{{$.T "explorer.filtered_empty"}}</p>
     {{else}}<p class="tv-empty-text">{{$.T "explorer.empty_folder"}}</p>{{end}}
-    {{if .NextURL}}<a class="tv-btn tv-more" href="{{.NextURL}}" data-load-more>{{$.T "common.load_more"}}</a>{{end}}
   </section>
 {{if $.CanRestore}}</form>{{else}}</div>{{end}}
 {{end}}

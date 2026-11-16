@@ -63,6 +63,9 @@ type Source struct {
 	ScheduleMinutes *int
 	// LastRunAt is when the last backup run of the source ended, whatever its outcome.
 	LastRunAt *time.Time
+	// DisplayPath is the network path users know the folder by, such as \\server\share\folder, in its normalised
+	// form; empty when the source has none. RootPath is the physical folder and is not for ordinary users.
+	DisplayPath string
 }
 
 // SourceSummary is a source with its newest committed recovery point.

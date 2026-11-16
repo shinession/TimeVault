@@ -172,3 +172,134 @@ func TestDatabasePasswordNeverReachesTheLog(t *testing.T) {
 		t.Fatalf("redactURL = %q", got)
 	}
 }
+
+func TestServerHost(t *testing.T) {
+	load := func(host string) (Config, error) {
+		return Load(lookupFrom(map[string]string{"TIMEVAULT_SERVER_HOST": host}))
+	}
+	if c, err := Load(lookupFrom(nil)); err != nil || c.ServerHost != "" {
+		t.Fatalf("the server host must default to empty: %q, %v", c.ServerHost, err)
+	}
+	for in, want := range map[string]string{
+		"sgmeslt595.co.murata.local":    "sgmeslt595.co.murata.local",
+		"  SGMESLT595.co.murata.local ": "SGMESLT595.co.murata.local", // trimmed, the spelling is kept
+		"srv_01-a":                      "srv_01-a",
+		"10.0.0.5":                      "10.0.0.5",
+		"   ":                           "",
+	} {
+		c, err := load(in)
+		if err != nil || c.ServerHost != want {
+			t.Errorf("TIMEVAULT_SERVER_HOST=%q: got %q, %v; want %q", in, c.ServerHost, err, want)
+		}
+	}
+	for _, bad := range []string{
+		"srv:445", `\\srv`, `srv\share`, "srv/share", "https://srv", "my srv", "srv name", ".srv", "srv.", "a..b", "srv@x", "sérver",
+		strings.Repeat("h", 254),
+	} {
+		_, err := load(bad)
+		if err == nil {
+			t.Errorf("TIMEVAULT_SERVER_HOST=%q was accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "TIMEVAULT_SERVER_HOST") {
+			t.Errorf("TIMEVAULT_SERVER_HOST=%q: the error %q must name the setting", bad, err)
+		}
+		if len(bad) > 3 && strings.Contains(err.Error(), bad) {
+			t.Errorf("TIMEVAULT_SERVER_HOST=%q: the error repeats the value: %v", bad, err)
+		}
+	}
+}
+
+func TestRestoreDisplayRoot(t *testing.T) {
+	load := func(restoreRoot, display, host string) (Config, error) {
+		return Load(lookupFrom(map[string]string{
+			"TIMEVAULT_RESTORE_ROOT":         restoreRoot,
+			"TIMEVAULT_RESTORE_DISPLAY_ROOT": display,
+			"TIMEVAULT_SERVER_HOST":          host,
+		}))
+	}
+	const root = `D:\TimeVault\restores`
+
+	// The value is stored the way ParseUNC normalises it; the host keeps the spelling it was written with.
+	for _, tc := range []struct{ display, host, want string }{
+		{`\\sgmeslt595.co.murata.local\TimeVault\restores`, "sgmeslt595.co.murata.local", `\\sgmeslt595.co.murata.local\TimeVault\restores`},
+		{`//SGMESLT595.CO.MURATA.LOCAL/TimeVault/restores/`, "sgmeslt595.co.murata.local", `\\SGMESLT595.CO.MURATA.LOCAL\TimeVault\restores`},
+		{"  \\\\srv\\share  ", "", `\\srv\share`},
+		{`\\any-host\share\a\b`, "", `\\any-host\share\a\b`},
+		{``, "srv", ``},
+	} {
+		c, err := load(root, tc.display, tc.host)
+		if err != nil || c.RestoreDisplayRoot != tc.want {
+			t.Errorf("display %q with host %q: got %q, %v; want %q", tc.display, tc.host, c.RestoreDisplayRoot, err, tc.want)
+		}
+	}
+
+	invalid := []string{`D:\restores`, `\\srv`, `\\srv\C$`, `\\srv\share\..\x`, `\\srv\share\a*b`, `\\sr:v\share`, `restores`, `https://srv/share`}
+	for _, bad := range invalid {
+		_, err := load(root, bad, "")
+		if err == nil {
+			t.Errorf("TIMEVAULT_RESTORE_DISPLAY_ROOT=%q was accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "TIMEVAULT_RESTORE_DISPLAY_ROOT") || strings.Contains(err.Error(), strings.TrimLeft(bad, `\/`)) {
+			t.Errorf("TIMEVAULT_RESTORE_DISPLAY_ROOT=%q: the error must name the setting and not repeat the value: %v", bad, err)
+		}
+	}
+
+	// A host other than the server's is refused, and the error names both settings.
+	for _, host := range []string{`\\other\TimeVault\restores`, `\\sgmeslt595\TimeVault\restores`, `\\sgmeslt595.co.murata.local.evil\x\y`} {
+		_, err := load(root, host, "sgmeslt595.co.murata.local")
+		if err == nil || !strings.Contains(err.Error(), "TIMEVAULT_RESTORE_DISPLAY_ROOT") || !strings.Contains(err.Error(), "TIMEVAULT_SERVER_HOST") {
+			t.Errorf("display %q: want an error naming both settings, got %v", host, err)
+		} else if strings.Contains(err.Error(), "evil") || strings.Contains(err.Error(), "murata") {
+			t.Errorf("display %q: the error repeats a value: %v", host, err)
+		}
+	}
+
+	// Without a restore folder nothing is restored, so the value is accepted and dropped, even a bad one.
+	for _, display := range []string{`\\srv\share`, `not a path`, `\\other\share`} {
+		c, err := load("", display, "sgmeslt595.co.murata.local")
+		if err != nil || c.RestoreDisplayRoot != "" {
+			t.Errorf("display %q without a restore folder: got %q, %v; want it ignored", display, c.RestoreDisplayRoot, err)
+		}
+	}
+
+	// Every problem is reported at once.
+	_, err := Load(lookupFrom(map[string]string{
+		"TIMEVAULT_RESTORE_ROOT": root, "TIMEVAULT_RESTORE_DISPLAY_ROOT": `\\srv`, "TIMEVAULT_SERVER_HOST": "bad host", "TIMEVAULT_LOG_LEVEL": "loud",
+	}))
+	if err == nil {
+		t.Fatal("want errors")
+	}
+	for _, key := range []string{"TIMEVAULT_RESTORE_DISPLAY_ROOT", "TIMEVAULT_SERVER_HOST", "TIMEVAULT_LOG_LEVEL"} {
+		if !strings.Contains(err.Error(), key) {
+			t.Errorf("the error %q should mention %s", err, key)
+		}
+	}
+}
+
+func TestDisplaySettingsAreDescribedAndLogged(t *testing.T) {
+	c, err := Load(lookupFrom(map[string]string{
+		"TIMEVAULT_SERVER_HOST":          "sgmeslt595.co.murata.local",
+		"TIMEVAULT_RESTORE_ROOT":         `D:\TimeVault\restores`,
+		"TIMEVAULT_RESTORE_DISPLAY_ROOT": `//sgmeslt595.co.murata.local/TimeVault/restores/`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := c.Describe()
+	if d.ServerHost != "sgmeslt595.co.murata.local" || d.RestoreDisplayRoot != `\\sgmeslt595.co.murata.local\TimeVault\restores` {
+		t.Errorf("Describe = %+v", d)
+	}
+	logged := map[string]any{}
+	attrs := c.LogAttrs()
+	for i := 0; i+1 < len(attrs); i += 2 {
+		logged[attrs[i].(string)] = attrs[i+1]
+	}
+	if logged["server_host"] != d.ServerHost || logged["restore_display_root"] != d.RestoreDisplayRoot {
+		t.Errorf("LogAttrs = %v", attrs)
+	}
+	if empty, _ := Load(lookupFrom(nil)); empty.Describe().ServerHost != "" || empty.Describe().RestoreDisplayRoot != "" {
+		t.Error("nothing configured must describe nothing")
+	}
+}

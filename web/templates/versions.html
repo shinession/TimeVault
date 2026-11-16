@@ -9,6 +9,7 @@
   {{else}}<a class="tv-crumb" href="{{url "/explorer" "source" $.Data.Source.ID "path" .Rel}}">{{.Name}}</a>{{end}}
   {{end}}
 </nav>
+{{template "location" $}}
 
 <section class="tv-card">
   <div class="tv-card-head">

@@ -13,6 +13,7 @@ import (
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
 	"timevault/internal/jobs"
+	"timevault/internal/listing"
 	"timevault/internal/pathutil"
 	"timevault/internal/restore"
 	"timevault/internal/service"
@@ -111,7 +112,9 @@ func toAPIPoint(p catalog.Point) apiPoint {
 type apiSource struct {
 	ID   int64  `json:"id"`
 	Name string `json:"name"`
-	// RootPath is the folder on the server's disk; anonymous visitors do not get it.
+	// DisplayPath is the network path people know the folder by (\\server\share\folder); RootPath is the folder on
+	// the server's disk, which only administrators get.
+	DisplayPath     string     `json:"display_path,omitempty"`
 	RootPath        string     `json:"root_path,omitempty"`
 	Excludes        []string   `json:"excludes"`
 	Enabled         bool       `json:"enabled"`
@@ -123,15 +126,17 @@ type apiSource struct {
 
 func toAPISource(src catalog.Source) apiSource {
 	return apiSource{
-		ID: src.ID, Name: src.Name, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled,
+		ID: src.ID, Name: src.Name, DisplayPath: src.DisplayPath, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled,
 		ScheduleMinutes: src.ScheduleMinutes, LastRunAt: src.LastRunAt, CreatedAt: src.CreatedAt,
 	}
 }
 
 type apiEntry struct {
-	Name       string     `json:"name"`
-	Path       string     `json:"path"`
-	IsDir      bool       `json:"is_dir"`
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"is_dir"`
+	// Type is what the file lists filter on: dir, link, noext, or ext:<extension> (lower case).
+	Type       string     `json:"type,omitempty"`
 	Size       int64      `json:"size"`
 	ModifiedAt *time.Time `json:"modified_at,omitempty"`
 	Status     string     `json:"status,omitempty"`
@@ -151,9 +156,51 @@ func timePtr(t time.Time) *time.Time {
 
 func histEntry(rel string, e catalog.Entry) apiEntry {
 	return apiEntry{
-		Name: e.Name, Path: pathutil.JoinRel(rel, e.Name), IsDir: e.IsDir, Size: e.Size, ModifiedAt: timePtr(e.ModTime()),
-		Status: string(e.Now), State: e.State, SkipReason: e.SkipReason, SHA256: hexOf(e.SHA256), FirstPoint: e.FirstPoint, LastPoint: e.LastPoint,
+		Name: e.Name, Path: pathutil.JoinRel(rel, e.Name), IsDir: e.IsDir, Type: listing.TypeKey(e.Name, e.IsDir, false), Size: e.Size,
+		ModifiedAt: timePtr(e.ModTime()), Status: string(e.Now), State: e.State, SkipReason: e.SkipReason, SHA256: hexOf(e.SHA256),
+		FirstPoint: e.FirstPoint, LastPoint: e.LastPoint,
 	}
+}
+
+// apiTypeCount is one entry of the type facets of a file list.
+type apiTypeCount struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
+
+func apiTypes(in []listing.TypeCount) []apiTypeCount {
+	out := make([]apiTypeCount, 0, len(in))
+	for _, t := range in {
+		out = append(out, apiTypeCount{Type: t.Key, Count: t.Count})
+	}
+	return out
+}
+
+// listOptions reads the sorting, filtering and paging parameters the file lists of the API share. A value that is
+// not understood means the default: sorted by name, no filter.
+func listOptions(r *http.Request, defaultLimit int) listing.Options {
+	o := listing.Options{
+		Sort: listing.ParseSort(r.FormValue("sort")), Desc: r.FormValue("order") == "desc",
+		Offset: intParamDefault(r, "offset", 0, 0, 1<<30), Limit: intParamDefault(r, "limit", defaultLimit, 1, listing.MaxLimit),
+	}
+	switch r.FormValue("dirs_first") {
+	case "true", "1":
+		o.DirsFirst = true
+	}
+	o.Type, _ = listing.NormalizeType(r.FormValue("type"))
+	return o
+}
+
+// pagedList reports whether the request asks for a sorted, filtered or offset page instead of the cursor paging
+// that the history tree offered first.
+func pagedList(r *http.Request) bool {
+	_ = r.ParseForm()
+	for _, k := range []string{"sort", "order", "type", "dirs_first", "offset"} {
+		if _, ok := r.Form[k]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func hexOf(b []byte) string { return hex.EncodeToString(b) }
@@ -193,18 +240,23 @@ func (s *Server) apiSession(w http.ResponseWriter, r *http.Request, sess auth.Se
 	})
 }
 
-// apiSettings describes the running configuration. It holds no secret.
-func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+// apiSettings describes the running configuration. It holds no secret. The folders on the server's disk and the
+// settings file are for administrators; everybody gets the display root of the restore folder.
+func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	d := s.opts.Deployment
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"version": s.opts.Version, "listen": d.ListenAddr, "database": d.Database, "user_directory": d.UserDirectory,
-		"repository": d.RepositoryPath, "restore_root": d.RestoreRoot, "env_file": d.EnvFile, "search": d.SearchHost,
+		"server_host": d.ServerHost, "restore_display_root": d.RestoreDisplayRoot, "search": d.SearchHost,
 		"local_admin": d.LocalAdmin != "", "sign_in_disabled": d.AuthDisabled, "session_ttl": d.SessionTTL.String(), "cookie_secure": d.CookieSecure,
-	})
+	}
+	if sess.Can(auth.PermManage) {
+		out["repository"], out["restore_root"], out["env_file"] = d.RepositoryPath, d.RestoreRoot, d.EnvFile
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-	rep := s.svc.Health(r.Context())
+func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	rep := s.viewerFor(r.Context(), sess).health(s.svc.Health(r.Context()))
 	type comp struct {
 		Name   string `json:"name"`
 		State  string `json:"state"`
@@ -236,7 +288,7 @@ func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, sess auth.Se
 	out := make([]apiSource, 0, len(sources))
 	for _, src := range sources {
 		a := toAPISource(src.Source)
-		if !sess.SignedIn() {
+		if !sess.Can(auth.PermManage) {
 			a.RootPath = ""
 		}
 		if src.Latest != nil {
@@ -251,6 +303,7 @@ func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, sess auth.Se
 func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var body struct {
 		Name            string   `json:"name"`
+		DisplayPath     string   `json:"display_path"`
 		RootPath        string   `json:"root_path"`
 		Excludes        []string `json:"excludes"`
 		ScheduleMinutes *int     `json:"schedule_minutes"`
@@ -262,7 +315,7 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.
 		body.Excludes = backup.DefaultExcludes
 	}
 	src, err := s.svc.AddSource(r.Context(), s.actor(r, sess), backup.SourceRequest{
-		Name: body.Name, RootPath: body.RootPath, Excludes: body.Excludes, ScheduleMinutes: body.ScheduleMinutes,
+		Name: body.Name, DisplayPath: body.DisplayPath, RootPath: body.RootPath, Excludes: body.Excludes, ScheduleMinutes: body.ScheduleMinutes,
 	})
 	if err != nil {
 		s.handleErr(w, r, err)
@@ -306,6 +359,7 @@ func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess au
 	}
 	var body struct {
 		Name            *string     `json:"name"`
+		DisplayPath     *string     `json:"display_path"`
 		RootPath        *string     `json:"root_path"`
 		Excludes        *[]string   `json:"excludes"`
 		Enabled         *bool       `json:"enabled"`
@@ -314,10 +368,13 @@ func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess au
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	req := backup.SourceRequest{Name: cur.Name, RootPath: cur.RootPath, Excludes: cur.Excludes, ScheduleMinutes: cur.ScheduleMinutes}
+	req := backup.SourceRequest{Name: cur.Name, DisplayPath: cur.DisplayPath, RootPath: cur.RootPath, Excludes: cur.Excludes, ScheduleMinutes: cur.ScheduleMinutes}
 	enabled := cur.Enabled
 	if body.Name != nil {
 		req.Name = *body.Name
+	}
+	if body.DisplayPath != nil {
+		req.DisplayPath = *body.DisplayPath
 	}
 	if body.RootPath != nil {
 		req.RootPath = *body.RootPath
@@ -348,7 +405,27 @@ func (s *Server) sourceFromQuery(w http.ResponseWriter, r *http.Request) (catalo
 	return src, true
 }
 
-func (s *Server) apiFiles(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+// hideReasons hides the real folders in the reasons files were not captured, for everybody but administrators. The
+// folder map is read only when some entry has a reason.
+func (s *Server) hideReasons(r *http.Request, sess auth.Session, lists ...[]apiEntry) {
+	if sess.Can(auth.PermManage) {
+		return
+	}
+	var v *viewer
+	for _, list := range lists {
+		for i := range list {
+			if list[i].SkipReason == "" {
+				continue
+			}
+			if v == nil {
+				v = s.viewerFor(r.Context(), sess)
+			}
+			list[i].SkipReason = v.text(list[i].SkipReason)
+		}
+	}
+}
+
+func (s *Server) apiFiles(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	src, ok := s.sourceFromQuery(w, r)
 	if !ok {
 		return
@@ -358,20 +435,26 @@ func (s *Server) apiFiles(w http.ResponseWriter, r *http.Request, _ auth.Session
 		s.handleErr(w, r, err)
 		return
 	}
-	l, err := s.svc.BrowseLive(r.Context(), src, rel, intParamDefault(r, "offset", 0, 0, 1<<30), intParamDefault(r, "limit", 200, 1, 1000))
+	l, err := s.svc.ListLive(r.Context(), src, rel, listOptions(r, 200))
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
 	entries := make([]apiEntry, 0, len(l.Entries))
 	for _, e := range l.Entries {
-		entries = append(entries, apiEntry{Name: e.Name, Path: pathutil.JoinRel(rel, e.Name), IsDir: e.IsDir, Size: e.Size, ModifiedAt: timePtr(e.ModTime), Status: string(e.Status)})
+		entries = append(entries, apiEntry{
+			Name: e.Name, Path: pathutil.JoinRel(rel, e.Name), IsDir: e.IsDir, Type: listing.TypeKey(e.Name, e.IsDir, e.Special),
+			Size: e.Size, ModifiedAt: timePtr(e.ModTime), Status: string(e.Status),
+		})
 	}
 	deleted := make([]apiEntry, 0, len(l.Deleted))
 	for _, e := range l.Deleted {
 		deleted = append(deleted, histEntry(rel, e))
 	}
-	out := map[string]any{"path": rel, "entries": entries, "total": l.Total, "deleted": deleted}
+	s.hideReasons(r, sess, deleted)
+	out := map[string]any{
+		"path": rel, "entries": entries, "total": l.Total, "unfiltered": l.Unfiltered, "types": apiTypes(l.Types), "deleted": deleted,
+	}
 	if l.NextOffset >= 0 {
 		out["next_offset"] = l.NextOffset
 	}
@@ -398,7 +481,7 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 	}
 	results := make([]apiEntry, 0, len(page.Hits))
 	for _, h := range page.Hits {
-		results = append(results, apiEntry{Name: h.Name, Path: h.Rel, IsDir: h.IsDir, Size: h.Size, ModifiedAt: timePtr(h.ModTime)})
+		results = append(results, apiEntry{Name: h.Name, Path: h.Rel, IsDir: h.IsDir, Type: listing.TypeKey(h.Name, h.IsDir, false), Size: h.Size, ModifiedAt: timePtr(h.ModTime)})
 	}
 	out := map[string]any{"results": results, "total": page.Total}
 	if page.NextOffset >= 0 {
@@ -424,7 +507,7 @@ func (s *Server) apiPoints(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 	writeJSON(w, http.StatusOK, map[string]any{"recovery_points": out})
 }
 
-func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	src, ok := s.sourceFromQuery(w, r)
 	if !ok {
 		return
@@ -443,6 +526,27 @@ func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, _ auth.S
 		s.handleErr(w, r, err)
 		return
 	}
+	if pagedList(r) {
+		o := listOptions(r, 200)
+		l, err := s.svc.ListHistory(r.Context(), src, point, rel, o)
+		if err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
+		entries := make([]apiEntry, 0, len(l.Entries))
+		for _, e := range l.Entries {
+			entries = append(entries, histEntry(rel, e))
+		}
+		s.hideReasons(r, sess, entries)
+		out := map[string]any{
+			"point": toAPIPoint(point), "path": rel, "entries": entries, "total": l.Total, "unfiltered": l.Unfiltered, "types": apiTypes(l.Types),
+		}
+		if next := o.Offset + len(l.Entries); next < l.Total {
+			out["next_offset"] = next
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
 	l, err := s.svc.BrowseHistory(r.Context(), src, point, rel, r.FormValue("cursor"), intParamDefault(r, "limit", 200, 1, 1000))
 	if err != nil {
 		s.handleErr(w, r, err)
@@ -452,6 +556,7 @@ func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, _ auth.S
 	for _, e := range l.Entries {
 		entries = append(entries, histEntry(rel, e))
 	}
+	s.hideReasons(r, sess, entries)
 	out := map[string]any{"point": toAPIPoint(point), "path": rel, "entries": entries}
 	if l.Next != "" {
 		out["next_cursor"] = l.Next
@@ -459,7 +564,7 @@ func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, _ auth.S
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) apiHistoryVersions(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *Server) apiHistoryVersions(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	src, ok := s.sourceFromQuery(w, r)
 	if !ok {
 		return
@@ -482,12 +587,17 @@ func (s *Server) apiHistoryVersions(w http.ResponseWriter, r *http.Request, _ au
 		Current       bool       `json:"current"`
 		ObjectPresent bool       `json:"object_present"`
 	}
-	out := make([]version, 0, len(h.Versions))
-	for _, v := range h.Versions {
+	entries := make([]apiEntry, len(h.Versions))
+	for i, v := range h.Versions {
 		e := histEntry(pathutil.ParentRel(rel), v.Entry)
-		e.Name = h.Name
-		e.Path = rel
-		out = append(out, version{apiEntry: e, PointID: v.FirstPointID, CapturedAt: v.FirstAt, UntilAt: v.LastAt, Current: v.StillCurrent,
+		e.Name, e.Path = h.Name, rel
+		e.Type = listing.TypeKey(h.Name, e.IsDir, false)
+		entries[i] = e
+	}
+	s.hideReasons(r, sess, entries)
+	out := make([]version, 0, len(h.Versions))
+	for i, v := range h.Versions {
+		out = append(out, version{apiEntry: entries[i], PointID: v.FirstPointID, CapturedAt: v.FirstAt, UntilAt: v.LastAt, Current: v.StillCurrent,
 			ObjectPresent: len(v.SHA256) == 0 || h.Present[hexOf(v.SHA256)]})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "versions": out})
@@ -526,10 +636,13 @@ func (s *Server) apiJob(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 		return
 	}
 	if job.Kind == jobs.KindRestore {
-		if _, ok := s.requireSignIn(w, r); !ok {
+		verified, ok := s.requireSignIn(w, r)
+		if !ok {
 			return
 		}
+		sess = verified
 	}
+	view := s.viewerFor(r.Context(), sess)
 	var events []jobs.Event
 	if sess.SignedIn() {
 		events, err = s.svc.JobEvents(r.Context(), id, intParam(r, "after_event"), 200)
@@ -537,10 +650,12 @@ func (s *Server) apiJob(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 			s.handleErr(w, r, err)
 			return
 		}
+		events = view.events(events)
 	} else {
 		// Error texts and the log can name folders and settings of the server; only accounts see them.
 		job.RequestedBy, job.Error = "", ""
 	}
+	job = view.job(job)
 	type ev struct {
 		ID      int64     `json:"id"`
 		At      time.Time `json:"at"`
@@ -592,16 +707,22 @@ func (s *Server) apiRestorePreview(w http.ResponseWriter, r *http.Request, sess 
 		}
 		return out
 	}
+	view := s.viewerFor(r.Context(), sess)
+	dest, destReal := view.destination(plan.Request.DestName)
 	t := plan.Totals
-	writeJSON(w, http.StatusOK, map[string]any{
-		"destination": plan.DestDir, "point": toAPIPoint(plan.Point), "digest": plan.Digest, "confirmation_token": token,
+	out := map[string]any{
+		"destination": dest, "point": toAPIPoint(plan.Point), "digest": plan.Digest, "confirmation_token": token,
 		"totals": map[string]int64{
 			"items": t.Items, "folders": t.Dirs, "files": t.Files, "bytes": t.Bytes, "create": t.Create, "overwrite": t.Overwrite,
 			"rename": t.Rename, "skip_same": t.SkipSame, "skip_exists": t.SkipExists, "blocked": t.Blocked,
 			"missing_objects": t.Missing, "not_captured": t.NotCaptured,
 		},
-		"sample": conv(plan.Sample), "problems": conv(plan.Problems),
-	})
+		"sample": conv(plan.Sample), "problems": conv(view.problems(plan.Problems)),
+	}
+	if destReal != "" {
+		out["destination_real"] = destReal
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) apiRestoreStart(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -623,7 +744,7 @@ func (s *Server) apiRestoreStart(w http.ResponseWriter, r *http.Request, sess au
 	writeJSON(w, http.StatusAccepted, map[string]any{"job": toAPIJob(job)})
 }
 
-func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request, _ auth.Session) {
+func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	events, err := s.svc.AuditEvents(r.Context(), audit.Filter{
 		Action: r.FormValue("action"), Actor: r.FormValue("actor"), BeforeID: intParam(r, "before"), Limit: intParamDefault(r, "limit", 50, 1, 500),
 	})
@@ -631,6 +752,7 @@ func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request, _ auth.Session
 		s.handleErr(w, r, err)
 		return
 	}
+	events = s.viewerFor(r.Context(), sess).audit(events)
 	type ev struct {
 		ID         int64          `json:"id"`
 		At         time.Time      `json:"at"`

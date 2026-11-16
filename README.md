@@ -4,17 +4,18 @@
 
 **TimeVault — enterprise file backup, search and time travel** for Windows and NTFS. It keeps point-in-time recovery points of local folders, lets you browse the past state of any folder, search by name, and restore files into a safe folder below a restore root after a preview.
 
-**Status: version 0.1.1 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse; company accounts from a Redis user directory sign in to back up, restore or change settings. It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles, no retention and no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
+**Status: version 0.1.3 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse; company accounts from a Redis user directory sign in to back up, restore or change settings. It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles, no retention and no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
 
 ### What works today
 
 - A single Go service, `timevault-server`, with a bilingual (English / 中文) web UI in the OpenList style, light and dark themes, and a JSON API. It listens on `127.0.0.1:8660` by default.
-- **Explorer**: the live folder tree of a monitored folder, marked as protected, changed or new, plus name search through a local Everything instance (optional).
-- **Time Machine**: choose any committed recovery point, browse the folder tree as it was, see deleted files, and list every version of a file.
+- **Explorer**: the live folder tree of a monitored folder, marked as protected, changed or new, plus name search through a local Everything instance (optional). Lists have a **Type** column, sort the whole folder by name, type, size or time, filter by type and come in pages (100 by default), with buttons that jump to the top and the bottom of the page and a **Location** line that shows the folder as people open it over the network, with a Copy button.
+- **Time Machine**: choose any committed recovery point, browse the folder tree as it was (sorted, filtered and paged like the Explorer), see deleted files, and list every version of a file.
 - **Backups**: full and incremental backups into a content-addressed repository, started by hand or on an automatic schedule per folder, with progress, cancel, skipped-file reporting and integrity verification. PostgreSQL stores the catalog.
-- **Restore**: preview first, then a confirmed restore of files or folders into a folder below a configured restore root, with SHA-256 verification and skip / rename / overwrite policies.
+- **Restore**: preview first, then a confirmed restore of files or folders (up to 500 selected at a time) into a folder below a configured restore root, with SHA-256 verification and skip / rename / overwrite policies.
 - **Open browsing and sign-in**: anyone can browse; every change needs a company account from the Redis user directory (the `app_user_*` hashes of another application), with the roles `user` and `admin`. An optional local administrator is also possible.
-- **Settings**: administrators add and edit the monitored folders (folder, exclusions, on or off, schedule) on a page. Deployment settings (database, Redis, backup and restore folders) live in the environment or the `.env` file.
+- **Settings**: administrators add and edit the monitored folders (display folder, folder on the server, exclusions, on or off, schedule) on a page. Deployment settings (database, Redis, backup and restore folders, the server's host name) live in the environment or the `.env` file.
+- **Display folders**: people see the network paths (`\\server\share\folder`) of the monitored folders and of the restore folder; only administrators see the real folders on the server's disk, and texts that quote them are rewritten for everybody else.
 - CSRF protection, sign-in limits, an append-only audit log and a status page.
 
 ### Quick start (development, Windows PowerShell)
@@ -51,7 +52,7 @@ Open `http://127.0.0.1:8660/`. Anyone can browse; to back up, restore or change 
 | Path | Content |
 |---|---|
 | `cmd/timevault-server/` | Program entry point |
-| `internal/` | Catalog, backup engine, repository, restore, jobs, auth, Redis user directory, audit, search adapter, scheduler, HTTP server |
+| `internal/` | Catalog, backup engine, repository, restore, jobs, auth, Redis user directory, audit, search adapter, folder-list engine, scheduler, HTTP server |
 | `migrations/` | Database schema (embedded in the executable) |
 | `web/` | Templates and static assets (embedded in the executable) |
 | `scripts/` | Development helper scripts |
@@ -67,17 +68,18 @@ Open `http://127.0.0.1:8660/`. Anyone can browse; to back up, restore or change 
 
 **TimeVault —— 企业文件备份、搜索与时间回溯**，面向 Windows 和 NTFS。它为本地文件夹保存时间点恢复点，可以浏览任意文件夹过去的状态、按名称搜索，并在预览之后把文件恢复到恢复根目录下的安全文件夹中。
 
-**状态：0.1.1 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览；来自 Redis 用户目录的公司账号登录后才能备份、恢复或修改设置。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），只有两种角色，没有保留策略，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
+**状态：0.1.3 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览；来自 Redis 用户目录的公司账号登录后才能备份、恢复或修改设置。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），只有两种角色，没有保留策略，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
 
 ### 目前可用的功能
 
 - 一个 Go 服务 `timevault-server`，带有 OpenList 风格的双语（English / 中文）网页界面、浅色和深色主题，以及 JSON API。默认监听 `127.0.0.1:8660`。
-- **文件浏览**：监控文件夹的实时文件夹树，标注为已保护、已变更或新增；另可通过本机的 Everything 实例按名称搜索（可选）。
-- **时间机器**：选择任意已提交的恢复点，按当时的样子浏览文件夹树，查看已删除的文件，并列出某个文件的所有版本。
+- **文件浏览**：监控文件夹的实时文件夹树，标注为已保护、已变更或新增；另可通过本机的 Everything 实例按名称搜索（可选）。列表有**类型**列，可以按名称、类型、大小或时间对整个文件夹排序，按类型筛选，并分页（默认每页 100 项）；页面上有直达顶部和底部的按钮，还有一行**位置**，显示人们通过网络打开该文件夹时的路径，并带有复制按钮。
+- **时间机器**：选择任意已提交的恢复点，按当时的样子浏览文件夹树（与文件浏览一样排序、筛选和分页），查看已删除的文件，并列出某个文件的所有版本。
 - **备份**：全量和增量备份到内容寻址的仓库，可以手动启动，也可以为每个文件夹设置自动计划，带进度、取消、跳过文件的报告和完整性校验。目录库保存在 PostgreSQL 中。
-- **恢复**：先预览，再经确认把文件或文件夹恢复到所配置恢复根目录下的文件夹，带 SHA-256 校验以及跳过 / 改名 / 覆盖策略。
+- **恢复**：先预览，再经确认把文件或文件夹（一次最多选择 500 项）恢复到所配置恢复根目录下的文件夹，带 SHA-256 校验以及跳过 / 改名 / 覆盖策略。
 - **开放浏览与登录**：任何人都可以浏览；所有改动都需要 Redis 用户目录（另一个应用的 `app_user_*` 哈希）中的公司账号，角色为 `user` 和 `admin`。也可以另设一个可选的本地管理员。
-- **设置**：管理员在页面上添加和编辑监控文件夹（文件夹、排除规则、开关、计划）。部署相关的设置（数据库、Redis、备份和恢复文件夹）放在环境变量或 `.env` 文件中。
+- **设置**：管理员在页面上添加和编辑监控文件夹（显示文件夹、服务器上的文件夹、排除规则、开关、计划）。部署相关的设置（数据库、Redis、备份和恢复文件夹、服务器的主机名）放在环境变量或 `.env` 文件中。
+- **显示文件夹**：人们看到的是监控文件夹和恢复文件夹的网络路径（`\\server\share\folder`）；只有管理员能看到服务器磁盘上的真实文件夹，引用它们的文本会为其他人改写。
 - CSRF 防护、登录限制、只追加的审计日志和状态页。
 
 ### 快速开始（开发环境，Windows PowerShell）
@@ -114,7 +116,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        
 | 路径 | 内容 |
 |---|---|
 | `cmd/timevault-server/` | 程序入口 |
-| `internal/` | 目录库、备份引擎、仓库、恢复、任务、认证、Redis 用户目录、审计、搜索适配器、调度器、HTTP 服务 |
+| `internal/` | 目录库、备份引擎、仓库、恢复、任务、认证、Redis 用户目录、审计、搜索适配器、文件夹列表引擎、调度器、HTTP 服务 |
 | `migrations/` | 数据库结构（嵌入可执行文件） |
 | `web/` | 模板和静态资源（嵌入可执行文件） |
 | `scripts/` | 开发辅助脚本 |

@@ -59,21 +59,29 @@ type Config struct {
 	Directory DirectoryChecker
 	// SchedulerTick is how often RunScheduler looks for due sources; zero means 15 seconds.
 	SchedulerTick time.Duration
+	// ServerHost is the name of this server as users type it in \\server\share paths (TIMEVAULT_SERVER_HOST).
+	// When it is set, the display path of every monitored folder is required and must use it.
+	ServerHost string
+	// RestoreDisplayRoot is the network path users reach the restore folder by, normalised
+	// (TIMEVAULT_RESTORE_DISPLAY_ROOT); empty when there is none.
+	RestoreDisplayRoot string
 }
 
 // Service is the application facade.
 type Service struct {
-	pool          *pgxpool.Pool
-	cat           *catalog.Store
-	repo          *repository.Store
-	engine        *backup.Engine
-	restore       *restore.Manager
-	jobs          *jobs.Runner
-	audit         *audit.Logger
-	search        search.Provider
-	log           *slog.Logger
-	directory     DirectoryChecker
-	schedulerTick time.Duration
+	pool               *pgxpool.Pool
+	cat                *catalog.Store
+	repo               *repository.Store
+	engine             *backup.Engine
+	restore            *restore.Manager
+	jobs               *jobs.Runner
+	audit              *audit.Logger
+	search             search.Provider
+	log                *slog.Logger
+	directory          DirectoryChecker
+	schedulerTick      time.Duration
+	serverHost         string
+	restoreDisplayRoot string
 }
 
 // New builds a Service and registers the job handlers on the runner.
@@ -82,6 +90,7 @@ func New(cfg Config) *Service {
 		pool: cfg.Pool, cat: cfg.Catalog, repo: cfg.Repo, engine: cfg.Engine, restore: cfg.Restore,
 		jobs: cfg.Jobs, audit: cfg.Audit, search: cfg.Search, log: cfg.Logger,
 		directory: cfg.Directory, schedulerTick: cfg.SchedulerTick,
+		serverHost: cfg.ServerHost, restoreDisplayRoot: cfg.RestoreDisplayRoot,
 	}
 	if s.search == nil {
 		s.search = search.NewDisabled()
@@ -103,6 +112,12 @@ func (s *Service) RestoreEnabled() bool { return s.restore.Enabled() }
 
 // RestoreRoot is the folder restores are written below.
 func (s *Service) RestoreRoot() string { return s.restore.Root() }
+
+// ServerHost is the name users know this server by in \\server\share paths, or "" when it is not configured.
+func (s *Service) ServerHost() string { return s.serverHost }
+
+// RestoreDisplayRoot is the network path users reach the restore folder by, or "" when there is none.
+func (s *Service) RestoreDisplayRoot() string { return s.restoreDisplayRoot }
 
 // SearchProvider is the configured search provider.
 func (s *Service) SearchProvider() search.Provider { return s.search }
@@ -138,8 +153,12 @@ func (s *Service) Source(ctx context.Context, id int64) (catalog.Source, error) 
 	return src, err
 }
 
-// AddSource validates and registers a source.
+// AddSource validates and registers a source. See withDisplayPath for the rules of its display path.
 func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceRequest) (catalog.Source, error) {
+	req, err := s.withDisplayPath(req)
+	if err != nil {
+		return catalog.Source{}, err
+	}
 	ns, err := s.engine.PrepareSource(ctx, req, a.User)
 	if err != nil {
 		return catalog.Source{}, err
@@ -153,17 +172,25 @@ func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceReque
 	if src.ScheduleMinutes != nil {
 		detail["schedule_minutes"] = *src.ScheduleMinutes
 	}
+	if src.DisplayPath != "" {
+		detail["display"] = src.DisplayPath
+	}
 	_ = s.record(ctx, a, audit.ActionSourceCreate, "source", fmt.Sprint(id), &id, audit.ResultOK, detail)
 	return src, nil
 }
 
-// UpdateSource replaces the name, folder, exclude patterns, schedule and enabled
+// UpdateSource replaces the name, folder, exclude patterns, schedule, display path and enabled
 // flag of a source. The folder of a source that already has recovery points is
-// fixed, because its history describes that folder. An update that changes
-// nothing succeeds without an audit record; otherwise the record lists only the
-// fields that changed, with their old and new values.
+// fixed, because its history describes that folder; the display path can change
+// at any time. An update that changes nothing succeeds without an audit record;
+// otherwise the record lists only the fields that changed, with their old and
+// new values.
 func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backup.SourceRequest, enabled bool) (catalog.Source, error) {
 	cur, err := s.Source(ctx, id)
+	if err != nil {
+		return catalog.Source{}, err
+	}
+	req, err = s.withDisplayPath(req)
 	if err != nil {
 		return catalog.Source{}, err
 	}
@@ -190,6 +217,7 @@ func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backu
 	}
 	src, err := s.cat.UpdateSource(ctx, id, catalog.SourceUpdate{
 		Name: ns.Name, RootPath: ns.RootPath, Excludes: ns.Excludes, Enabled: enabled, ScheduleMinutes: ns.ScheduleMinutes,
+		DisplayPath: ns.DisplayPath,
 	})
 	if errors.Is(err, catalog.ErrNotFound) {
 		return catalog.Source{}, ErrNotFound
@@ -222,6 +250,9 @@ func sourceChanges(before, after catalog.Source) map[string]any {
 	if (before.ScheduleMinutes == nil) != (after.ScheduleMinutes == nil) ||
 		(before.ScheduleMinutes != nil && *before.ScheduleMinutes != *after.ScheduleMinutes) {
 		change("schedule_minutes", before.ScheduleMinutes, after.ScheduleMinutes)
+	}
+	if before.DisplayPath != after.DisplayPath {
+		change("display", before.DisplayPath, after.DisplayPath)
 	}
 	return changes
 }

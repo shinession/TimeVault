@@ -22,6 +22,10 @@ type previewData struct {
 	// CanStart is false while blocked items exist and a partial restore is not allowed.
 	CanStart bool
 	BackURL  string
+	// Dest is where the restore would write, as people reach it over the network; DestReal is the folder on the
+	// server's disk, for administrators.
+	Dest     string
+	DestReal string
 }
 
 func parseRestoreForm(r *http.Request) restore.Request {
@@ -45,12 +49,15 @@ func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, sess auth
 	if flashKey != "" {
 		p.Flash = &Flash{Kind: "error", Message: p.T(flashKey)}
 	}
+	view := s.viewerFor(r.Context(), sess)
+	plan.Problems = view.problems(plan.Problems)
 	data := &previewData{
 		Plan: plan, Token: token, Idem: newID() + newID(), Paths: plan.Request.Paths,
 		Policy: string(plan.Request.Policy), Partial: plan.Request.AllowPartial,
 		CanStart: plan.Totals.Blocked == 0 || plan.Request.AllowPartial,
 		BackURL:  buildURL("/history", "source", plan.Request.SourceID, "point", plan.Request.PointID),
 	}
+	data.Dest, data.DestReal = view.destination(plan.Request.DestName)
 	p.Data = data
 	p.RequestURI = data.BackURL
 	s.render(w, r, "restore_preview", status, p)
@@ -124,6 +131,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.S
 		s.handleErr(w, r, err)
 		return
 	}
+	events = s.viewerFor(r.Context(), sess).audit(events)
 	d := &auditData{Events: events, Action: action, Actions: auditActions}
 	if len(events) == pageSize {
 		d.NextURL = buildURL("/audit", "action", action, "before", events[len(events)-1].ID)
@@ -138,7 +146,7 @@ type statusData struct {
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	report := s.svc.Health(r.Context())
+	report := s.viewerFor(r.Context(), sess).health(s.svc.Health(r.Context()))
 	p := s.newPage(r, sess, "status.title", "status")
 	p.Data = report
 	s.render(w, r, "status", http.StatusOK, p)

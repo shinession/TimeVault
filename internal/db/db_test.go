@@ -60,6 +60,56 @@ func TestMigrateAppliesOnceAndDetectsChanges(t *testing.T) {
 	}
 }
 
+// Migration 3 adds the display path to sources that may already exist: they get none, and the column only takes
+// NULL or a text of 1 to 520 characters.
+func TestMigrationAddsTheDisplayPathToExistingSources(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	exec := func(query string, args ...any) error {
+		_, err := pool.Exec(ctx, query, args...)
+		return err
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Return to the schema of version 2 with a source in it, then migrate again.
+	must(exec(`ALTER TABLE sources DROP COLUMN display_path`))
+	must(exec(`DELETE FROM schema_migrations WHERE version = 3`))
+	must(exec(`INSERT INTO sources (name, root_path, root_key, created_by) VALUES ('old', 'D:\old', 'd:\old', 'tester')`))
+	applied, err := db.Migrate(ctx, pool, migrations.FS)
+	if err != nil || len(applied) != 1 || applied[0] != "0003_display_path.sql" {
+		t.Fatalf("Migrate = %v, %v; want only 0003_display_path.sql", applied, err)
+	}
+	var withoutPath int
+	must(pool.QueryRow(ctx, `SELECT count(*) FROM sources WHERE name = 'old' AND display_path IS NULL`).Scan(&withoutPath))
+	if withoutPath != 1 {
+		t.Fatal("an existing source must have no display path after the migration")
+	}
+
+	insert := func(name string, display any) error {
+		return exec(`INSERT INTO sources (name, root_path, root_key, created_by, display_path) VALUES ($1, $1, $1, 'tester', $2)`, name, display)
+	}
+	if err := insert("null", nil); err != nil {
+		t.Errorf("NULL display path: %v", err)
+	}
+	if err := insert("shortest", "x"); err != nil {
+		t.Errorf("display path of 1 character: %v", err)
+	}
+	if err := insert("longest", strings.Repeat("x", 519)+"é"); err != nil {
+		t.Errorf("display path of 520 characters: %v", err)
+	}
+	if err := insert("empty", ""); err == nil {
+		t.Error("an empty display path must be refused: no display path is NULL")
+	}
+	if err := insert("too long", strings.Repeat("x", 521)); err == nil {
+		t.Error("a display path of 521 characters must be refused")
+	}
+}
+
 func TestMigrationFilesAreValid(t *testing.T) {
 	if v, err := db.LatestVersion(migrations.FS); err != nil || v < 1 {
 		t.Fatalf("LatestVersion = %d, %v", v, err)

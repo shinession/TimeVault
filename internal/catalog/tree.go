@@ -67,12 +67,10 @@ func scanEntry(row pgx.Row, withNow bool, latest int) (Entry, error) {
 	return e, nil
 }
 
-// ListChildren returns one page of a folder at a recovery point, ordered by
-// case-insensitive name. Folders are not grouped first; the UI does that.
-func (s *Store) ListChildren(ctx context.Context, p ListParams) (Listing, error) {
-	if p.Limit <= 0 || p.Limit > 5000 {
-		p.Limit = 500
-	}
+// childrenQuery builds the statement that reads the children of p.Parent as
+// they were at p.Seq, ordered by case-insensitive name. p.After, when set,
+// skips everything up to that cursor and limit > 0 caps the number of rows.
+func childrenQuery(p ListParams, limit int) (query string, args []any) {
 	withNow := p.LatestSeq > 0
 	cols := `n.id, n.name, v.id, v.is_dir, v.state, v.skip_reason, v.size, v.mtime_ns, v.attrs, v.sha256, v.first_point, v.last_point`
 	join := ``
@@ -80,10 +78,10 @@ func (s *Store) ListChildren(ctx context.Context, p ListParams) (Listing, error)
 		cols += `, c.id`
 		join = ` LEFT JOIN node_versions c ON c.node_id = n.id AND c.first_point <= $3 AND (c.last_point IS NULL OR c.last_point >= $3)`
 	}
-	query := `SELECT ` + cols + ` FROM nodes n
+	query = `SELECT ` + cols + ` FROM nodes n
 		JOIN node_versions v ON v.node_id = n.id AND v.first_point <= $2 AND (v.last_point IS NULL OR v.last_point >= $2)` + join + `
 		WHERE n.parent_id = $1`
-	args := []any{p.Parent, p.Seq, p.LatestSeq}
+	args = []any{p.Parent, p.Seq, p.LatestSeq}
 	if !withNow {
 		args = args[:2]
 	}
@@ -91,16 +89,36 @@ func (s *Store) ListChildren(ctx context.Context, p ListParams) (Listing, error)
 		args = append(args, p.After.Key, p.After.Name)
 		query += fmt.Sprintf(` AND (n.name_key, n.name) > ($%d, $%d)`, len(args)-1, len(args))
 	}
-	args = append(args, p.Limit+1)
-	query += fmt.Sprintf(` ORDER BY n.name_key, n.name LIMIT $%d`, len(args))
+	query += ` ORDER BY n.name_key, n.name`
+	if limit > 0 {
+		args = append(args, limit)
+		query += fmt.Sprintf(` LIMIT $%d`, len(args))
+	}
+	return query, args
+}
 
+func (s *Store) queryChildren(ctx context.Context, p ListParams, limit int) ([]Entry, error) {
+	query, args := childrenQuery(p, limit)
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return Listing{}, fmt.Errorf("catalog: list children: %w", err)
+		return nil, fmt.Errorf("catalog: list children: %w", err)
 	}
-	entries, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Entry, error) { return scanEntry(r, withNow, p.LatestSeq) })
+	entries, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Entry, error) { return scanEntry(r, p.LatestSeq > 0, p.LatestSeq) })
 	if err != nil {
-		return Listing{}, fmt.Errorf("catalog: list children: %w", err)
+		return nil, fmt.Errorf("catalog: list children: %w", err)
+	}
+	return entries, nil
+}
+
+// ListChildren returns one page of a folder at a recovery point, ordered by
+// case-insensitive name. Folders are not grouped first; the UI does that.
+func (s *Store) ListChildren(ctx context.Context, p ListParams) (Listing, error) {
+	if p.Limit <= 0 || p.Limit > 5000 {
+		p.Limit = 500
+	}
+	entries, err := s.queryChildren(ctx, p, p.Limit+1)
+	if err != nil {
+		return Listing{}, err
 	}
 	out := Listing{Entries: entries}
 	if len(entries) > p.Limit {
@@ -109,6 +127,15 @@ func (s *Store) ListChildren(ctx context.Context, p ListParams) (Listing, error)
 		out.Next = &Cursor{Key: pathutil.NameKey(last.Name), Name: last.Name}
 	}
 	return out, nil
+}
+
+// ListAllChildren returns every child of a folder at a recovery point, ordered
+// by case-insensitive name and carrying the status relative to the newest point
+// when p.LatestSeq is set. p.Limit and p.After are ignored; callers that sort
+// or filter a folder themselves need all of it.
+func (s *Store) ListAllChildren(ctx context.Context, p ListParams) ([]Entry, error) {
+	p.After = nil
+	return s.queryChildren(ctx, p, 0)
 }
 
 // ChildrenAt returns every child of a folder at a recovery point keyed by exact name.

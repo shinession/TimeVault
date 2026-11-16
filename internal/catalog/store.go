@@ -46,6 +46,8 @@ type NewSource struct {
 	CreatedBy string
 	// ScheduleMinutes is the interval between automatic backups; nil means manual only.
 	ScheduleMinutes *int
+	// DisplayPath is the network path users know the folder by; empty means none.
+	DisplayPath string
 }
 
 // SourceUpdate replaces every editable field of a source. Callers validate it first.
@@ -55,14 +57,25 @@ type SourceUpdate struct {
 	Excludes        []string
 	Enabled         bool
 	ScheduleMinutes *int
+	// DisplayPath is the network path users know the folder by; empty removes it.
+	DisplayPath string
 }
 
-const sourceColumns = `id, name, root_path, excludes, enabled, created_by, created_at, schedule_minutes, last_run_at`
+// sourceColumns lists the columns scanSource reads; a missing display path comes back as "".
+const sourceColumns = `id, name, root_path, excludes, enabled, created_by, created_at, schedule_minutes, last_run_at, coalesce(display_path, '')`
 
 func scanSource(row pgx.Row) (Source, error) {
 	var s Source
-	err := row.Scan(&s.ID, &s.Name, &s.RootPath, &s.Excludes, &s.Enabled, &s.CreatedBy, &s.CreatedAt, &s.ScheduleMinutes, &s.LastRunAt)
+	err := row.Scan(&s.ID, &s.Name, &s.RootPath, &s.Excludes, &s.Enabled, &s.CreatedBy, &s.CreatedAt, &s.ScheduleMinutes, &s.LastRunAt, &s.DisplayPath)
 	return s, err
+}
+
+// textOrNull stores an empty string as NULL.
+func textOrNull(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 // CreateSource registers a source.
@@ -72,10 +85,10 @@ func (s *Store) CreateSource(ctx context.Context, in NewSource) (Source, error) 
 		excludes = []string{}
 	}
 	row := s.pool.QueryRow(ctx,
-		`INSERT INTO sources (name, root_path, root_key, excludes, created_by, schedule_minutes)
-		 VALUES ($1, $2, $3, $4, $5, $6)
+		`INSERT INTO sources (name, root_path, root_key, excludes, created_by, schedule_minutes, display_path)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
 		 RETURNING `+sourceColumns,
-		in.Name, in.RootPath, RootKey(in.RootPath), excludes, in.CreatedBy, in.ScheduleMinutes)
+		in.Name, in.RootPath, RootKey(in.RootPath), excludes, in.CreatedBy, in.ScheduleMinutes, textOrNull(in.DisplayPath))
 	src, err := scanSource(row)
 	if isUniqueViolation(err) {
 		return Source{}, fmt.Errorf("%w: a source with this name or folder is already registered", ErrConflict)
@@ -88,7 +101,8 @@ func (s *Store) CreateSource(ctx context.Context, in NewSource) (Source, error) 
 
 // UpdateSource replaces the editable fields of a source. Pointing it at another
 // folder forgets when it last ran: that run belonged to the old folder, and the
-// new one is due at once if it has a schedule.
+// new one is due at once if it has a schedule. The display path can change at any
+// time, also when the source already has recovery points.
 func (s *Store) UpdateSource(ctx context.Context, id int64, u SourceUpdate) (Source, error) {
 	excludes := u.Excludes
 	if excludes == nil {
@@ -96,11 +110,11 @@ func (s *Store) UpdateSource(ctx context.Context, id int64, u SourceUpdate) (Sou
 	}
 	row := s.pool.QueryRow(ctx,
 		`UPDATE sources
-		 SET name = $2, root_path = $3, root_key = $4, excludes = $5, enabled = $6, schedule_minutes = $7,
+		 SET name = $2, root_path = $3, root_key = $4, excludes = $5, enabled = $6, schedule_minutes = $7, display_path = $8,
 		     last_run_at = CASE WHEN root_key = $4 THEN last_run_at ELSE NULL END
 		 WHERE id = $1
 		 RETURNING `+sourceColumns,
-		id, u.Name, u.RootPath, RootKey(u.RootPath), excludes, u.Enabled, u.ScheduleMinutes)
+		id, u.Name, u.RootPath, RootKey(u.RootPath), excludes, u.Enabled, u.ScheduleMinutes, textOrNull(u.DisplayPath))
 	src, err := scanSource(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Source{}, ErrNotFound
@@ -152,8 +166,9 @@ func (s *Store) GetSource(ctx context.Context, id int64) (Source, error) {
 	return src, nil
 }
 
-// ListSources returns every source with its newest committed point.
-func (s *Store) ListSources(ctx context.Context) ([]SourceSummary, error) {
+// Sources returns every source ordered by name, without recovery points. It is one query, for callers that only
+// need the settings of the sources.
+func (s *Store) Sources(ctx context.Context) ([]Source, error) {
 	rows, err := s.pool.Query(ctx, `SELECT `+sourceColumns+` FROM sources ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("catalog: list sources: %w", err)
@@ -161,6 +176,15 @@ func (s *Store) ListSources(ctx context.Context) ([]SourceSummary, error) {
 	sources, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (Source, error) { return scanSource(r) })
 	if err != nil {
 		return nil, fmt.Errorf("catalog: list sources: %w", err)
+	}
+	return sources, nil
+}
+
+// ListSources returns every source with its newest committed point.
+func (s *Store) ListSources(ctx context.Context) ([]SourceSummary, error) {
+	sources, err := s.Sources(ctx)
+	if err != nil {
+		return nil, err
 	}
 	out := make([]SourceSummary, 0, len(sources))
 	for _, src := range sources {

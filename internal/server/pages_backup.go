@@ -95,11 +95,15 @@ type backupsData struct {
 	Sources        []sourceCard
 	Jobs           []jobView
 	RestoreEnabled bool
-	RestoreRoot    string
+	// RestoreRoot is the restore folder as people reach it over the network, empty when they cannot be told;
+	// RestoreReal is the folder on the server's disk, for administrators.
+	RestoreRoot string
+	RestoreReal string
 }
 
-func (s *Server) backupsData(r *http.Request, signedIn bool) (*backupsData, error) {
+func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, error) {
 	ctx := r.Context()
+	signedIn, view := sess.SignedIn(), s.viewerFor(ctx, sess)
 	sources, err := s.svc.Sources(ctx)
 	if err != nil {
 		return nil, err
@@ -112,14 +116,15 @@ func (s *Server) backupsData(r *http.Request, signedIn bool) (*backupsData, erro
 	if err != nil {
 		return nil, err
 	}
-	d := &backupsData{RestoreEnabled: s.svc.RestoreEnabled(), RestoreRoot: s.svc.RestoreRoot()}
+	d := &backupsData{RestoreEnabled: s.svc.RestoreEnabled()}
+	d.RestoreRoot, d.RestoreReal = view.restoreRoot()
 	active := map[int64]*jobView{}
 	for _, j := range recent {
 		// Restores are for accounts to see, like their job pages.
 		if j.Kind == jobs.KindRestore && !signedIn {
 			continue
 		}
-		v := s.viewJob(j, names)
+		v := s.viewJob(view.job(j), names)
 		d.Jobs = append(d.Jobs, v)
 		if j.Kind == jobs.KindBackup && j.Active() && j.SourceID != nil {
 			if _, ok := active[*j.SourceID]; !ok {
@@ -134,6 +139,9 @@ func (s *Server) backupsData(r *http.Request, signedIn bool) (*backupsData, erro
 		if err != nil {
 			return nil, err
 		}
+		for i := range attempts {
+			attempts[i] = view.point(attempts[i])
+		}
 		card := sourceCard{SourceSummary: src, Active: active[src.ID], Attempts: attempts, NextRun: nextRun(src.Source, now)}
 		if src.ScheduleMinutes != nil {
 			card.Minutes = *src.ScheduleMinutes
@@ -144,7 +152,7 @@ func (s *Server) backupsData(r *http.Request, signedIn bool) (*backupsData, erro
 }
 
 func (s *Server) handleBackups(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	d, err := s.backupsData(r, sess.SignedIn())
+	d, err := s.backupsData(r, sess)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -203,7 +211,10 @@ type jobData struct {
 	Items     []restore.StoredItem
 	ItemsNext int64
 	Status    string
-	RestoreAt string
+	// Dest is where a restore wrote, as people reach it over the network; DestReal is the folder on the server's
+	// disk, for administrators.
+	Dest     string
+	DestReal string
 }
 
 func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Session) {
@@ -226,10 +237,13 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 		sess = verified
 	}
-	// Error texts and the log can name folders and settings of the server; only accounts see them.
+	// Error texts and the log can name folders and settings of the server; only accounts see them, and only
+	// administrators see the folders on the server's disk in them.
+	view := s.viewerFor(ctx, sess)
 	if !sess.SignedIn() {
 		job.Error = ""
 	}
+	job = view.job(job)
 	d := &jobData{}
 	names := map[int64]string{}
 	if job.SourceID != nil {
@@ -245,10 +259,12 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	d.View = s.viewJob(job, names)
 	if sess.SignedIn() {
-		if d.Events, err = s.svc.JobEvents(ctx, id, 0, 300); err != nil {
+		events, err := s.svc.JobEvents(ctx, id, 0, 300)
+		if err != nil {
 			s.handleErr(w, r, err)
 			return
 		}
+		d.Events = view.events(events)
 	}
 	if job.Kind == jobs.KindRestore {
 		d.Status = r.FormValue("status")
@@ -261,12 +277,12 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			s.handleErr(w, r, err)
 			return
 		}
-		d.Items = items
+		d.Items = view.restoreItems(items)
 		if len(items) == 200 {
 			d.ItemsNext = items[len(items)-1].ID
 		}
 		if d.View.Request != nil {
-			d.RestoreAt = s.svc.RestoreRoot()
+			d.Dest, d.DestReal = view.destination(d.View.Request.DestName)
 		}
 	}
 	p := s.newPage(r, sess, "job.title", "backups")

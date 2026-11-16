@@ -82,7 +82,12 @@ Write-Demo "$reportsZh\$summaryZh.txt" 'Annual summary, first version.'
 $sources = (Invoke-Api Get '/api/v1/sources' $null).sources
 $demo = $sources | Where-Object { $_.root_path -ieq $source } | Select-Object -First 1
 if (-not $demo) {
-    $demo = Invoke-Api Post '/api/v1/sources' @{ name = 'Demo files'; root_path = $source }
+    $body = @{ name = 'Demo files'; root_path = $source }
+    # With TIMEVAULT_SERVER_HOST set, a monitored folder needs a display folder on that host. The demo folder is
+    # not published over the network, so this one is made up.
+    $serverHost = Get-DotEnvValue 'TIMEVAULT_SERVER_HOST'
+    if ($serverHost) { $body.display_path = "\\$serverHost\demo\source" }
+    $demo = Invoke-Api Post '/api/v1/sources' $body
     Write-Host "Registered source '$($demo.name)'."
 }
 

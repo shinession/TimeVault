@@ -5,3 +5,45 @@
 {{define "flash"}}{{with .Flash}}<div class="tv-alert tv-alert-{{.Kind}}" role="status">{{.Message}}</div>{{end}}{{end}}
 
 {{define "chip-verify"}}<span class="tv-chip tv-chip-{{.State}}" title="{{.Label}}">{{.Label}}</span>{{end}}
+
+{{/* The controls above a file list. The page passes itself; the list is Data.List (see listView). */}}
+{{define "listtools"}}{{$l := .Data.List}}
+<form class="tv-listtools" method="get" action="{{$l.Action}}" data-autosubmit>
+  {{range $l.Hidden}}<input type="hidden" name="{{.Name}}" value="{{.Value}}">{{end}}
+  {{if $l.HasTypeFilter}}
+  <label class="tv-listtool"><span>{{.T "list.type"}}</span>
+    <select name="type" class="tv-select">{{range $l.Types}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+  </label>
+  {{end}}
+  <label class="tv-listtool"><span>{{.T "pager.per_page"}}</span>
+    <select name="per_page" class="tv-select">{{range $l.PerPage}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Value}}</option>{{end}}</select>
+  </label>
+  <noscript><button class="tv-btn" type="submit">{{.T "common.go"}}</button></noscript>
+  <span class="tv-listcount tv-muted" aria-live="polite">
+    {{if $l.Total}}{{.T "pager.showing" $l.Pager.From $l.Pager.To $l.Total}}{{else}}{{.T "pager.none"}}{{end}}{{if $l.Filtered}} &middot; {{.T "pager.filtered_of" $l.Unfiltered}}{{end}}
+  </span>
+</form>
+{{end}}
+
+{{/* Page links below (and above) a file list; nothing when everything fits on one page. */}}
+{{define "pager"}}{{with .Data.List.Pager}}{{if gt .Pages 1}}
+<nav class="tv-pager" aria-label="{{$.T "pager.label"}}">
+  {{if .PrevURL}}<a class="tv-btn tv-btn-small tv-pager-step" rel="prev" href="{{.PrevURL}}">{{template "icon" "chevron-left"}} {{$.T "pager.prev"}}</a>
+  {{else}}<span class="tv-btn tv-btn-small tv-pager-step is-disabled" aria-disabled="true">{{template "icon" "chevron-left"}} {{$.T "pager.prev"}}</span>{{end}}
+  <ol class="tv-pager-pages">
+    {{range .Links}}{{if .Gap}}<li class="tv-pager-gap" aria-hidden="true">&hellip;</li>{{else}}<li><a class="tv-pager-page{{if .Current}} is-current{{end}}" href="{{.URL}}"{{if .Current}} aria-current="page"{{end}}>{{.Label}}</a></li>{{end}}{{end}}
+  </ol>
+  {{if .NextURL}}<a class="tv-btn tv-btn-small tv-pager-step" rel="next" href="{{.NextURL}}">{{$.T "pager.next"}} {{template "icon" "chevron-right"}}</a>
+  {{else}}<span class="tv-btn tv-btn-small tv-pager-step is-disabled" aria-disabled="true">{{$.T "pager.next"}} {{template "icon" "chevron-right"}}</span>{{end}}
+</nav>
+{{end}}{{end}}{{end}}
+
+{{/* Where the page's folder or file is on the network, with a button that copies it. Administrators also see the real folder. */}}
+{{define "location"}}{{if .Location}}
+<p class="tv-location">
+  <span class="tv-muted">{{.T "location.label"}}</span>
+  <code>{{.Location}}</code>
+  <button type="button" class="tv-btn tv-btn-small tv-btn-ghost tv-copy" data-copy="{{.Location}}" data-copied="{{.T "location.copied"}}" title="{{.T "location.copy"}}">{{template "icon" "copy"}}<span data-copy-label>{{.T "location.copy"}}</span></button>
+  {{if .LocationReal}}<span class="tv-muted tv-small">{{.T "location.on_server"}}: <code>{{.LocationReal}}</code></span>{{end}}
+</p>
+{{end}}{{end}}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"timevault/internal/catalog"
+	"timevault/internal/listing"
 	"timevault/internal/pathutil"
 )
 
@@ -39,10 +40,16 @@ type LiveEntry struct {
 
 // LiveListing is one page of a folder as it exists right now.
 type LiveListing struct {
-	Rel        string
-	Entries    []LiveEntry
+	Rel     string
+	Entries []LiveEntry
+	// Total is the number of entries that match the type filter and Unfiltered
+	// the number the folder has.
 	Total      int
+	Unfiltered int
+	// NextOffset is the offset of the next page, or -1 after the last one.
 	NextOffset int
+	// Types counts the entries of the whole folder by type, whatever the filter.
+	Types []listing.TypeCount
 	// Deleted are items present in the newest recovery point that no longer exist here.
 	Deleted     []catalog.Entry
 	DeletedMore bool
@@ -53,21 +60,26 @@ type LiveListing struct {
 // ErrSourceUnavailable means the source folder cannot be read right now.
 var ErrSourceUnavailable = errors.New("the source folder is not accessible")
 
-// BrowseLive lists a folder of the source as it exists on disk and marks each
-// item as protected, changed or new relative to the newest recovery point.
-// Folders are read through os.Root, so a crafted path can never leave the
-// source. Items deleted since the last backup are listed separately, because
-// that is where a lost file is found again.
+// BrowseLive lists a folder of the source as it exists on disk in name order
+// and marks each item as protected, changed or new relative to the newest
+// recovery point; see ListLive. A limit outside 1..1000 means 200.
 func (s *Service) BrowseLive(ctx context.Context, src catalog.Source, rel string, offset, limit int) (LiveListing, error) {
-	rel, err := pathutil.CleanRel(rel)
-	if err != nil {
-		return LiveListing{}, err
-	}
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	if offset < 0 {
-		offset = 0
+	return s.ListLive(ctx, src, rel, listing.Options{Sort: listing.SortName, Offset: offset, Limit: limit})
+}
+
+// ListLive lists a folder of the source as it exists on disk, filtered, sorted
+// and cut into a page as o says, and marks each item as protected, changed or
+// new relative to the newest recovery point. Folders are read through os.Root,
+// so a crafted path can never leave the source. Items deleted since the last
+// backup are listed separately, because that is where a lost file is found
+// again; they follow the type filter of o but not its order or window.
+func (s *Service) ListLive(ctx context.Context, src catalog.Source, rel string, o listing.Options) (LiveListing, error) {
+	rel, err := pathutil.CleanRel(rel)
+	if err != nil {
+		return LiveListing{}, err
 	}
 	root, err := os.OpenRoot(src.RootPath)
 	if err != nil {
@@ -119,13 +131,6 @@ func (s *Service) BrowseLive(ctx context.Context, src catalog.Source, rel string
 		}
 		live = append(live, e)
 	}
-	sort.Slice(live, func(i, j int) bool {
-		ki, kj := pathutil.NameKey(live[i].Name), pathutil.NameKey(live[j].Name)
-		if ki != kj {
-			return ki < kj
-		}
-		return live[i].Name < live[j].Name
-	})
 
 	var previous map[string]catalog.Entry
 	if latest, err := s.cat.LatestCommitted(ctx, src.ID); err == nil {
@@ -140,7 +145,10 @@ func (s *Service) BrowseLive(ctx context.Context, src catalog.Source, rel string
 		live[i].Status = liveStatus(live[i], previous)
 	}
 	for name, prev := range previous {
-		if _, ok := present[name]; !ok {
+		if _, ok := present[name]; ok {
+			continue
+		}
+		if listing.Matches(o.Type, listing.TypeKey(name, prev.IsDir, false)) {
 			out.Deleted = append(out.Deleted, prev)
 		}
 	}
@@ -155,16 +163,23 @@ func (s *Service) BrowseLive(ctx context.Context, src catalog.Source, rel string
 		out.Deleted, out.DeletedMore = out.Deleted[:maxDeletedShown], true
 	}
 
-	out.Total = len(live)
-	if offset >= len(live) {
-		return out, nil
+	page := listing.Apply(live, liveView, o)
+	out.Total, out.Unfiltered, out.Types = page.Total, page.Unfiltered, page.Types
+	if len(page.Items) > 0 {
+		out.Entries = page.Items
 	}
-	end := min(offset+limit, len(live))
-	out.Entries = live[offset:end]
-	if end < len(live) {
-		out.NextOffset = end
+	if next := max(o.Offset, 0) + len(page.Items); next < page.Total {
+		out.NextOffset = next
 	}
 	return out, nil
+}
+
+func liveView(e LiveEntry) listing.View {
+	v := listing.View{Name: e.Name, IsDir: e.IsDir, Special: e.Special, Size: e.Size}
+	if !e.ModTime.IsZero() {
+		v.MTimeNS = e.ModTime.UnixNano()
+	}
+	return v
 }
 
 func liveStatus(e LiveEntry, previous map[string]catalog.Entry) LiveStatus {

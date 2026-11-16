@@ -46,6 +46,8 @@ $DotEnvNotes = @{
     'TIMEVAULT_SESSION_KEY'         = @('Signs the session cookies (base64 of 32 random bytes). With it, sessions survive a restart.')
     'TIMEVAULT_REDIS_URL'           = @('User directory of the company accounts (the app_user_* hashes in Redis).')
     'TIMEVAULT_LISTEN_ADDR'         = @('Listen address. Other computers need a TLS reverse proxy and TIMEVAULT_ALLOW_NON_LOOPBACK=true as well.')
+    'TIMEVAULT_SERVER_HOST'         = @('Name of this server as users type it in network paths (\\server\share\...). With it, every monitored folder needs a', 'display folder on this host, and users never see the real folders of the server.')
+    'TIMEVAULT_RESTORE_DISPLAY_ROOT' = @('The restore folder as users reach it over the network (\\server\share\...), so they can pick up restored files.')
     'TIMEVAULT_EVERYTHING_URL'      = @('Search: the Everything instance of scripts\dev-everything.ps1 (its reset removes these lines).')
     'TIMEVAULT_TEST_EVERYTHING_URL' = @('Live search tests (go test ./internal/search/...), written by scripts\dev-everything.ps1.')
     'TIMEVAULT_GO_ROOT'             = @('Development scripts only: the folder that contains bin\go.exe.')
@@ -115,7 +117,13 @@ function Initialize-DotEnv {
         '#',
         '# Listen address (default 127.0.0.1:8660). Other computers need a TLS reverse proxy and',
         '# TIMEVAULT_ALLOW_NON_LOOPBACK=true as well.',
-        '# TIMEVAULT_LISTEN_ADDR=127.0.0.1:8660'
+        '# TIMEVAULT_LISTEN_ADDR=127.0.0.1:8660',
+        '#',
+        '# Name of this server as users type it in network paths (\\server\share\...). Set it to make the display',
+        '# folder of every monitored folder mandatory and checked: users see \\server\share paths, never the real',
+        '# folders of the server. The restore folder gets a display path of its own.',
+        '# TIMEVAULT_SERVER_HOST=server.example.local',
+        '# TIMEVAULT_RESTORE_DISPLAY_ROOT=\\server.example.local\share\restore'
     )
     if (-not (Test-Path -LiteralPath $DotEnvFile -PathType Leaf)) {
         Write-DotEnvLines ($header + $rest)

@@ -14,8 +14,11 @@
 <section class="tv-card tv-source">
   <div class="tv-card-head">
     <div>
-      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "settings.disabled"}}</span>{{end}}</h2>
-      <p class="tv-muted tv-path"><code>{{.RootPath}}</code></p>
+      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "settings.disabled"}}</span>{{end}}{{if and (not .DisplayPath) $.CanManage}} <span class="tv-chip tv-chip-warn">{{$.T "settings.no_display"}}</span>{{end}}</h2>
+      {{if or .DisplayPath $.ShowPhysical}}<p class="tv-muted tv-path">
+        {{if .DisplayPath}}<code>{{.DisplayPath}}</code>{{end}}
+        {{if $.ShowPhysical}}<span class="tv-small">{{if .DisplayPath}}<br>{{$.T "location.on_server"}}: {{end}}<code>{{.RootPath}}</code></span>{{end}}
+      </p>{{end}}
     </div>
   </div>
 
@@ -38,9 +41,12 @@
       <form method="post" action="/settings/sources/{{.ID}}" class="tv-form tv-form-grid">
         {{template "csrf" $}}
         <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.Form.Name}}" maxlength="100" required></label>
-        <label class="tv-field"><span>{{$.T "backups.field_path"}}</span>
+        <label class="tv-field"><span>{{$.T "settings.field_display"}}</span>
+          <input name="display_path" value="{{.Form.DisplayPath}}" placeholder="\\{{if $.Data.Deployment.ServerHost}}{{$.Data.Deployment.ServerHost}}{{else}}server{{end}}\share\folder" maxlength="500"{{if $.Data.Deployment.ServerHost}} required{{end}}>
+          <small class="tv-muted">{{if $.Data.Deployment.ServerHost}}{{$.T "settings.display_hint_host" $.Data.Deployment.ServerHost $.Data.Deployment.ServerHost}}{{else}}{{$.T "settings.display_hint"}}{{end}}</small></label>
+        <label class="tv-field"><span>{{$.T "settings.field_real"}}</span>
           <input name="root_path" value="{{.Form.RootPath}}" required{{if .HasPoints}} readonly{{end}}>
-          {{if .HasPoints}}<small class="tv-muted">{{$.T "settings.path_locked"}}</small>{{end}}</label>
+          <small class="tv-muted">{{$.T "settings.real_hint"}}{{if .HasPoints}} {{$.T "settings.path_locked"}}{{end}}</small></label>
         <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.Form.Excludes}}</textarea>
           <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
         <label class="tv-check tv-field-wide"><input type="checkbox" name="enabled" value="1"{{if .Form.Enabled}} checked{{end}}> <span>{{$.T "settings.enabled_label"}}</span></label>
@@ -67,7 +73,12 @@
   <form method="post" action="/settings/sources" class="tv-form tv-form-grid">
     {{template "csrf" $}}
     <label class="tv-field"><span>{{$.T "backups.field_name"}}</span><input name="name" value="{{.AddForm.Name}}" maxlength="100" required></label>
-    <label class="tv-field"><span>{{$.T "backups.field_path"}}</span><input name="root_path" value="{{.AddForm.RootPath}}" placeholder="D:\Data" required></label>
+    <label class="tv-field"><span>{{$.T "settings.field_display"}}</span>
+      <input name="display_path" value="{{.AddForm.DisplayPath}}" placeholder="\\{{if .Deployment.ServerHost}}{{.Deployment.ServerHost}}{{else}}server{{end}}\share\folder" maxlength="500"{{if .Deployment.ServerHost}} required{{end}}>
+      <small class="tv-muted">{{if .Deployment.ServerHost}}{{$.T "settings.display_hint_host" .Deployment.ServerHost .Deployment.ServerHost}}{{else}}{{$.T "settings.display_hint"}}{{end}}</small></label>
+    <label class="tv-field"><span>{{$.T "settings.field_real"}}</span>
+      <input name="root_path" value="{{.AddForm.RootPath}}" placeholder="D:\Data" required>
+      <small class="tv-muted">{{$.T "settings.real_hint"}}</small></label>
     <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.AddForm.Excludes}}</textarea>
       <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
     <div class="tv-field tv-field-wide">
@@ -87,15 +98,23 @@
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "backup"}} {{$.T "settings.storage"}}</h2></div>
   <dl class="tv-facts">
-    <div><dt>{{$.T "settings.repository"}}</dt>
-      <dd><code>{{.Deployment.RepositoryPath}}</code>
+    <div><dt>{{if $.ShowPhysical}}{{$.T "settings.repository"}}{{else}}{{$.T "settings.backup_storage"}}{{end}}</dt>
+      <dd>{{if $.ShowPhysical}}<code>{{.Deployment.RepositoryPath}}</code>{{end}}
         {{if .Repository.Name}} <span class="tv-chip tv-chip-status-{{.Repository.State}}">{{$.ComponentStateLabel .Repository.State}}</span>{{end}}
         {{if ge .RepoFreePct 0}}<br><span class="tv-muted tv-small">{{$.T "settings.free_space" .RepoFreePct}}</span>
         {{else if and .Repository.Name (ne .Repository.State "ok")}}<br><span class="tv-muted tv-small">{{.Repository.Detail}}</span>{{end}}</dd></div>
     <div><dt>{{$.T "settings.restore_root"}}</dt>
-      <dd>{{if .Deployment.RestoreRoot}}<code>{{.Deployment.RestoreRoot}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+      <dd>{{if not .Deployment.RestoreRoot}}{{$.T "settings.not_configured"}}
+        {{else}}
+          {{if .Deployment.RestoreDisplayRoot}}<code>{{.Deployment.RestoreDisplayRoot}}</code>
+          {{else if not $.ShowPhysical}}<span class="tv-muted">{{$.T "settings.restore_no_display"}}</span>{{end}}
+          {{if $.ShowPhysical}}
+            {{if .Deployment.RestoreDisplayRoot}}<br><span class="tv-muted tv-small">{{$.T "location.on_server"}}: <code>{{.Deployment.RestoreRoot}}</code></span>
+            {{else}}<code>{{.Deployment.RestoreRoot}}</code>{{end}}
+          {{end}}
+        {{end}}</dd></div>
   </dl>
-  <p class="tv-muted tv-small">{{$.T "settings.storage_hint"}}</p>
+  <p class="tv-muted tv-small">{{if $.ShowPhysical}}{{$.T "settings.storage_hint"}}{{else}}{{$.T "settings.restore_hint_user"}}{{end}}</p>
 </section>
 
 <section class="tv-card">
@@ -103,6 +122,7 @@
     <a class="tv-btn tv-btn-small tv-btn-ghost" href="/status">{{$.T "nav.status"}}</a></div>
   <dl class="tv-facts">
     <div><dt>{{$.T "settings.version"}}</dt><dd>v{{.Version}}</dd></div>
+    <div><dt>{{$.T "settings.server_host"}}</dt><dd>{{if .Deployment.ServerHost}}<code>{{.Deployment.ServerHost}}</code>{{else}}{{$.T "settings.host_unset"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.listen"}}</dt><dd><code>{{.Deployment.ListenAddr}}</code></dd></div>
     <div><dt>{{$.T "settings.database"}}</dt><dd><code>{{.Deployment.Database}}</code></dd></div>
     <div><dt>{{$.T "settings.directory"}}</dt><dd>{{if .Deployment.UserDirectory}}<code>{{.Deployment.UserDirectory}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
@@ -110,9 +130,9 @@
     <div><dt>{{$.T "settings.search"}}</dt><dd>{{if .Deployment.SearchHost}}<code>{{.Deployment.SearchHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.session_ttl"}}</dt><dd>{{.Deployment.SessionTTL}}</dd></div>
     <div><dt>{{$.T "settings.secure_cookie"}}</dt><dd>{{if .Deployment.CookieSecure}}{{$.T "settings.yes"}}{{else}}{{$.T "settings.no"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.env_file"}}</dt><dd>{{if .Deployment.EnvFile}}<code>{{.Deployment.EnvFile}}</code>{{else}}{{$.T "settings.none"}}{{end}}</dd></div>
+    {{if $.ShowPhysical}}<div><dt>{{$.T "settings.env_file"}}</dt><dd>{{if .Deployment.EnvFile}}<code>{{.Deployment.EnvFile}}</code>{{else}}{{$.T "settings.none"}}{{end}}</dd></div>{{end}}
   </dl>
-  <p class="tv-muted tv-small">{{$.T "settings.env_hint"}}</p>
+  {{if $.ShowPhysical}}<p class="tv-muted tv-small">{{$.T "settings.env_hint"}}</p>{{end}}
 </section>
 {{end}}
 {{end}}

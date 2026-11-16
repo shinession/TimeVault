@@ -19,7 +19,10 @@
   <div class="tv-card-head">
     <div>
       <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "backups.disabled"}}</span>{{end}}</h2>
-      {{if $.SignedIn}}<p class="tv-muted tv-path"><code>{{.RootPath}}</code></p>{{end}}
+      {{if or .DisplayPath $.ShowPhysical}}<p class="tv-muted tv-path">
+        {{if .DisplayPath}}<code>{{.DisplayPath}}</code>{{end}}
+        {{if $.ShowPhysical}}<span class="tv-small">{{if .DisplayPath}}<br>{{$.T "location.on_server"}}: {{end}}<code>{{.RootPath}}</code></span>{{end}}
+      </p>{{end}}
     </div>
     <div class="tv-actions">
       {{if and $.CanBackup .Enabled}}
@@ -131,7 +134,9 @@
 {{if $.SignedIn}}
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "backups.restore_settings"}}</h2></div>
-  {{if .RestoreEnabled}}<p>{{$.T "backups.restore_root"}}: <code>{{.RestoreRoot}}</code></p>
+  {{if .RestoreEnabled}}<p>{{$.T "backups.restore_root"}}:
+    {{if .RestoreRoot}}<code>{{.RestoreRoot}}</code>{{else}}<span class="tv-muted">{{$.T "settings.restore_no_display"}}</span>{{end}}
+    {{if .RestoreReal}}<span class="tv-muted tv-small">({{$.T "location.on_server"}}: <code>{{.RestoreReal}}</code>)</span>{{end}}</p>
   {{else}}<p class="tv-alert tv-alert-warn">{{$.T "history.restore_disabled"}}</p>{{end}}
   <p class="tv-muted tv-small">{{$.T "backups.restore_hint"}}</p>
 </section>

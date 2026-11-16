@@ -46,9 +46,12 @@
 <section class="tv-card">
   <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "job.restore_details"}}</h2></div>
   <dl class="tv-facts">
-    <div><dt>{{$.T "restore.destination"}}</dt><dd><code>{{.RestoreAt}}\{{.View.Request.DestName}}</code></dd></div>
+    <div><dt>{{$.T "restore.destination"}}</dt><dd><code>{{.Dest}}</code>{{if .DestReal}}<br><span class="tv-muted tv-small">{{$.T "location.on_server"}}: <code>{{.DestReal}}</code></span>{{end}}</dd></div>
     <div><dt>{{$.T "restore.policy"}}</dt><dd>{{$.PolicyLabel (printf "%s" .View.Request.Policy)}}</dd></div>
-    <div><dt>{{$.T "restore.selection"}}</dt><dd>{{range .View.Request.Paths}}<code>/{{.}}</code> {{end}}</dd></div>
+    <div><dt>{{$.T "restore.selection"}}</dt><dd>
+      {{if gt (len .View.Request.Paths) 6}}<details class="tv-selection"><summary>{{$.T "restore.selected_count" (len .View.Request.Paths)}}</summary>
+        <div class="tv-selection-list">{{range .View.Request.Paths}}<code>/{{.}}</code> {{end}}</div></details>
+      {{else}}{{range .View.Request.Paths}}<code>/{{.}}</code> {{end}}{{end}}</dd></div>
   </dl>
 </section>
 

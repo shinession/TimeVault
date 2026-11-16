@@ -20,6 +20,9 @@ type SourceRequest struct {
 	Excludes []string
 	// ScheduleMinutes is the interval between automatic backups; nil means manual only.
 	ScheduleMinutes *int
+	// DisplayPath is the network path users know the folder by, such as \\server\share\folder. Empty means
+	// none, and on an update it removes the current one.
+	DisplayPath string
 }
 
 // Bounds of SourceRequest.ScheduleMinutes; the sources table has the same constraint.
@@ -35,10 +38,41 @@ func invalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrInvalidSource, fmt.Sprintf(format, args...))
 }
 
+// SourceError is a validation failure that the web UI shows in the language of the visitor: Key names the
+// message and Args fill it in, Msg is the same sentence in English for the API and the log. It wraps
+// ErrInvalidSource.
+type SourceError struct {
+	Key  string
+	Args []any
+	Msg  string
+}
+
+func (e *SourceError) Error() string { return "invalid source: " + e.Msg }
+
+func (e *SourceError) Unwrap() error { return ErrInvalidSource }
+
+// ParseDisplayPath validates the display path of a source, the network path users know the folder by, such as
+// \\server\share\folder. A text that is not one gives a *SourceError with the key errors.display_invalid and
+// the text as its argument.
+func ParseDisplayPath(text string) (pathutil.UNC, error) {
+	u, err := pathutil.ParseUNC(text)
+	if err != nil {
+		reason := strings.TrimPrefix(err.Error(), pathutil.ErrInvalidUNC.Error()+": ")
+		return pathutil.UNC{}, &SourceError{
+			Key:  "errors.display_invalid",
+			Args: []any{text},
+			Msg:  `the display path must look like \\server\share\folder: ` + reason,
+		}
+	}
+	return u, nil
+}
+
 // PrepareSource validates a request and returns the record to store. The
 // folder must be a local directory that does not overlap the repository, the
 // restore root or another source, so a backup can never read its own output or
-// record the same files twice.
+// record the same files twice. The display path is optional here and only
+// checked for syntax; whether it is required, and on which server, is a policy
+// of the service.
 func (e *Engine) PrepareSource(ctx context.Context, req SourceRequest, actor string) (catalog.NewSource, error) {
 	return e.prepare(ctx, req, actor, nil)
 }
@@ -47,7 +81,8 @@ func (e *Engine) PrepareSource(ctx context.Context, req SourceRequest, actor str
 // that is the current one, or left empty, is kept without looking at the disk, so
 // a source whose drive is offline can still be renamed or rescheduled. A different
 // folder gets the checks of PrepareSource, except that the source being edited
-// does not count as an overlap.
+// does not count as an overlap. The display path is always replaced, so an empty
+// one removes the current display path.
 func (e *Engine) PrepareSourceUpdate(ctx context.Context, cur catalog.Source, req SourceRequest) (catalog.NewSource, error) {
 	return e.prepare(ctx, req, cur.CreatedBy, &cur)
 }
@@ -62,6 +97,14 @@ func (e *Engine) prepare(ctx context.Context, req SourceRequest, actor string, c
 			return catalog.NewSource{}, invalid("the name contains a control character")
 		}
 	}
+	display := ""
+	if strings.TrimSpace(req.DisplayPath) != "" {
+		u, err := ParseDisplayPath(req.DisplayPath)
+		if err != nil {
+			return catalog.NewSource{}, err
+		}
+		display = u.String()
+	}
 	root, err := e.checkRoot(ctx, req.RootPath, cur)
 	if err != nil {
 		return catalog.NewSource{}, err
@@ -73,7 +116,7 @@ func (e *Engine) prepare(ctx context.Context, req SourceRequest, actor string, c
 	if m := req.ScheduleMinutes; m != nil && (*m < MinScheduleMinutes || *m > MaxScheduleMinutes) {
 		return catalog.NewSource{}, invalid("the schedule must be between %d and %d minutes", MinScheduleMinutes, MaxScheduleMinutes)
 	}
-	return catalog.NewSource{Name: name, RootPath: root, Excludes: excludes, CreatedBy: actor, ScheduleMinutes: req.ScheduleMinutes}, nil
+	return catalog.NewSource{Name: name, RootPath: root, Excludes: excludes, CreatedBy: actor, ScheduleMinutes: req.ScheduleMinutes, DisplayPath: display}, nil
 }
 
 // checkRoot validates the folder of a source and returns it cleaned. cur is the

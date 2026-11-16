@@ -14,8 +14,11 @@
     <div><dt>{{$.T "common.source"}}</dt><dd>{{.Plan.Source.Name}}</dd></div>
     <div><dt>{{$.T "job.point"}}</dt><dd>#{{.Plan.Point.Seq}} · {{$.Time .Plan.Point.CapturedAt}}
       <span class="tv-chip tv-chip-{{.Plan.Point.Verification}}">{{$.VerifyLabel .Plan.Point.Verification}}</span></dd></div>
-    <div><dt>{{$.T "restore.selection"}}</dt><dd>{{range .Paths}}<code>/{{.}}</code> {{end}}</dd></div>
-    <div><dt>{{$.T "restore.destination"}}</dt><dd><code>{{.Plan.DestDir}}</code></dd></div>
+    <div><dt>{{$.T "restore.selection"}}</dt><dd>
+      {{if gt (len .Paths) 6}}<details class="tv-selection"><summary>{{$.T "restore.selected_count" (len .Paths)}}</summary>
+        <div class="tv-selection-list">{{range .Paths}}<code>/{{.}}</code> {{end}}</div></details>
+      {{else}}{{range .Paths}}<code>/{{.}}</code> {{end}}{{end}}</dd></div>
+    <div><dt>{{$.T "restore.destination"}}</dt><dd><code>{{.Dest}}</code>{{if .DestReal}}<br><span class="tv-muted tv-small">{{$.T "location.on_server"}}: <code>{{.DestReal}}</code></span>{{end}}</dd></div>
   </dl>
 </section>
 

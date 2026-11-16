@@ -2,7 +2,7 @@
 
 ## Overview
 
-TimeVault is one Go service, `timevault-server` (`cmd/timevault-server`), that hosts the web UI, the JSON API and the background workers. It keeps history in PostgreSQL and file content in a separate, content-addressed repository folder. It reads source folders; it never changes them. Anyone can browse; company accounts from a Redis user directory sign in to back up, restore or change settings (version 0.1.1; see [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)).
+TimeVault is one Go service, `timevault-server` (`cmd/timevault-server`), that hosts the web UI, the JSON API and the background workers. It keeps history in PostgreSQL and file content in a separate, content-addressed repository folder. It reads source folders; it never changes them. Anyone can browse; company accounts from a Redis user directory sign in to back up, restore or change settings (version 0.1.3; see [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)).
 
 This document describes what is implemented. Items that plan.md describes but TimeVault does not do are listed in [mvp-status.md](./mvp-status.md).
 
@@ -11,20 +11,21 @@ This document describes what is implemented. Items that plan.md describes but Ti
 | Package | Responsibility |
 |---|---|
 | `internal/config` | Reads and validates the `TIMEVAULT_*` settings from the environment and the `.env` file (the environment wins), names the settings of the file that the environment overrides (the start-up log warns about them), and describes the running configuration for the Settings page without secrets. |
-| `internal/db`, `migrations/` | pgx connection pool, the embedded, checksummed SQL migrations (`0001_init`, `0002_schedule`), and the service-wide instance lock. |
-| `internal/pathutil` | Windows-compatible name validation, source-relative path cleaning, case-insensitive containment, and resolution of a path's real location (junctions and links included). |
+| `internal/db`, `migrations/` | pgx connection pool, the embedded, checksummed SQL migrations (`0001_init`, `0002_schedule`, `0003_display_path`), and the service-wide instance lock. |
+| `internal/pathutil` | Windows-compatible name validation, source-relative path cleaning, case-insensitive containment, resolution of a path's real location (junctions and links included), and the parsing of network paths (`ParseUNC`, `\\host\share\folder`). |
 | `internal/platform` | Windows file attributes, disk space, lock detection, real-path resolution and folder flushing behind build tags. |
 | `internal/repository` | Content-addressed object store (whole-file SHA-256), atomic writes, verification. |
-| `internal/catalog` | Monitored folders (sources) with their schedule, recovery points, per-path version history and its queries. |
-| `internal/backup` | Scanner, change detection, content capture, recovery-point state machine, verification, skipping of unchanged automatic runs. |
+| `internal/catalog` | Monitored folders (sources) with their schedule and display folder, recovery points, per-path version history and its queries. |
+| `internal/backup` | Scanner, change detection, content capture, recovery-point state machine, verification, skipping of unchanged automatic runs, validation of monitored folders and their display folders. |
 | `internal/restore` | Dry-run planner, confirmation tokens, staged and verified restore. |
 | `internal/jobs` | Durable job queue in PostgreSQL with workers, progress and a per-job log. |
+| `internal/listing` | The engine of the folder lists: the type of an item, filtering, sorting and paging in memory, and the count of the types of a folder. It knows nothing about where the items come from. |
 | `internal/search` | Search provider interface, Everything HTTP JSON adapter, mock and disabled providers. |
 | `internal/auth` | Identities, roles and permissions; PBKDF2 hash of the optional local administrator; signed session cookies; the `Directory` interface and re-checking of signed-in accounts; CSRF checks; sign-in limits. |
 | `internal/redisuser` | The user directory of another application, read-only from Redis: a restricted pickle decoder, the sign-in adapter (`auth.Directory`) and the `check-redis-users` report. |
 | `internal/audit` | Append-only audit trail. |
-| `internal/service` | Application layer shared by the UI and the API (live browsing, history browsing, jobs, restore, monitored folders, the scheduler, health). |
-| `internal/server`, `web/` | HTTP routing and access control (`open`, `openChecked`, `need`), middleware, server-rendered pages (Go templates), JSON API, embedded assets, EN/中文 messages. |
+| `internal/service` | Application layer shared by the UI and the API (live browsing, history browsing, jobs, restore, monitored folders and their display-folder policy, the scheduler, health, and `PathMap`, which hides the server's real folders in text). |
+| `internal/server`, `web/` | HTTP routing and access control (`open`, `openChecked`, `need`), middleware, server-rendered pages (Go templates), JSON API, embedded assets, EN/中文 messages, the list controls (sort links, type filter, pager) and `visibility.go`, which decides what each kind of visitor sees of the server's folders. |
 
 ## Data flow
 
@@ -32,7 +33,9 @@ This document describes what is implemented. Items that plan.md describes but Ti
 
 **Single instance.** Only one service may run against a database (schema). At start, before it recovers anything, the service takes a PostgreSQL advisory lock on a dedicated connection; a second service stops with "another TimeVault service is already running against this database". Without this, the second service's start-up recovery would mark the first one's running jobs as failed.
 
-**Browse.** The Explorer lists the folder as it is on disk (through `os.Root`, so a crafted path cannot leave the source) and marks each item *protected*, *changed* or *new* by comparing it with the newest committed point. Items that existed at that point but are gone from disk are listed as *deleted since the last backup*. The Time Machine page lists the same folder as it was at any committed point.
+**Browse.** The Explorer lists the folder as it is on disk (through `os.Root`, so a crafted path cannot leave the source) and marks each item *protected*, *changed* or *new* by comparing it with the newest committed point. Items that existed at that point but are gone from disk are listed as *deleted since the last backup*. The Time Machine page lists the same folder as it was at any committed point. Both read **all** the children of the folder (a directory read, or one SQL query without `LIMIT`) and hand them to `internal/listing`, which filters by type, sorts, cuts the requested page and counts the types of the whole folder; the pages and the API use the same call (`Service.ListLive`, `Service.ListHistory`), so they cannot disagree. See [ADR 0008](./adr/0008-folder-lists-are-cut-on-the-server.md). The sort, the type filter and the page are query parameters, so every view has an address that can be shared.
+
+**Display folders.** People reach the folders over the network, so every monitored folder has a display path (`sources.display_path`) and the restore folder a display root (`TIMEVAULT_RESTORE_DISPLAY_ROOT`). `Service.AddSource` and `UpdateSource` apply the policy before the engine looks at the disk: with `TIMEVAULT_SERVER_HOST` set the display path is required and its host must be that one, otherwise it is optional and only its syntax is checked (`backup.SourceError` carries the message key and arguments, so the Settings page can answer in the visitor's language). On every request that has something to show, `internal/server/visibility.go` builds a `viewer` for the account: administrators get texts as they are, everybody else gets them through `service.PathMap` (`Mask`, `MaskValue`), which replaces every real folder of the sources, the repository and the restore folder. See [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md).
 
 **Search.** The search box sends the text to a `search.Provider`. The Everything adapter sanitizes the text, confines the query to the source root, calls the loopback-only HTTP JSON endpoint with a bounded page size and re-checks every result against the root. When the engine is down the page shows a degraded notice; browsing and history keep working.
 
@@ -48,7 +51,7 @@ History uses validity ranges so a recovery point only stores what changed:
 
 | Table | Meaning |
 |---|---|
-| `sources` | Monitored folders: name, folder, exclude patterns, `enabled`, `schedule_minutes` (NULL = manual only, otherwise 1 to 43200) and `last_run_at` (when the last backup run ended). |
+| `sources` | Monitored folders: name, folder (`root_path`), `display_path` (NULL = none; the network path people know it by, at most 520 characters), exclude patterns, `enabled`, `schedule_minutes` (NULL = manual only, otherwise 1 to 43200) and `last_run_at` (when the last backup run ended). |
 | `recovery_points` | One row per backup attempt: sequence number `seq` per source, `state`, `consistency`, counters, manifest digest, `verification`. |
 | `nodes` | One row per path slot, identified by (`parent_id`, exact `name`); `name_key` is the lower-cased name used for sorting and case-insensitive lookup. The root of a source has `parent_id` NULL. |
 | `node_versions` | Each state of a slot: folder or file, size, modification time, attributes, content hash, `state` (`ok` or `skipped` with a reason), valid for the sequence numbers `first_point`..`last_point` (`last_point` NULL while open). |
@@ -105,7 +108,7 @@ Restores only write below `TIMEVAULT_RESTORE_ROOT`, into a folder named by the r
 
 ## 概述
 
-TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），同时承载网页界面、JSON API 和后台任务。历史记录保存在 PostgreSQL 中，文件内容保存在独立的、按内容寻址的仓库文件夹中。它只读取备份源文件夹，绝不修改它们。任何人都可以浏览；来自 Redis 用户目录的公司账号登录后才能备份、恢复或修改设置（0.1.1 版；见 [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)）。
+TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），同时承载网页界面、JSON API 和后台任务。历史记录保存在 PostgreSQL 中，文件内容保存在独立的、按内容寻址的仓库文件夹中。它只读取备份源文件夹，绝不修改它们。任何人都可以浏览；来自 Redis 用户目录的公司账号登录后才能备份、恢复或修改设置（0.1.3 版；见 [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)）。
 
 本文档描述已经实现的内容。plan.md 中提到但 TimeVault 尚未实现的部分，见 [mvp-status.md](./mvp-status.md)。
 
@@ -114,20 +117,21 @@ TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），�
 | 包 | 职责 |
 |---|---|
 | `internal/config` | 从环境变量和 `.env` 文件读取并校验 `TIMEVAULT_*` 设置（环境变量优先），点名文件中被环境变量覆盖的设置（启动日志会就此给出警告），并为设置页描述当前运行的配置（不含机密信息）。 |
-| `internal/db`、`migrations/` | pgx 连接池、内嵌且带校验和的 SQL 迁移（`0001_init`、`0002_schedule`），以及服务级的实例锁。 |
-| `internal/pathutil` | 兼容 Windows 的名称校验、相对路径清理、不区分大小写的包含判断，以及解析路径真实位置（包括联接点和链接）。 |
+| `internal/db`、`migrations/` | pgx 连接池、内嵌且带校验和的 SQL 迁移（`0001_init`、`0002_schedule`、`0003_display_path`），以及服务级的实例锁。 |
+| `internal/pathutil` | 兼容 Windows 的名称校验、相对路径清理、不区分大小写的包含判断、解析路径真实位置（包括联接点和链接），以及网络路径的解析（`ParseUNC`，`\\host\share\folder`）。 |
 | `internal/platform` | 通过 build tag 隔离的 Windows 文件属性、磁盘空间、文件锁检测、真实路径解析和文件夹刷新。 |
 | `internal/repository` | 内容寻址对象存储（整文件 SHA-256），原子写入，校验。 |
-| `internal/catalog` | 监控文件夹（备份源）及其计划、恢复点、按路径的版本历史及其查询。 |
-| `internal/backup` | 扫描器、变更检测、内容采集、恢复点状态机、完整性校验，以及对"无变化的自动备份"的跳过。 |
+| `internal/catalog` | 监控文件夹（备份源）及其计划和显示文件夹、恢复点、按路径的版本历史及其查询。 |
+| `internal/backup` | 扫描器、变更检测、内容采集、恢复点状态机、完整性校验、对"无变化的自动备份"的跳过，以及监控文件夹及其显示文件夹的校验。 |
 | `internal/restore` | 试运行（dry-run）计划、确认令牌、暂存并校验的恢复。 |
 | `internal/jobs` | 存放在 PostgreSQL 中的持久化任务队列，含 worker、进度和任务日志。 |
+| `internal/listing` | 文件夹列表的引擎：项目的类型、在内存中筛选、排序和分页，以及统计文件夹中各类型的数量。它不关心项目从哪里来。 |
 | `internal/search` | 搜索提供者接口、Everything HTTP JSON 适配器、mock 与禁用提供者。 |
 | `internal/auth` | 身份、角色和权限；可选的本地管理员的 PBKDF2 哈希；签名会话 Cookie；`Directory` 接口以及对已登录账号的重新检查；CSRF 校验；登录限制。 |
 | `internal/redisuser` | 另一个应用的用户目录，只读地从 Redis 读取：受限的 pickle 解码器、登录适配器（`auth.Directory`）和 `check-redis-users` 报告。 |
 | `internal/audit` | 只追加的审计记录。 |
-| `internal/service` | 界面与 API 共用的应用层（实时浏览、历史浏览、任务、恢复、监控文件夹、调度器、健康状态）。 |
-| `internal/server`、`web/` | HTTP 路由与访问控制（`open`、`openChecked`、`need`）、中间件、服务端渲染页面（Go 模板）、JSON API、内嵌静态资源、EN/中文文案。 |
+| `internal/service` | 界面与 API 共用的应用层（实时浏览、历史浏览、任务、恢复、监控文件夹及其显示文件夹策略、调度器、健康状态，以及在文本中隐藏服务器真实文件夹的 `PathMap`）。 |
+| `internal/server`、`web/` | HTTP 路由与访问控制（`open`、`openChecked`、`need`）、中间件、服务端渲染页面（Go 模板）、JSON API、内嵌静态资源、EN/中文文案、列表控件（排序链接、类型筛选、分页）以及 `visibility.go`（决定每一类访问者能看到服务器上的哪些文件夹）。 |
 
 ## 数据流
 
@@ -135,7 +139,9 @@ TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），�
 
 **单实例。** 同一个数据库（schema）只能运行一个服务。启动时，在做任何恢复之前，服务会在一个专用连接上获取 PostgreSQL advisory 锁；第二个服务会以"another TimeVault service is already running against this database"退出。否则，第二个服务启动时的恢复会把第一个服务正在运行的任务标记为失败。
 
-**浏览。** 文件浏览页通过 `os.Root` 列出磁盘上当前的文件夹（精心构造的路径无法跳出备份源），并与最新已提交的恢复点对比，把每一项标记为*已保护*、*已变更*或*新增*。在该恢复点存在、但磁盘上已经没有的项目，会列为*自上次备份以来已删除*。时间机器页面则列出同一文件夹在任意已提交恢复点时的样子。
+**浏览。** 文件浏览页通过 `os.Root` 列出磁盘上当前的文件夹（精心构造的路径无法跳出备份源），并与最新已提交的恢复点对比，把每一项标记为*已保护*、*已变更*或*新增*。在该恢复点存在、但磁盘上已经没有的项目，会列为*自上次备份以来已删除*。时间机器页面则列出同一文件夹在任意已提交恢复点时的样子。两者都会读取文件夹的**全部**子项（一次目录读取，或一条没有 `LIMIT` 的 SQL 查询），再交给 `internal/listing`，由它按类型筛选、排序、截取请求的那一页，并统计整个文件夹中各类型的数量；页面和 API 使用同一个调用（`Service.ListLive`、`Service.ListHistory`），所以它们不会不一致。见 [ADR 0008](./adr/0008-folder-lists-are-cut-on-the-server.md)。排序、类型筛选和页码都是查询参数，所以每个视图都有可以分享的地址。
+
+**显示文件夹。** 人们通过网络访问文件夹，所以每个监控文件夹都有一个显示路径（`sources.display_path`），恢复文件夹有一个显示根路径（`TIMEVAULT_RESTORE_DISPLAY_ROOT`）。`Service.AddSource` 和 `UpdateSource` 在引擎查看磁盘之前先应用这套策略：设置了 `TIMEVAULT_SERVER_HOST` 时显示路径是必填的，并且它的主机必须是该主机，否则它是可选的，只检查语法（`backup.SourceError` 携带消息键和参数，所以设置页可以用访问者的语言回答）。每个有内容要显示的请求，`internal/server/visibility.go` 都会为该账号构建一个 `viewer`：管理员得到原样的文本，其他人得到经过 `service.PathMap`（`Mask`、`MaskValue`）处理的文本，它会替换备份源、仓库和恢复文件夹的每一个真实文件夹。见 [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md)。
 
 **搜索。** 搜索框把文本交给 `search.Provider`。Everything 适配器会清理文本、把查询限定在备份源根目录内、以受限的页大小调用仅限本机回环的 HTTP JSON 接口，并对每个结果再次检查是否位于根目录内。搜索引擎不可用时，页面显示降级提示；浏览和历史功能不受影响。
 
@@ -151,7 +157,7 @@ TimeVault 是一个 Go 服务 `timevault-server`（`cmd/timevault-server`），�
 
 | 表 | 含义 |
 |---|---|
-| `sources` | 监控文件夹：名称、文件夹、排除规则、`enabled`、`schedule_minutes`（NULL 表示仅手动，否则为 1 到 43200）和 `last_run_at`（上一次备份运行结束的时间）。 |
+| `sources` | 监控文件夹：名称、文件夹（`root_path`）、`display_path`（NULL 表示没有；人们所知的网络路径，最多 520 个字符）、排除规则、`enabled`、`schedule_minutes`（NULL 表示仅手动，否则为 1 到 43200）和 `last_run_at`（上一次备份运行结束的时间）。 |
 | `recovery_points` | 每次备份尝试一行：每个备份源内的序号 `seq`、`state`、`consistency`、计数器、清单摘要、`verification`。 |
 | `nodes` | 每个路径位置一行，由（`parent_id`，精确 `name`）标识；`name_key` 是小写化的名称，用于排序和不区分大小写的查找。备份源的根节点 `parent_id` 为 NULL。 |
 | `node_versions` | 路径位置经历的每个状态：文件夹或文件、大小、修改时间、属性、内容哈希、`state`（`ok`，或带原因的 `skipped`），在序号 `first_point`..`last_point` 之间有效（仍然有效时 `last_point` 为 NULL）。 |

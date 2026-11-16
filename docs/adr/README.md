@@ -2,7 +2,7 @@
 
 ## Architecture decision records
 
-Decisions that shape TimeVault, with their alternatives and consequences. Each file is bilingual (English first, then Simplified Chinese). plan.md P0 asks for ADRs on snapshot semantics, the data model, the content object format and the service privilege boundary; the table says where each is covered. 0005 and 0006 were added for version 0.1.1.
+Decisions that shape TimeVault, with their alternatives and consequences. Each file is bilingual (English first, then Simplified Chinese). plan.md P0 asks for ADRs on snapshot semantics, the data model, the content object format and the service privilege boundary; the table says where each is covered. 0005 and 0006 were added for version 0.1.1, 0007 and 0008 for version 0.1.3.
 
 | ADR | Decision | Covers (plan.md P0) |
 |---|---|---|
@@ -12,6 +12,8 @@ Decisions that shape TimeVault, with their alternatives and consequences. Each f
 | [0004](./0004-restore-safety-and-privileges.md) | Restore only below the restore root, with preview, token and confinement; single unprivileged process | Service privilege boundary; restore safety |
 | [0005](./0005-redis-user-directory-and-open-browsing.md) | Anyone can browse; company accounts from the Redis user directory sign in to do anything else; roles `user` and `admin` (a deliberate exception to plan.md's "no Redis") | Role model (first version) |
 | [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) | Deployment settings in `.env` or the environment, monitored folders in the database, automatic backups every N minutes that record nothing when nothing changed | Configuration; scheduling (first version) |
+| [0007](./0007-display-folders-and-hiding-server-paths.md) | Monitored folders have a display folder (the network path people use); only administrators see the real folders of the server, and texts that quote them are rewritten for everybody else; `TIMEVAULT_SERVER_HOST` makes the display folder mandatory and checks its host | Role model (what each role sees) |
+| [0008](./0008-folder-lists-are-cut-on-the-server.md) | Folder lists are filtered by type, sorted and cut into pages on the server by one engine, for the pages and the API alike | Browsing and search UX |
 
 Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, chunking and packs, retention and garbage collection, per-source permissions, Windows SSO.
 
@@ -21,7 +23,7 @@ Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, ch
 
 ## 架构决策记录
 
-塑造 TimeVault 的各项决定，包括备选方案和影响。每个文件都是双语的（先英文，后简体中文）。plan.md P0 要求为快照语义、数据模型、内容对象格式和服务权限边界编写 ADR；下表说明各项分别在哪里覆盖。0005 和 0006 是为 0.1.1 版本新增的。
+塑造 TimeVault 的各项决定，包括备选方案和影响。每个文件都是双语的（先英文，后简体中文）。plan.md P0 要求为快照语义、数据模型、内容对象格式和服务权限边界编写 ADR；下表说明各项分别在哪里覆盖。0005 和 0006 是为 0.1.1 版本新增的，0007 和 0008 是为 0.1.3 版本新增的。
 
 | ADR | 决定 | 覆盖的内容（plan.md P0） |
 |---|---|---|
@@ -31,5 +33,7 @@ Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, ch
 | [0004](./0004-restore-safety-and-privileges.md) | 只恢复到恢复根目录之下，需要预览、令牌和约束；单个非特权进程 | 服务权限边界；恢复安全 |
 | [0005](./0005-redis-user-directory-and-open-browsing.md) | 任何人都可以浏览；其他操作需要用 Redis 用户目录中的公司账号登录；角色为 `user` 和 `admin`（有意偏离 plan.md 的"不引入 Redis"） | 角色模型（第一版） |
 | [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) | 部署设置放在 `.env` 或环境变量中，监控文件夹放在数据库中，每 N 分钟自动备份，没有变化时不记录任何内容 | 配置；计划任务（第一版） |
+| [0007](./0007-display-folders-and-hiding-server-paths.md) | 监控文件夹有显示文件夹（人们使用的网络路径）；只有管理员能看到服务器上的真实文件夹，引用它们的文本会为其他人改写；`TIMEVAULT_SERVER_HOST` 让显示文件夹成为必填并检查它的主机 | 角色模型（各角色能看到什么） |
+| [0008](./0008-folder-lists-are-cut-on-the-server.md) | 文件夹列表由一个引擎在服务器上按类型筛选、排序并切分成页，页面和 API 一致 | 浏览与搜索体验 |
 
 尚未决定的内容（因为没有做验证）：VSS 的使用、USN 检查点、分块与 Pack、保留策略与垃圾回收、按备份源的权限、Windows SSO。

@@ -37,17 +37,18 @@ func nextRun(src catalog.Source, now time.Time) *time.Time {
 
 // settingsForm holds the fields of a monitored folder as typed, so a rejected form can be shown back unchanged.
 type settingsForm struct {
-	Name      string
-	RootPath  string
-	Excludes  string
-	Enabled   bool
-	Scheduled bool
-	Minutes   string
+	Name        string
+	DisplayPath string
+	RootPath    string
+	Excludes    string
+	Enabled     bool
+	Scheduled   bool
+	Minutes     string
 }
 
 func formOf(src catalog.Source) settingsForm {
 	f := settingsForm{
-		Name: src.Name, RootPath: src.RootPath, Excludes: strings.Join(src.Excludes, "\n"),
+		Name: src.Name, DisplayPath: src.DisplayPath, RootPath: src.RootPath, Excludes: strings.Join(src.Excludes, "\n"),
 		Enabled: src.Enabled, Minutes: strconv.Itoa(defaultScheduleMinutes),
 	}
 	if src.ScheduleMinutes != nil {
@@ -58,11 +59,13 @@ func formOf(src catalog.Source) settingsForm {
 
 func parseSourceForm(r *http.Request) (settingsForm, backup.SourceRequest, error) {
 	f := settingsForm{
-		Name: r.PostFormValue("name"), RootPath: r.PostFormValue("root_path"), Excludes: r.PostFormValue("excludes"),
-		Enabled: r.PostFormValue("enabled") != "", Scheduled: r.PostFormValue("schedule") != "",
+		Name: r.PostFormValue("name"), DisplayPath: r.PostFormValue("display_path"), RootPath: r.PostFormValue("root_path"),
+		Excludes: r.PostFormValue("excludes"), Enabled: r.PostFormValue("enabled") != "", Scheduled: r.PostFormValue("schedule") != "",
 		Minutes: strings.TrimSpace(r.PostFormValue("schedule_minutes")),
 	}
-	req := backup.SourceRequest{Name: f.Name, RootPath: f.RootPath, Excludes: strings.Split(strings.ReplaceAll(f.Excludes, "\r", ""), "\n")}
+	req := backup.SourceRequest{
+		Name: f.Name, DisplayPath: f.DisplayPath, RootPath: f.RootPath, Excludes: strings.Split(strings.ReplaceAll(f.Excludes, "\r", ""), "\n"),
+	}
 	if f.Scheduled {
 		n, err := strconv.Atoi(f.Minutes)
 		if err != nil {
@@ -108,8 +111,9 @@ type settingsFailure struct {
 	editError string
 }
 
-func (s *Server) settingsData(r *http.Request, fail settingsFailure) (*settingsData, error) {
+func (s *Server) settingsData(r *http.Request, sess auth.Session, fail settingsFailure) (*settingsData, error) {
 	ctx := r.Context()
+	view := s.viewerFor(ctx, sess)
 	sources, err := s.svc.Sources(ctx)
 	if err != nil {
 		return nil, err
@@ -140,6 +144,7 @@ func (s *Server) settingsData(r *http.Request, fail settingsFailure) (*settingsD
 			continue
 		}
 		d.Repository = c
+		d.Repository.Detail = view.text(c.Detail)
 		if c.Key == "repo_free" && len(c.Args) == 2 {
 			if free, ok := c.Args[1].(int); ok {
 				d.RepoFreePct = free
@@ -150,7 +155,7 @@ func (s *Server) settingsData(r *http.Request, fail settingsFailure) (*settingsD
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	d, err := s.settingsData(r, settingsFailure{})
+	d, err := s.settingsData(r, sess, settingsFailure{})
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -169,9 +174,12 @@ func (s *Server) settingsRejected(w http.ResponseWriter, r *http.Request, sess a
 	}
 	p := s.newPage(r, sess, "settings.title", "settings")
 	msg := err.Error()
+	var invalid *backup.SourceError
 	switch {
 	case errors.Is(err, errBadMinutes):
 		msg = p.T("settings.minutes_error")
+	case errors.As(err, &invalid) && messageExists(invalid.Key):
+		msg = p.T(invalid.Key, invalid.Args...)
 	case key != "" && !errors.Is(err, backup.ErrInvalidSource):
 		msg = p.T(key)
 	}
@@ -180,7 +188,7 @@ func (s *Server) settingsRejected(w http.ResponseWriter, r *http.Request, sess a
 	} else {
 		fail.editError = msg
 	}
-	d, derr := s.settingsData(r, fail)
+	d, derr := s.settingsData(r, sess, fail)
 	if derr != nil {
 		s.handleErr(w, r, derr)
 		return

@@ -31,7 +31,7 @@ A restore writes to a computer's file system, from a catalog whose names came fr
 - A restore can never destroy source data, which keeps the first version safe, but "restore in place" is a manual copy.
 - NTFS ACLs, owners, alternate data streams and hard links are not recreated.
 - The preview must be repeated whenever the situation changes, which is intended.
-- Limits: a restore can select at most 50 paths and plan at most 2,000,000 items.
+- Limits: a restore can select at most 500 paths (50 up to 0.1.2; 500 is the largest page of a folder list) and plan at most 2,000,000 items.
 
 ---
 
@@ -68,4 +68,4 @@ A restore writes to a computer's file system, from a catalog whose names came fr
 - 恢复永远不会破坏源数据，这使第一个版本是安全的，但"原位置恢复"是手动复制。
 - 不会重建 NTFS ACL、所有者、备用数据流和硬链接。
 - 每当情况发生变化都必须重新预览，这是有意为之。
-- 限制：一次恢复最多可选择 50 个路径，最多规划 2,000,000 个条目。
+- 限制：一次恢复最多可选择 500 个路径（到 0.1.2 为止是 50；500 是文件夹列表最大的一页），最多规划 2,000,000 个条目。

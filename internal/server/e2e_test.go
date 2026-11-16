@@ -89,17 +89,29 @@ func (s *swappable) Search(ctx context.Context, q search.Query) (search.Page, er
 }
 func (s *swappable) Health(ctx context.Context) search.Health { return s.current().Health(ctx) }
 
-func newHarness(t *testing.T) *harness {
+func newHarness(t *testing.T) *harness { return newHarnessWith(t, nil) }
+
+// newHarnessWith builds the server of the tests; tune, when given, may change the service configuration and the
+// deployment before they are used.
+func newHarnessWith(t *testing.T, tune func(*service.Config, *config.Deployment)) *harness {
 	t.Helper()
 	env := testenv.New(t)
 	log := slog.New(slog.DiscardHandler)
 	runner := jobs.NewRunner(env.Pool, log, 2)
 	provider := &swappable{p: search.NewDisabled()}
 	dir, clock := newFakeDirectory(), &testClock{now: time.Now()}
-	svc := service.New(service.Config{
+	cfg := service.Config{
 		Pool: env.Pool, Catalog: env.Cat, Repo: env.Repo, Engine: env.Eng, Restore: env.Restore,
 		Jobs: runner, Audit: audit.New(env.Pool, log), Search: provider, Logger: log, Directory: dir,
-	})
+	}
+	deployment := config.Deployment{
+		ListenAddr: "127.0.0.1:8660", Database: "db.test:5432/TimeVault", UserDirectory: dir.Addr() + "/0",
+		RepositoryPath: env.Repo.Root(), RestoreRoot: env.RestoreRoot, EnvFile: "test.env", LocalAdmin: "admin", SessionTTL: time.Hour,
+	}
+	if tune != nil {
+		tune(&cfg, &deployment)
+	}
+	svc := service.New(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
 	runner.Start(ctx)
 	t.Cleanup(func() {
@@ -114,10 +126,6 @@ func newHarness(t *testing.T) *harness {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	deployment := config.Deployment{
-		ListenAddr: "127.0.0.1:8660", Database: "db.test:5432/TimeVault", UserDirectory: dir.Addr() + "/0",
-		RepositoryPath: env.Repo.Root(), RestoreRoot: env.RestoreRoot, EnvFile: "test.env", LocalAdmin: "admin", SessionTTL: time.Hour,
 	}
 	s, err := server.New(svc, am, web.FS, server.Options{Version: "test", Location: time.UTC, Deployment: deployment}, log)
 	if err != nil {

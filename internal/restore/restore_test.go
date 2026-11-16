@@ -3,6 +3,7 @@ package restore_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -371,7 +372,7 @@ func TestRequestValidation(t *testing.T) {
 		"overlapping whole":     func(r *restore.Request) { r.Paths = []string{"", "a.txt"} },
 		"duplicate":             func(r *restore.Request) { r.Paths = []string{"a.txt", "a.txt"} },
 		"nothing selected":      func(r *restore.Request) { r.Paths = nil },
-		"too many":              func(r *restore.Request) { r.Paths = make([]string, 51) },
+		"too many":              func(r *restore.Request) { r.Paths = make([]string, 501) },
 		"same base name":        func(r *restore.Request) { r.Paths = []string{"docs/b.txt", "empty-ish/b.txt"} },
 		"unknown point":         func(r *restore.Request) { r.PointID = 999999 },
 	}
@@ -415,6 +416,26 @@ func TestRequestValidation(t *testing.T) {
 	}
 	if _, err := e.Restore.Preview(ctx, good); !errors.Is(err, restore.ErrNotRestorable) {
 		t.Fatalf("failed point = %v, want ErrNotRestorable", err)
+	}
+}
+
+// A full page of a folder listing (500 items) must be restorable in one go.
+func TestAFullPageOfSelectedItemsCanBeRestored(t *testing.T) {
+	e := testenv.New(t)
+	const n = 500
+	paths := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("bulk/f%03d.txt", i)
+		e.Write(name, "x")
+		paths = append(paths, name)
+	}
+	p := e.Backup()
+	plan, err := e.Restore.Preview(ctx, req(e, p, "page", paths...))
+	if err != nil {
+		t.Fatalf("Preview of %d items: %v", n, err)
+	}
+	if plan.Totals.Files != n || plan.Totals.Create != n || plan.Totals.Blocked != 0 {
+		t.Fatalf("totals = %+v", plan.Totals)
 	}
 }
 

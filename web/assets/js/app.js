@@ -88,65 +88,6 @@
 
   /* ---------- list helpers ---------- */
 
-  function loadMore(link) {
-    link.classList.add('is-busy');
-    fetchPartial(link.href).then(function (r) {
-      if (!r) { return; }
-      var doc = new DOMParser().parseFromString(r.html, 'text/html');
-      var incoming = doc.getElementById('list-rows');
-      var target = document.getElementById('list-rows');
-      if (incoming && target) {
-        while (incoming.firstChild) { target.appendChild(incoming.firstChild); }
-      }
-      var next = doc.querySelector('a[data-load-more]');
-      if (next) { link.setAttribute('href', next.getAttribute('href')); link.classList.remove('is-busy'); } else { link.remove(); }
-      var list = target && target.closest('[data-sortable]');
-      if (list) { sortRows(list); }
-      var form = target && target.closest('form[data-selection-form]');
-      if (form) { form.dispatchEvent(new Event('change', { bubbles: true })); }
-    }).catch(function () { window.location.assign(link.href); });
-  }
-
-  function sortRows(list, key, dir) {
-    var host = list.querySelector('#list-rows');
-    if (!host) { return; }
-    key = key || list.getAttribute('data-sort-key') || 'name';
-    dir = dir || Number(list.getAttribute('data-sort-dir')) || 1;
-    list.setAttribute('data-sort-key', key);
-    list.setAttribute('data-sort-dir', String(dir));
-    var rows = Array.prototype.slice.call(host.children);
-    rows.sort(function (a, b) {
-      var da = a.getAttribute('data-dir') === '1';
-      var db = b.getAttribute('data-dir') === '1';
-      if (da !== db) { return da ? -1 : 1; }
-      var va = a.getAttribute('data-' + key) || '';
-      var vb = b.getAttribute('data-' + key) || '';
-      var cmp;
-      if (key === 'name') { cmp = va.localeCompare(vb, undefined, { numeric: true, sensitivity: 'base' }); }
-      else { cmp = (Number(va) || 0) - (Number(vb) || 0); }
-      return cmp * dir;
-    });
-    rows.forEach(function (row) { host.appendChild(row); });
-    list.querySelectorAll('[data-sort]').forEach(function (btn) {
-      if (btn.getAttribute('data-sort') === key) { btn.setAttribute('aria-sort', dir === 1 ? 'ascending' : 'descending'); }
-      else { btn.removeAttribute('aria-sort'); }
-    });
-  }
-
-  function initSortable(root) {
-    root.querySelectorAll('[data-sortable]').forEach(function (list) {
-      sortRows(list, 'name', 1);
-      list.querySelectorAll('[data-sort]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-          var key = btn.getAttribute('data-sort');
-          var same = list.getAttribute('data-sort-key') === key;
-          var dir = same ? -Number(list.getAttribute('data-sort-dir')) : 1;
-          sortRows(list, key, dir);
-        });
-      });
-    });
-  }
-
   function initSelection(root) {
     root.querySelectorAll('form[data-selection-form]').forEach(function (form) {
       var all = form.querySelector('[data-select-all]');
@@ -168,8 +109,7 @@
         });
       }
       form.addEventListener('change', function (e) {
-        // loadMore() dispatches a synthetic change on the form itself after it appends rows.
-        if (e.target === form || (e.target && e.target.matches && e.target.matches('[data-select-item]'))) { update(); }
+        if (e.target && e.target.matches && e.target.matches('[data-select-item]')) { update(); }
       });
       update();
     });
@@ -221,12 +161,88 @@
     jobTimer = setTimeout(tick, reload ? 1500 : 1000);
   }
 
+  /* ---------- jump to top / bottom of a long page ---------- */
+
+  var fab = document.querySelector('[data-fab]');
+  var fabTop = fab && fab.querySelector('[data-fab-top]');
+  var fabBottom = fab && fab.querySelector('[data-fab-bottom]');
+  var fabFrame = 0;
+
+  // The buttons only appear when the page is clearly longer than the window, and each one only when
+  // there is something to jump to.
+  function updateFab() {
+    fabFrame = 0;
+    if (!fab) { return; }
+    var doc = document.documentElement;
+    var room = doc.scrollHeight - window.innerHeight;
+    var y = window.scrollY;
+    var longPage = room > 600;
+    fabTop.hidden = !(longPage && y > 300);
+    fabBottom.hidden = !(longPage && y < room - 300);
+    fab.hidden = fabTop.hidden && fabBottom.hidden;
+  }
+
+  function scheduleFab() {
+    if (!fabFrame) { fabFrame = window.requestAnimationFrame(updateFab); }
+  }
+
+  function scrollPage(toBottom) {
+    var target = toBottom ? document.documentElement.scrollHeight : 0;
+    var calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // A long page would scroll for ages; the point of the buttons is to get there at once.
+    var far = Math.abs(target - window.scrollY) > 3 * window.innerHeight;
+    window.scrollTo({ top: target, behavior: calm || far ? 'auto' : 'smooth' });
+  }
+
+  function initFab() {
+    if (!fab) { return; }
+    fabTop.addEventListener('click', function () { scrollPage(false); });
+    fabBottom.addEventListener('click', function () { scrollPage(true); });
+    window.addEventListener('scroll', scheduleFab, { passive: true });
+    window.addEventListener('resize', scheduleFab);
+    if (window.ResizeObserver) { new ResizeObserver(scheduleFab).observe(content); }
+    scheduleFab();
+  }
+
+  /* ---------- copy a path ---------- */
+
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) { return navigator.clipboard.writeText(text); }
+    // Plain HTTP on the network is not a secure context, so the clipboard API is not offered there.
+    return new Promise(function (resolve, reject) {
+      var box = document.createElement('textarea');
+      box.value = text;
+      box.setAttribute('readonly', '');
+      box.style.position = 'fixed';
+      box.style.opacity = '0';
+      document.body.appendChild(box);
+      box.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      document.body.removeChild(box);
+      if (ok) { resolve(); } else { reject(new Error('copy failed')); }
+    });
+  }
+
+  function copyFrom(button) {
+    var label = button.querySelector('[data-copy-label]');
+    var before = label ? label.textContent : '';
+    copyText(button.getAttribute('data-copy')).then(function () {
+      button.classList.add('is-copied');
+      if (label) { label.textContent = button.getAttribute('data-copied') || before; }
+      setTimeout(function () {
+        button.classList.remove('is-copied');
+        if (label) { label.textContent = before; }
+      }, 1600);
+    }).catch(function () { /* the path stays selectable in the page */ });
+  }
+
   function init(root) {
-    initSortable(root);
     initSelection(root);
     initAutosubmit(root);
     initTimeline(root);
     initJobs(root);
+    scheduleFab();
   }
 
   /* ---------- events ---------- */
@@ -235,9 +251,9 @@
     var t = e.target;
     if (!t || !t.closest) { return; }
     if (t.closest('[data-theme-toggle]')) { toggleTheme(); return; }
+    var copy = t.closest('[data-copy]');
+    if (copy) { copyFrom(copy); return; }
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) { return; }
-    var more = t.closest('a[data-load-more]');
-    if (more) { e.preventDefault(); loadMore(more); return; }
     var a = t.closest('a[href]');
     if (!a || skipBoost(a)) { return; }
     var u = new URL(a.href, window.location.href);
@@ -272,4 +288,5 @@
   });
 
   init(content);
+  initFab();
 })();

@@ -41,6 +41,10 @@ type Page struct {
 	AuthDisabled bool
 	// RequestURI is where the language links return to; it must be reachable with a GET.
 	RequestURI string
+	// Location is the folder or file the page shows, the way people reach it over the network (its display folder).
+	Location string
+	// LocationReal is the same place on the server's own disk; only administrators get it.
+	LocationReal string
 
 	loc  *Locale
 	tz   *time.Location
@@ -54,6 +58,10 @@ func (p *Page) CanBackup() bool  { return p.sess.Can(auth.PermBackup) }
 func (p *Page) CanRestore() bool { return p.sess.Can(auth.PermRestore) }
 func (p *Page) CanAudit() bool   { return p.sess.Can(auth.PermAudit) }
 func (p *Page) CanManage() bool  { return p.sess.Can(auth.PermManage) }
+
+// ShowPhysical reports whether the visitor may see the folders of the server's own disk. Everybody else sees the
+// display folders, the paths people use over the network.
+func (p *Page) ShowPhysical() bool { return p.sess.Can(auth.PermManage) }
 
 // T translates a message key; extra arguments are formatted into it.
 func (p *Page) T(key string, args ...any) string { return p.loc.T(key, args...) }

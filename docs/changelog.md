@@ -2,11 +2,52 @@
 
 ## Overview
 
-What changed in each version of TimeVault, and what to do when upgrading. The newest comes first. 0.1.1 is the latest version that has a number; the section above it holds what changed since.
+What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
-## Unreleased (after 0.1.1)
+## 0.1.3
 
-One settings file for the development setup, a warning when the environment overrides it, and a clearer Settings page. It has no version number yet.
+Lists you can sort, filter and page, a Type column, display folders for the monitored folders, and no more real folders of the server for anyone but administrators. The reasons are in [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md) and [ADR 0008](./adr/0008-folder-lists-are-cut-on-the-server.md).
+
+### Added
+
+- **A Type column and a type filter** on the Explorer, the Time Machine and the search results. The type is the extension in capitals (`PDF`, `XLSX`), "Folder", "Link" for junctions and symbolic links, and "File" for a file without an extension. The filter lists what the folder holds with a count (`PDF (40)`) and offers "Folders" and "Files" as a whole.
+- **Sorting by name, type, size or modified time, in both directions, over the whole folder.** Before, only the rows that had been loaded were sorted, in the browser. Folders always come first.
+- **Pages instead of "Load more".** 100 items a page by default (50, 100, 200 or 500 can be chosen, 50, 100 or 200 for search results) with previous/next links and page numbers above and below the list, and a count ("Showing 101–200 of 10,000"). Sort, filter and page size are in the address, so a link keeps them, and changing the filter or the page size starts again at page 1. A folder of 10,000 files opens in about 0.1 s and one of 50,000 in about 0.5 s on the development machine. "Select all" selects the items of the current page.
+- **Buttons that jump to the top and to the bottom of the page**, on every page that is long enough to need them.
+- **Display folders.** A monitored folder can have a display folder, the network path people open it with, such as `\\sgmeslt595.co.murata.local\TimeVault\monitor` for `D:\TimeVault\monitor`. Administrators enter it on the Settings page (new field "Display folder"; the real folder is now called "Folder on the server") or with `display_path` in `POST` and `PATCH /api/v1/sources`. It can be changed at any time, also when the folder has backups.
+- **`TIMEVAULT_SERVER_HOST`**, the name of this server as people type it in network paths. When it is set, a display folder is **required** for every monitored folder and its host must be this one (case does not matter; it is stored the way the setting spells it). A folder on another server is refused, because this server's search and restore only work with its own folders. When it is not set, a display folder is optional and only its syntax is checked.
+- **`TIMEVAULT_RESTORE_DISPLAY_ROOT`**, the restore folder as people reach it over the network (`\\sgmeslt595.co.murata.local\TimeVault\restore`). It must be on `TIMEVAULT_SERVER_HOST`.
+- **A "Location" line with a Copy button** on the Explorer, the Time Machine and the page of a file's versions: the display folder of what is on screen. Administrators also see the real folder there.
+- Migration `0003_display_path.sql` (`sources.display_path`), `server_host` and `restore_display_root` in `GET /api/v1/settings`, and the list parameters of the API (see [api.md](./api.md)).
+
+### Changed
+
+- **Only administrators see the folders of the server's disk.** Everybody else, signed in or not, sees display folders: on the Explorer, the Time Machine, versions, Backups, Settings, restore previews and restore jobs. The backup folder (the repository) is not named for them; the Settings and Status pages only say how full it is. Texts that quote a real folder are rewritten for them: job errors and logs, restore item messages, the reasons a file was not captured, audit details and component details. A folder with a display folder becomes its display path, a folder without one becomes `[<name of the monitored folder>]`, the backup folder `[backup folder]` and the restore folder its display root or `[restore folder]`.
+- `GET /api/v1/sources` returns `root_path` to administrators only (every signed-in account got it before) and `display_path` to everybody. `GET /api/v1/settings` returns `repository`, `restore_root` and `env_file` to administrators only. The `destination` of a restore preview is the display path; administrators also get `destination_real`.
+- **A restore can select up to 500 paths** (it was 50), so that "Select all" on a page of 500 works.
+- The Settings page for accounts that are not administrators no longer shows the repository folder, the real restore folder and the settings file.
+- The deleted-items panel of the Explorer appears on the first page of a folder only, and follows the type filter.
+- A long restore selection is folded into "N items selected" on the preview and job pages.
+- `scripts\dev-demo.ps1` gives the demo folder a made-up display folder when `TIMEVAULT_SERVER_HOST` is set. `scripts\dotenv.ps1` and the `.env` template know the two new settings.
+
+### Upgrade notes
+
+1. **Database.** Apply migration `0003` (`TIMEVAULT_AUTO_MIGRATE=true`, or `timevault-server migrate`). It adds one nullable column; the previous version keeps working against the migrated database.
+2. **Settings.** Add `TIMEVAULT_SERVER_HOST` and `TIMEVAULT_RESTORE_DISPLAY_ROOT` to `.env` (see [configs/timevault.example.env](../configs/timevault.example.env)). The service refuses to start when the restore display root is not a network path or is on another host.
+3. **Existing monitored folders have no display folder.** With `TIMEVAULT_SERVER_HOST` set, an administrator has to give each of them one on the Settings page before it can be edited again (the Settings page marks them "No display folder yet"). Browsing, backups, automatic schedules and restores keep working meanwhile. Ordinary accounts see no location for such a folder, and `[<name>]` in texts that quote it.
+4. **API callers.** Anyone who read `root_path` as an ordinary account has to use `display_path`, or an administrator account. `GET /api/v1/files` and `GET /api/v1/history/tree` behave as before unless they are given a new parameter; `files` now also returns `unfiltered`, `types` and a `type` for every entry, and its `total` counts the items that match the filter.
+5. **Search (Everything).** Nothing changed in the service. To turn it on for an Everything you already run, see [runbook.md](./runbook.md#everything-search).
+
+### Known limits
+
+- The service checks the host of a display folder, not that the share really leads to the monitored folder. A wrong share name shows people a path that does not exist.
+- Hiding the real folders works on text: a folder written in an unusual way (a short 8.3 name, a drive letter that is another name for the same disk) is not recognised.
+- The deleted-items panel shows at most 500 items, on the first page only.
+- Every page of a list reads the whole folder, so a folder with hundreds of thousands of entries takes seconds to open.
+
+## 0.1.2
+
+One settings file for the development setup, a warning when the environment overrides it, and a clearer Settings page.
 
 ### Changed
 
@@ -93,11 +134,52 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 
 ## 概述
 
-TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。0.1.1 是最新的有版本号的版本；它上面的小节记录的是之后的改动。
+TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
 
-## 未发布（0.1.1 之后）
+## 0.1.3
 
-开发环境只用一个设置文件；环境变量覆盖了它时会给出警告；设置页的说明更清楚。它还没有版本号。
+可以排序、筛选和分页的列表，类型列，监控文件夹的显示文件夹，以及除管理员之外任何人都看不到服务器上的真实文件夹。原因见 [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md) 和 [ADR 0008](./adr/0008-folder-lists-are-cut-on-the-server.md)。
+
+### 新增
+
+- **类型列和类型筛选**，用于文件浏览、时间机器和搜索结果。类型是大写的扩展名（`PDF`、`XLSX`）、"文件夹"、表示联接点和符号链接的"链接"，以及没有扩展名的文件的"文件"。筛选框列出该文件夹中有的类型及数量（`PDF (40)`），并整体提供"文件夹"和"文件"两项。
+- **按名称、类型、大小或修改时间排序，两个方向都可以，并且作用于整个文件夹。** 以前只有已加载的行在浏览器中排序。文件夹始终排在最前面。
+- **用分页代替"加载更多"。** 默认每页 100 项（可选 50、100、200 或 500；搜索结果可选 50、100 或 200），列表上方和下方有上一页/下一页链接和页码，并显示数量（"显示第 101–200 项，共 10000 项"）。排序、筛选和每页数量都写在地址里，所以链接会保留它们；更改筛选或每页数量会回到第 1 页。在开发机器上，包含 10,000 个文件的文件夹约 0.1 秒打开，包含 50,000 个文件的约 0.5 秒。"全选"只选中当前页的项目。
+- **直达页面顶部和底部的按钮**，在足够长、需要它们的页面上显示。
+- **显示文件夹。** 监控文件夹可以有一个显示文件夹，即人们打开它时使用的网络路径，例如 `D:\TimeVault\monitor` 对应 `\\sgmeslt595.co.murata.local\TimeVault\monitor`。管理员在设置页填写（新字段"显示文件夹"；真实文件夹现在叫"服务器上的文件夹"），或在 `POST` 和 `PATCH /api/v1/sources` 中使用 `display_path`。它可以随时更改，文件夹已有备份时也一样。
+- **`TIMEVAULT_SERVER_HOST`**，即人们在网络路径中输入的本服务器名称。设置后，每个监控文件夹都**必须**有显示文件夹，并且它的主机必须是这一台（不区分大小写；保存时使用设置中的写法）。其他服务器上的文件夹会被拒绝，因为本服务器的搜索和恢复只能处理它自己的文件夹。没有设置时，显示文件夹是可选的，只检查语法。
+- **`TIMEVAULT_RESTORE_DISPLAY_ROOT`**，即人们通过网络访问恢复文件夹的路径（`\\sgmeslt595.co.murata.local\TimeVault\restore`）。它必须位于 `TIMEVAULT_SERVER_HOST` 上。
+- **带"复制"按钮的"位置"行**，显示在文件浏览、时间机器和文件版本页面上：当前屏幕内容的显示文件夹。管理员在那里还能看到真实文件夹。
+- 迁移 `0003_display_path.sql`（`sources.display_path`），`GET /api/v1/settings` 中的 `server_host` 和 `restore_display_root`，以及 API 的列表参数（见 [api.md](./api.md)）。
+
+### 变更
+
+- **只有管理员能看到服务器磁盘上的文件夹。** 其他人无论是否登录，看到的都是显示文件夹：在文件浏览、时间机器、版本、备份、设置、恢复预览和恢复任务中。备份文件夹（仓库）不会向他们点名；设置页和状态页只说明它用了多少。引用真实文件夹的文本会为他们改写：任务错误和日志、恢复条目消息、文件未能备份的原因、审计详情和组件详情。有显示文件夹的文件夹变成它的显示路径，没有的变成 `[<监控文件夹名称>]`，备份文件夹变成 `[backup folder]`，恢复文件夹变成它的显示根路径或 `[restore folder]`。
+- `GET /api/v1/sources` 只向管理员返回 `root_path`（以前每个已登录账号都能得到），向所有人返回 `display_path`。`GET /api/v1/settings` 只向管理员返回 `repository`、`restore_root` 和 `env_file`。恢复预览的 `destination` 是显示路径；管理员还会得到 `destination_real`。
+- **一次恢复最多可以选择 500 个路径**（以前是 50），这样在 500 项一页的页面上"全选"也能用。
+- 非管理员账号看到的设置页不再显示仓库文件夹、真实的恢复文件夹和设置文件。
+- 文件浏览中的已删除项目面板只出现在文件夹的第一页，并且遵循类型筛选。
+- 预览页和任务页把很长的恢复选择折叠成"已选择 N 项"。
+- 设置了 `TIMEVAULT_SERVER_HOST` 时，`scripts\dev-demo.ps1` 会给演示文件夹一个虚构的显示文件夹。`scripts\dotenv.ps1` 和 `.env` 模板认识这两个新设置。
+
+### 升级说明
+
+1. **数据库。** 应用迁移 `0003`（`TIMEVAULT_AUTO_MIGRATE=true`，或运行 `timevault-server migrate`）。它只增加一个可为空的列；上一个版本在迁移后的数据库上仍然可以工作。
+2. **设置。** 在 `.env` 中添加 `TIMEVAULT_SERVER_HOST` 和 `TIMEVAULT_RESTORE_DISPLAY_ROOT`（见 [configs/timevault.example.env](../configs/timevault.example.env)）。如果恢复显示根路径不是网络路径或位于另一台主机上，服务会拒绝启动。
+3. **已有的监控文件夹没有显示文件夹。** 设置了 `TIMEVAULT_SERVER_HOST` 之后，管理员必须先在设置页给它们每个填上一个，才能再次编辑（设置页会把它们标为"还没有显示文件夹"）。在此期间浏览、备份、自动计划和恢复都照常工作。非管理员账号看不到这类文件夹的位置，引用它的文本中会显示 `[<名称>]`。
+4. **API 调用方。** 以前以普通账号读取 `root_path` 的调用方，现在要改用 `display_path`，或使用管理员账号。`GET /api/v1/files` 和 `GET /api/v1/history/tree` 在没有给出新参数时行为不变；`files` 现在还会返回 `unfiltered`、`types` 以及每个条目的 `type`，它的 `total` 统计的是符合筛选条件的项目数。
+5. **搜索（Everything）。** 服务本身没有变化。要为你已经在运行的 Everything 启用搜索，见 [runbook.md](./runbook.md#everything-搜索)。
+
+### 已知限制
+
+- 服务检查显示文件夹的主机，但不检查共享是否真的指向该监控文件夹。共享名写错时，人们看到的是一个不存在的路径。
+- 隐藏真实文件夹是基于文本处理的：以不寻常的方式书写的文件夹（8.3 短名称、同一磁盘的另一个盘符别名）无法被识别。
+- 已删除项目面板最多显示 500 项，并且只在第一页显示。
+- 列表的每一页都会读取整个文件夹，所以包含几十万个条目的文件夹需要几秒钟才能打开。
+
+## 0.1.2
+
+开发环境只用一个设置文件；环境变量覆盖了它时会给出警告；设置页的说明更清楚。
 
 ### 变更
 

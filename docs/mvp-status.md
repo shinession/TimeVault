@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is the honest status of TimeVault against [plan.md](./plan.md). It is a **vertical slice**: one working path through search/browse, backup, history and restore on a local NTFS folder. It is not a production backup system, and nothing here has been run at the 5-million-file scale. Version 0.1.1 added open browsing, company sign-in with two roles, a Settings page for the monitored folders and automatic backups; the statements below are updated for it, and [changelog.md](./changelog.md) lists what changed.
+This is the honest status of TimeVault against [plan.md](./plan.md). It is a **vertical slice**: one working path through search/browse, backup, history and restore on a local NTFS folder. It is not a production backup system, and nothing here has been run at the 5-million-file scale. Version 0.1.1 added open browsing, company sign-in with two roles, a Settings page for the monitored folders and automatic backups; version 0.1.3 added sorted, filtered and paged folder lists with a Type column, display folders for the monitored folders, and the rule that only administrators see the server's real folders. The statements below are updated for them, and [changelog.md](./changelog.md) lists what changed.
 
 Status words: **Done** (implemented and tested), **Partial** (works with stated limits), **Not done** (planned, not implemented), **Not verified** (no evidence yet).
 
@@ -11,7 +11,7 @@ Status words: **Done** (implemented and tested), **Partial** (works with stated 
 | Plan item | Status | Notes |
 |---|---|---|
 | Multi-root source registration, exclusions, source and repository health | Done | Administrators add and edit monitored folders on the Settings page or with `POST` and `PATCH /api/v1/sources` (0.1.1); exclusion globs; repository free space and write test on the status page. |
-| Current folder tree, breadcrumbs, search, sort, pagination | Done | Live folder from disk with protected / changed / new markers; Everything-backed search; sorting is client-side over the loaded rows. |
+| Current folder tree, breadcrumbs, search, sort, pagination | Done | Live folder from disk with protected / changed / new markers; Everything-backed search. Since 0.1.3 the lists have a Type column, sort the whole folder by name, type, size or modified time, filter by type and come in pages of 100 (50 to 500), with buttons that jump to the top and the bottom. |
 | Historical browse with timeline and recovery-point selector | Done | Time Machine page; only committed points appear. |
 | File version panel | Done | Capture time, validity, size, modification time, SHA-256, content availability. "Optional change reason" is not implemented. |
 | Detect new / changed / renamed / moved / deleted, tombstones | Partial | New, changed and deleted are tracked; rename and move are recorded as delete plus add. Deleted paths stay visible at older points. |
@@ -34,7 +34,7 @@ Status words: **Done** (implemented and tested), **Partial** (works with stated 
 
 | Scenario | Status | Evidence |
 |---|---|---|
-| 5M catalog entries, bounded memory, server-side pagination | Not verified | Listing uses keyset paging and per-folder processing, so memory is bounded by the largest folder; no scale test yet. |
+| 5M catalog entries, bounded memory, server-side pagination | Not verified | Since 0.1.3 a page of a folder is cut in memory after the whole folder was read, so memory and time are bounded by the largest folder (measured on the development machine: about 0.1 s for 10,000 and 0.5 s for 50,000 entries in one folder); no 5M-entry test yet. |
 | Search unavailable, history still usable, explicit degraded state | Done | `TestSearchAndItsDegradedState` |
 | Modified file: both versions restorable | Done | `TestIncrementalBackupKeepsHistoryAndTracksChanges`, `TestBackupHistoryAndRestoreThroughTheAPI` |
 | Deleted file stays visible and restorable | Done | `TestDeletedFolderIsRestorableFromOlderPoint`, `TestRestoreFolderAndFileFromOlderPointAfterDeletion` |
@@ -56,7 +56,9 @@ Status words: **Done** (implemented and tested), **Partial** (works with stated 
 - No retention, garbage collection, off-host copy, repository encryption or Windows service wrapper. Automatic backups exist, but without retention they only add recovery points.
 - Chunking and pack files are not implemented: every file is one object, so millions of tiny files mean millions of repository files.
 - The job log keeps at most 2,000 lines per job, and a restore stores per-item results for at most 20,000 successful items (failures are always stored).
-- Sources must be local folders; network shares (UNC paths) are rejected. A restore can select at most 50 paths and plan at most 2,000,000 items.
+- Sources must be local folders; network shares (UNC paths) are rejected as the folder to read (the display folder is only text people are shown, and is not read). A restore can select at most 500 paths and plan at most 2,000,000 items.
+- Every page of a folder list reads the whole folder, so a folder with hundreds of thousands of entries takes seconds to open. The deleted-items panel shows at most 500 items, on the first page only.
+- The display folder of a monitored folder is checked for its host, not for whether the share really leads to the folder; hiding the real folders in text works on decoded text and misses unusual spellings (see [security.md](./security.md)).
 - A normal backup does not re-check that the repository still holds the content of files it carries over unchanged. An integrity check finds missing or damaged objects, and a **Full re-read** backup writes missing content again.
 - If the service is killed in the instant between a backup's commit and the update of its job, the job is reported as failed ("interrupted by a service restart") although the recovery point was committed and is fine.
 - Power-loss durability of the repository is best effort and untested (see [security.md](./security.md)).
@@ -85,6 +87,14 @@ Not verified: Windows Server 2019, Everything 1.5, restoring paths longer than 2
 
 Not verified in 0.1.1: the company's own Redis (run `check-redis-users` on it), migration `0002` on a database that already holds real data (it was applied to fresh databases; it only adds two columns), and a deployment behind a real reverse proxy with HTTPS.
 
+**Version 0.1.3.** Verified on the same machine, with the tests and the real-program run using the private PostgreSQL cluster (port 55432) and a scratch database.
+
+- **Automated checks.** `gofmt`, `go build ./...`, `go vet ./...` and `go test ./... -count=1` pass. New tests cover the list engine (types, filter, sort, paging; 100,000 items sorted by type in about 50 ms), the catalog's read of a whole folder, the live and history listings, the network-path parser, the folder map that hides the real folders (30,000 random texts), the display-folder rules of the service and the configuration, migration `0003` on a version-2 schema, and in `internal/server` the list pages and the API (a folder of 253 entries: sort, filter, pages, the redirect past the end, "select all" meaning the page, a restore of 120 paths), the display-folder rules through the form and the API, and what an administrator, an ordinary account and an anonymous visitor each see on every page and endpoint that can show a folder.
+- **Real program.** The compiled server ran against a scratch database with `TIMEVAULT_SERVER_HOST` and `TIMEVAULT_RESTORE_DISPLAY_ROOT` set: the display-folder form (a host typed in another case is stored as the setting spells it), a backup of 10,167 files (about 10 s) and of 60,167 files (about 47 s), the pages of a folder with 10,000 files (about 0.1 s) and with 50,000 files (about 0.5 s, 0.7 s at 500 a page), a restore of 100 selected files whose destination is named by its display folder, and a scan of the pages as an anonymous visitor for the real folders of the server (none found).
+- **Browser check** (English and Chinese, dark and light theme): the Type column, the sort links, the type filter, the page size, the page links, the jump buttons (a long jump is instant), the Location line and its Copy button, the Settings form and the folded restore selection.
+
+Not verified in 0.1.3: an ordinary company account in a browser (it needs the Redis user directory; the same rules are tested with a fake directory), the company's own share and host name (display folders were checked as text, not by opening `\\server\share` from another computer), migration `0003` on a database that holds real data (it was applied to scratch databases only; it adds one nullable column), and the search through an Everything that is already running (its HTTP server has to be switched on first; see [runbook.md](./runbook.md#everything-search)).
+
 ## Suggested next steps
 
 1. Run the P0 spikes that were skipped: VSS create/read/cleanup on a test volume and USN checkpoint reading, then record ADRs.
@@ -99,7 +109,7 @@ Not verified in 0.1.1: the company's own Redis (run `check-redis-users` on it), 
 
 ## 概述
 
-这是 TimeVault 相对于 [plan.md](./plan.md) 的真实状态。它是一个**垂直切片**：在本地 NTFS 文件夹上，打通"搜索/浏览、备份、历史、恢复"这一条完整路径。它不是生产级备份系统，这里的任何内容都没有在 500 万文件规模上运行过。0.1.1 版增加了开放浏览、带两种角色的公司账号登录、管理监控文件夹的设置页和自动备份；下文的表述已按它更新，[changelog.md](./changelog.md) 列出了具体改动。
+这是 TimeVault 相对于 [plan.md](./plan.md) 的真实状态。它是一个**垂直切片**：在本地 NTFS 文件夹上，打通"搜索/浏览、备份、历史、恢复"这一条完整路径。它不是生产级备份系统，这里的任何内容都没有在 500 万文件规模上运行过。0.1.1 版增加了开放浏览、带两种角色的公司账号登录、管理监控文件夹的设置页和自动备份；0.1.3 版增加了可排序、可筛选、可分页的文件夹列表（带类型列）、监控文件夹的显示文件夹，以及只有管理员才能看到服务器真实文件夹的规则。下文的表述已按它们更新，[changelog.md](./changelog.md) 列出了具体改动。
 
 状态用语：**已完成**（已实现且有测试）、**部分完成**（可用但有所述限制）、**未完成**（有计划但未实现）、**未验证**（暂无证据）。
 
@@ -108,7 +118,7 @@ Not verified in 0.1.1: the company's own Redis (run `check-redis-users` on it), 
 | 计划项 | 状态 | 说明 |
 |---|---|---|
 | 多根备份源登记、排除规则、备份源与仓库健康状态 | 已完成 | 管理员在设置页，或通过 `POST` 和 `PATCH /api/v1/sources`（0.1.1）添加和编辑监控文件夹；排除通配规则；状态页显示仓库剩余空间和写入测试。 |
-| 当前目录树、面包屑、搜索、排序、分页 | 已完成 | 从磁盘读取实时文件夹并标注已保护 / 已变更 / 新增；Everything 搜索；排序在已加载的行上由前端完成。 |
+| 当前目录树、面包屑、搜索、排序、分页 | 已完成 | 从磁盘读取实时文件夹并标注已保护 / 已变更 / 新增；Everything 搜索。自 0.1.3 起，列表有类型列，可以按名称、类型、大小或修改时间对整个文件夹排序，按类型筛选，并按每页 100 项（50 到 500）分页，还有直达顶部和底部的按钮。 |
 | 带时间轴和恢复点选择器的历史浏览 | 已完成 | 时间机器页面；只显示已提交的恢复点。 |
 | 文件版本面板 | 已完成 | 采集时间、有效期、大小、修改时间、SHA-256、内容是否可用。"可选的变更原因"未实现。 |
 | 检测新增 / 修改 / 重命名 / 移动 / 删除，墓碑记录 | 部分完成 | 新增、修改和删除都会跟踪；重命名和移动被记录为"删除 + 新增"。被删除的路径在较早的恢复点仍然可见。 |
@@ -131,7 +141,7 @@ Not verified in 0.1.1: the company's own Redis (run `check-redis-users` on it), 
 
 | 场景 | 状态 | 证据 |
 |---|---|---|
-| 500 万目录条目，内存有界，服务端分页 | 未验证 | 列表使用键集分页并按文件夹处理，所以内存受最大文件夹限制；尚无规模测试。 |
+| 500 万目录条目，内存有界，服务端分页 | 未验证 | 自 0.1.3 起，文件夹的一页是在读取整个文件夹之后于内存中切分的，所以内存和耗时受最大文件夹限制（在开发机器上测得：同一个文件夹中 10,000 个条目约 0.1 秒，50,000 个约 0.5 秒）；尚无 500 万条目的测试。 |
 | 搜索不可用时历史仍可用，并明确显示降级 | 已完成 | `TestSearchAndItsDegradedState` |
 | 修改过的文件：两个版本都可恢复 | 已完成 | `TestIncrementalBackupKeepsHistoryAndTracksChanges`、`TestBackupHistoryAndRestoreThroughTheAPI` |
 | 被删除的文件仍然可见并可恢复 | 已完成 | `TestDeletedFolderIsRestorableFromOlderPoint`、`TestRestoreFolderAndFileFromOlderPointAfterDeletion` |
@@ -153,7 +163,9 @@ Not verified in 0.1.1: the company's own Redis (run `check-redis-users` on it), 
 - 没有保留策略、垃圾回收、异机副本、仓库加密或 Windows 服务封装。自动备份已有，但没有保留策略时它只会不断增加恢复点。
 - 没有实现分块和 Pack 文件：每个文件就是一个对象，所以数百万个小文件意味着仓库中有数百万个文件。
 - 每个任务的日志最多保留 2,000 行；恢复最多存储 20,000 个成功项目的逐项结果（失败项始终存储）。
-- 备份源必须是本地文件夹；网络共享（UNC 路径）会被拒绝。一次恢复最多可选择 50 个路径，最多规划 2,000,000 个条目。
+- 备份源必须是本地文件夹；网络共享（UNC 路径）作为要读取的文件夹会被拒绝（显示文件夹只是展示给人们看的文本，不会被读取）。一次恢复最多可选择 500 个路径，最多规划 2,000,000 个条目。
+- 文件夹列表的每一页都会读取整个文件夹，所以包含几十万个条目的文件夹需要几秒钟才能打开。已删除项目面板最多显示 500 项，并且只在第一页显示。
+- 监控文件夹的显示文件夹只检查主机，不检查共享是否真的通向该文件夹；在文本中隐藏真实文件夹是基于已解码文本的，会漏掉不寻常的写法（见 [security.md](./security.md)）。
 - 普通备份不会重新检查仓库中是否仍然保存着它原样沿用的未变化文件的内容。完整性校验可以发现缺失或损坏的对象，而**完整重读**备份会把缺失的内容重新写入。
 - 如果服务恰好在备份提交与其任务更新之间的瞬间被强制终止，任务会被报告为失败（"interrupted by a service restart"），尽管恢复点已经提交并且完好。
 - 仓库在断电后的持久性是尽力而为，且未经测试（见 [security.md](./security.md)）。
@@ -181,6 +193,14 @@ Not verified in 0.1.1: the company's own Redis (run `check-redis-users` on it), 
 - **独立代码审查**，针对访问控制和调度器。有效的发现都已修复；其余的作为限制列在 [security.md](./security.md) 和 [changelog.md](./changelog.md) 中。
 
 0.1.1 中未验证：公司自己的 Redis（请对它运行 `check-redis-users`）、在已有真实数据的数据库上应用迁移 `0002`（它只在全新的数据库上应用过；它只增加两列），以及放在带 HTTPS 的真实反向代理之后的部署。
+
+**0.1.3 版。** 在同一台机器上验证，测试和真实程序的运行使用的是私有 PostgreSQL 集群（端口 55432）和一个临时数据库。
+
+- **自动化检查。** `gofmt`、`go build ./...`、`go vet ./...` 和 `go test ./... -count=1` 通过。新增的测试覆盖：列表引擎（类型、筛选、排序、分页；100,000 个项目按类型排序约 50 毫秒）、目录库对整个文件夹的读取、实时列表和历史列表、网络路径解析器、隐藏真实文件夹的文件夹映射（30,000 个随机文本）、服务和配置中的显示文件夹规则、在版本 2 的结构上应用迁移 `0003`；以及 `internal/server` 中的列表页面和 API（一个有 253 个条目的文件夹：排序、筛选、分页、超出末尾时的重定向、"全选"只表示当前页、恢复 120 个路径）、通过表单和 API 的显示文件夹规则，以及管理员、普通账号和匿名访问者在每个可能显示文件夹的页面和接口上各自看到什么。
+- **真实程序。** 编译好的服务连接临时数据库运行，并设置了 `TIMEVAULT_SERVER_HOST` 和 `TIMEVAULT_RESTORE_DISPLAY_ROOT`：显示文件夹表单（以另一种大小写输入的主机会按设置中的写法保存）、10,167 个文件的备份（约 10 秒）和 60,167 个文件的备份（约 47 秒）、包含 10,000 个文件的文件夹（约 0.1 秒）和包含 50,000 个文件的文件夹（约 0.5 秒，每页 500 项时 0.7 秒）的页面、选择 100 个文件的恢复（目标位置以显示文件夹称呼），以及以匿名访问者身份扫描各页面，查找服务器的真实文件夹（没有发现）。
+- **浏览器检查**（英文和中文，深色和浅色主题）：类型列、排序链接、类型筛选、每页数量、页码链接、直达按钮（长距离跳转是瞬间完成的）、位置行及其复制按钮、设置表单，以及折叠起来的恢复选择。
+
+0.1.3 中未验证：浏览器中的普通公司账号（需要 Redis 用户目录；相同的规则用模拟目录测试过）、公司自己的共享和主机名（显示文件夹只作为文本检查过，没有从另一台计算机上打开 `\\server\share`）、在已有真实数据的数据库上应用迁移 `0003`（只在临时数据库上应用过；它只增加一个可为空的列），以及通过你已经在运行的 Everything 进行搜索（需要先打开它的 HTTP 服务；见 [runbook.md](./runbook.md#everything-搜索)）。
 
 ## 建议的下一步
 

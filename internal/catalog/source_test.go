@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,120 @@ func TestUpdateSourceKeepsTheLastRunUnlessTheFolderMoves(t *testing.T) {
 	due, err := cat.DueSources(ctx)
 	if err != nil || len(due) != 1 || due[0] != a.ID {
 		t.Fatalf("DueSources after the move = %v, %v", due, err)
+	}
+}
+
+const displayPath = `\\srv.example.com\TimeVault\monitor`
+
+func TestSourceDisplayPathRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	cat, pool := newStore(t)
+
+	shown, err := cat.CreateSource(ctx, catalog.NewSource{Name: "shown", RootPath: folder("shown"), CreatedBy: "t", DisplayPath: displayPath})
+	if err != nil || shown.DisplayPath != displayPath {
+		t.Fatalf("created source = %+v, %v", shown, err)
+	}
+	plain := mustCreate(t, cat, "plain", nil)
+	if plain.DisplayPath != "" {
+		t.Fatalf("a source without a display path has %q", plain.DisplayPath)
+	}
+	nulls := func() int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM sources WHERE display_path IS NULL`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := nulls(); n != 1 {
+		t.Fatalf("%d sources store NULL, want 1: no display path is NULL, never an empty string", n)
+	}
+
+	if got, err := cat.GetSource(ctx, shown.ID); err != nil || got.DisplayPath != displayPath {
+		t.Fatalf("GetSource = %+v, %v", got, err)
+	}
+	list, err := cat.ListSources(ctx)
+	if err != nil || len(list) != 2 || list[0].Name != "plain" || list[0].DisplayPath != "" || list[1].DisplayPath != displayPath {
+		t.Fatalf("ListSources = %+v, %v", list, err)
+	}
+	bare, err := cat.Sources(ctx)
+	if err != nil || len(bare) != 2 || bare[0].Name != "plain" || bare[1].Name != "shown" || bare[1].DisplayPath != displayPath || bare[1].RootPath != shown.RootPath {
+		t.Fatalf("Sources = %+v, %v", bare, err)
+	}
+
+	// An update replaces it, an empty one removes it, and it can be set again.
+	same := catalog.SourceUpdate{Name: "shown", RootPath: shown.RootPath, Enabled: true}
+	for _, want := range []string{displayPath + `\sub`, "", displayPath} {
+		up := same
+		up.DisplayPath = want
+		got, err := cat.UpdateSource(ctx, shown.ID, up)
+		if err != nil || got.DisplayPath != want {
+			t.Fatalf("UpdateSource with display path %q = %+v, %v", want, got, err)
+		}
+		if n := nulls(); (want == "") != (n == 2) {
+			t.Fatalf("with display path %q %d sources store NULL", want, n)
+		}
+	}
+	// Leaving it out of an update is the same as removing it: the update replaces every editable field.
+	if got, err := cat.UpdateSource(ctx, shown.ID, same); err != nil || got.DisplayPath != "" {
+		t.Fatalf("UpdateSource without a display path = %+v, %v", got, err)
+	}
+
+	// The table refuses what the backup layer would have rejected anyway.
+	long := `\\srv\share\` + strings.Repeat("a", 510)
+	if _, err := cat.CreateSource(ctx, catalog.NewSource{Name: "long", RootPath: folder("long"), CreatedBy: "t", DisplayPath: long}); err == nil || errors.Is(err, catalog.ErrConflict) {
+		t.Fatalf("a display path of %d characters: got %v, want a constraint error", len([]rune(long)), err)
+	}
+	if _, err := cat.UpdateSource(ctx, plain.ID, catalog.SourceUpdate{Name: "plain", RootPath: plain.RootPath, Enabled: true, DisplayPath: long}); err == nil || errors.Is(err, catalog.ErrConflict) {
+		t.Fatalf("updating to a display path of %d characters: got %v, want a constraint error", len([]rune(long)), err)
+	}
+	if got, _ := cat.GetSource(ctx, plain.ID); got.DisplayPath != "" {
+		t.Fatalf("a refused update changed the display path to %q", got.DisplayPath)
+	}
+}
+
+// The display path is only shown, nothing in the history refers to it, so it can change after the first backup
+// and it does not disturb the schedule.
+func TestDisplayPathCanChangeAfterRecoveryPointsExist(t *testing.T) {
+	ctx := context.Background()
+	cat, _ := newStore(t)
+	every30 := 30
+	src := mustCreate(t, cat, "alpha", &every30)
+
+	lock, err := cat.LockSource(ctx, src.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	point, _, err := cat.BeginPoint(ctx, lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cat.CommitPoint(ctx, lock, point, catalog.Stats{}, []byte("manifest")); err != nil {
+		t.Fatal(err)
+	}
+	lock.Unlock()
+	if err := cat.MarkRun(ctx, src.ID); err != nil {
+		t.Fatal(err)
+	}
+	ran, err := cat.GetSource(ctx, src.ID)
+	if err != nil || ran.LastRunAt == nil {
+		t.Fatalf("source after MarkRun = %+v, %v", ran, err)
+	}
+
+	for _, display := range []string{displayPath, displayPath + `\renamed`, ""} {
+		got, err := cat.UpdateSource(ctx, src.ID, catalog.SourceUpdate{Name: "alpha", RootPath: src.RootPath, Enabled: true, ScheduleMinutes: &every30, DisplayPath: display})
+		if err != nil || got.DisplayPath != display {
+			t.Fatalf("UpdateSource with display path %q = %+v, %v", display, got, err)
+		}
+		if got.RootPath != src.RootPath || got.LastRunAt == nil || !got.LastRunAt.Equal(*ran.LastRunAt) {
+			t.Fatalf("changing the display path must leave the folder and the last run alone: %+v", got)
+		}
+	}
+	if has, err := cat.HasPoints(ctx, src.ID); err != nil || !has {
+		t.Fatalf("the recovery point is gone: %v, %v", has, err)
+	}
+	if due, err := cat.DueSources(ctx); err != nil || len(due) != 0 {
+		t.Fatalf("DueSources = %v, %v; changing the display path must not make the source due", due, err)
 	}
 }
 

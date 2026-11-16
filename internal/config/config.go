@@ -35,6 +35,13 @@ type Config struct {
 	RepositoryPath string
 	RestoreRoot    string
 
+	// ServerHost is the name of this server as users type it in \\server\share paths. The monitored folders live on
+	// this server only, so display paths must use it. Empty means any host is accepted.
+	ServerHost string
+	// RestoreDisplayRoot is the network path users reach RestoreRoot by, in its normalised form
+	// (\\server\share\folder). Empty when it is not set, or when there is no restore folder.
+	RestoreDisplayRoot string
+
 	AuthDisabled      bool
 	AdminUser         string
 	AdminPasswordHash string
@@ -82,6 +89,8 @@ func Load(lookup Lookup) (Config, error) {
 		AutoMigrate:        l.boolean("TIMEVAULT_AUTO_MIGRATE", false),
 		RepositoryPath:     l.str("TIMEVAULT_REPOSITORY_PATH", ""),
 		RestoreRoot:        l.str("TIMEVAULT_RESTORE_ROOT", ""),
+		ServerHost:         l.str("TIMEVAULT_SERVER_HOST", ""),
+		RestoreDisplayRoot: l.str("TIMEVAULT_RESTORE_DISPLAY_ROOT", ""),
 		AuthDisabled:       l.boolean("TIMEVAULT_AUTH_DISABLED", false),
 		AdminUser:          l.str("TIMEVAULT_ADMIN_USER", "admin"),
 		AdminPasswordHash:  l.str("TIMEVAULT_ADMIN_PASSWORD_HASH", ""),
@@ -141,6 +150,7 @@ func Load(lookup Lookup) (Config, error) {
 	if err := c.validateListen(); err != nil {
 		l.errs = append(l.errs, err)
 	}
+	l.errs = append(l.errs, c.normalizeDisplay()...)
 	if err := errors.Join(l.errs...); err != nil {
 		return Config{}, fmt.Errorf("invalid configuration: %w", err)
 	}
@@ -180,6 +190,34 @@ func checkApart(repository, restoreRoot string) error {
 		return errors.New("must not be inside or contain the repository")
 	}
 	return nil
+}
+
+// normalizeDisplay validates the settings that tell users how to reach the folders of this server and stores
+// the restore display root in its canonical form. The errors name the settings and say what is wrong, but never
+// repeat the values.
+func (c *Config) normalizeDisplay() []error {
+	var errs []error
+	if c.ServerHost != "" {
+		if err := pathutil.ValidateHost(c.ServerHost); err != nil {
+			errs = append(errs, fmt.Errorf("TIMEVAULT_SERVER_HOST: %w", err))
+		}
+	}
+	switch {
+	case c.RestoreRoot == "":
+		// Nothing is restored, so there is nothing to display.
+		c.RestoreDisplayRoot = ""
+	case c.RestoreDisplayRoot != "":
+		u, err := pathutil.ParseUNC(c.RestoreDisplayRoot)
+		switch {
+		case err != nil:
+			errs = append(errs, fmt.Errorf("TIMEVAULT_RESTORE_DISPLAY_ROOT: %w", err))
+		case c.ServerHost != "" && !strings.EqualFold(u.Host, c.ServerHost):
+			errs = append(errs, errors.New("TIMEVAULT_RESTORE_DISPLAY_ROOT must be on the server named in TIMEVAULT_SERVER_HOST"))
+		default:
+			c.RestoreDisplayRoot = u.String()
+		}
+	}
+	return errs
 }
 
 func (c Config) validateListen() error {
@@ -225,6 +263,8 @@ func (c Config) LogAttrs() []any {
 		"auto_migrate", c.AutoMigrate,
 		"repository", c.RepositoryPath,
 		"restore_root", c.RestoreRoot,
+		"server_host", c.ServerHost,
+		"restore_display_root", c.RestoreDisplayRoot,
 		"auth_disabled", c.AuthDisabled,
 		"local_admin", d.LocalAdmin,
 		"session_ttl", c.SessionTTL.String(),
@@ -237,31 +277,35 @@ func (c Config) LogAttrs() []any {
 
 // Deployment is what the Settings page shows about the running configuration. It holds no secret.
 type Deployment struct {
-	ListenAddr     string
-	Database       string // host:port/name
-	UserDirectory  string // host:port/db of Redis, empty when company accounts are not configured
-	RepositoryPath string
-	RestoreRoot    string
-	EnvFile        string
-	SearchHost     string // host:port of the Everything server, empty when search is off
-	LocalAdmin     string // name of the local administrator, empty when there is none
-	AuthDisabled   bool
-	SessionTTL     time.Duration
-	CookieSecure   bool
+	ListenAddr         string
+	Database           string // host:port/name
+	UserDirectory      string // host:port/db of Redis, empty when company accounts are not configured
+	RepositoryPath     string
+	RestoreRoot        string
+	ServerHost         string // name of this server in \\server\share paths, empty when not set
+	RestoreDisplayRoot string // network path of the restore folder as users see it, empty when not set
+	EnvFile            string
+	SearchHost         string // host:port of the Everything server, empty when search is off
+	LocalAdmin         string // name of the local administrator, empty when there is none
+	AuthDisabled       bool
+	SessionTTL         time.Duration
+	CookieSecure       bool
 }
 
 // Describe summarises the configuration for display.
 func (c Config) Describe() Deployment {
 	d := Deployment{
-		ListenAddr:     c.ListenAddr,
-		Database:       describeURL(c.DatabaseURL, "postgres", "postgresql"),
-		UserDirectory:  describeURL(c.RedisURL, "redis", "rediss"),
-		RepositoryPath: c.RepositoryPath,
-		RestoreRoot:    c.RestoreRoot,
-		EnvFile:        c.EnvFile,
-		AuthDisabled:   c.AuthDisabled,
-		SessionTTL:     c.SessionTTL,
-		CookieSecure:   c.CookieSecure,
+		ListenAddr:         c.ListenAddr,
+		Database:           describeURL(c.DatabaseURL, "postgres", "postgresql"),
+		UserDirectory:      describeURL(c.RedisURL, "redis", "rediss"),
+		RepositoryPath:     c.RepositoryPath,
+		RestoreRoot:        c.RestoreRoot,
+		ServerHost:         c.ServerHost,
+		RestoreDisplayRoot: c.RestoreDisplayRoot,
+		EnvFile:            c.EnvFile,
+		AuthDisabled:       c.AuthDisabled,
+		SessionTTL:         c.SessionTTL,
+		CookieSecure:       c.CookieSecure,
 	}
 	if c.AdminPasswordHash != "" {
 		d.LocalAdmin = c.AdminUser

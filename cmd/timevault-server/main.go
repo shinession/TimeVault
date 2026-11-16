@@ -42,7 +42,7 @@ import (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "0.1.1"
+var version = "0.1.3"
 
 func main() {
 	cmd := "serve"
@@ -319,6 +319,7 @@ func runServe() error {
 	serviceConfig := service.Config{
 		Pool: pool, Catalog: cat, Repo: repo, Engine: engine, Restore: restoreMgr, Jobs: runner,
 		Audit: audit.New(pool, log), Search: provider, Logger: log,
+		ServerHost: cfg.ServerHost, RestoreDisplayRoot: cfg.RestoreDisplayRoot,
 	}
 	if directory != nil {
 		serviceConfig.Directory = directory

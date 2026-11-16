@@ -233,11 +233,19 @@ func TestAnonymousVisitorsBrowseButCannotTouchData(t *testing.T) {
 	if _, raw := anon.get("/api/v1/sources"); strings.Contains(raw, "root_path") {
 		t.Errorf("the folders on the server's disk are not for anonymous visitors: %s", raw)
 	}
-	if _, raw := alice.get("/api/v1/sources"); !strings.Contains(raw, "root_path") {
-		t.Errorf("a signed-in account sees the folder of a source: %s", raw)
+	if _, raw := alice.get("/api/v1/sources"); strings.Contains(raw, "root_path") || strings.Contains(raw, "display_path") {
+		t.Errorf("an ordinary account sees the folder of the server's disk, or invents a display folder: %s", raw)
 	}
-	if _, body := alice.get("/backups"); !strings.Contains(body, h.env.SrcDir) || !strings.Contains(body, "/jobs/"+itoa(restoreJob)) {
-		t.Errorf("a signed-in account sees the folders and the restores on the Backups page")
+	bob := h.visitor()
+	bob.loginAs(adminID)
+	if _, raw := bob.get("/api/v1/sources"); !strings.Contains(raw, "root_path") {
+		t.Errorf("an administrator sees the folder of a source: %s", raw)
+	}
+	if _, body := alice.get("/backups"); strings.Contains(body, h.env.SrcDir) || strings.Contains(body, h.env.RestoreRoot) || !strings.Contains(body, "/jobs/"+itoa(restoreJob)) {
+		t.Errorf("an ordinary account sees the folders of the server's disk on the Backups page, or not the restores")
+	}
+	if _, body := bob.get("/backups"); !strings.Contains(body, h.env.SrcDir) || !strings.Contains(body, h.env.RestoreRoot) {
+		t.Errorf("an administrator sees the folders of the server's disk on the Backups page")
 	}
 
 	// Who asked for a backup is for signed-in accounts to know.
@@ -325,9 +333,15 @@ func TestWhyABackupFailedIsForSignedInAccountsOnly(t *testing.T) {
 		t.Fatalf("the backup of a missing folder = %v", job)
 	}
 
+	// An ordinary account sees why, with the folder of the server's disk hidden; an administrator sees the folder.
 	_, seen := alice.api("GET", "/api/v1/jobs/"+itoa(id), nil)
-	if reason, _ := seen["job"].(map[string]any)["error"].(string); reason == "" || !strings.Contains(reason, h.env.SrcDir) {
-		t.Errorf("a signed-in account sees the reason: %v", seen)
+	if reason, _ := seen["job"].(map[string]any)["error"].(string); reason == "" || strings.Contains(reason, h.env.SrcDir) || !strings.Contains(reason, "["+h.env.Src.Name+"]") {
+		t.Errorf("an ordinary account sees the reason without the folder of the server's disk: %v", seen)
+	}
+	bob := h.visitor()
+	bob.loginAs(adminID)
+	if _, full := bob.api("GET", "/api/v1/jobs/"+itoa(id), nil); !strings.Contains(full["job"].(map[string]any)["error"].(string), h.env.SrcDir) {
+		t.Errorf("an administrator sees the folder in the reason: %v", full)
 	}
 	_, hidden := anon.api("GET", "/api/v1/jobs/"+itoa(id), nil)
 	hiddenJob := hidden["job"].(map[string]any)

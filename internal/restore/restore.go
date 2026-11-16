@@ -36,7 +36,9 @@ import (
 )
 
 const (
-	maxSelectedPaths = 50
+	// maxSelectedPaths is as many items as the largest page of a folder listing holds, so "select all" on a page
+	// can always be restored.
+	maxSelectedPaths = 500
 	maxPlanItems     = 2_000_000
 	sampleSize       = 200
 	problemSize      = 100
