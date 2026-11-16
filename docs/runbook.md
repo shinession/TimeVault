@@ -43,11 +43,13 @@ The scripts keep their data under the git-ignored `data\` folder and **all setti
 
 ```powershell
 cd <repository folder>
-go build -trimpath -ldflags "-s -w -X main.version=0.1.5" -o timevault-server.exe ./cmd/timevault-server
+go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-server
 .\timevault-server.exe version
 ```
 
-`go build -o timevault-server.exe ./cmd/timevault-server` is enough. `-trimpath -ldflags "-s -w"` only makes the file smaller (about 22 MB instead of 31 MB), and `-X main.version=...` sets the text that `version` prints (the default is the version in `cmd/timevault-server/main.go`). Go 1.25 or newer is needed (see `go.mod`).
+`go build -o timevault-server.exe ./cmd/timevault-server` is enough. `-trimpath -ldflags "-s -w"` only makes the file smaller (about 22 MB instead of 31 MB). Go 1.25 or newer is needed (see `go.mod`).
+
+**The version number** is written in one place, `var version` in `cmd/timevault-server/main.go`, and the build takes it from there, so the command above always gives the version of the sources it is run on. The `version` command, the start-up log, the footer of every page, the Settings page and `GET /api/v1/settings` show it. Run `.\timevault-server.exe version` after every build. Do not add `-X main.version=<number>` to the command: it replaces the number in `main.go`, so a copy of the command that was written for an older version keeps stamping the old number. A build of the 0.1.5 sources with `-X main.version=0.1.4` has all the features of 0.1.5 but calls itself 0.1.4.
 
 **Dependencies and the `vendor\` folder.** The build needs the Go modules listed in `go.mod`, either from the module cache (`go env GOMODCACHE`, which Go fills from the module proxy) or from a `vendor\` folder next to `go.mod`. While a `vendor\` folder exists, Go uses it automatically (the same as `-mod=vendor`; `go build`, `go vet` and `go test` all do). That suits a server without internet access: run `go mod vendor` once on a computer that has the modules (it writes about 600 files, 7 MB), and copy the `vendor\` folder together with the sources.
 
@@ -205,6 +207,8 @@ Optional. A person who is signed in to Windows at the company can sign in to Tim
 
    With neither, every single sign-in ends with "The sign-in could not be matched to this browser", because TimeVault compares the address of the proxy with the address of the browser.
 
+   The same happens on a development PC that opens TimeVault directly (for example `http://localhost:8660`): TimeVault sees a loopback address (`127.0.0.1` or `::1`), while the sign-on service sees the network address of the PC. Open the site through the proxy address instead, or set `TIMEVAULT_SSO_REQUIRE_SAME_IP=false` on that PC only.
+
 **What a person sees.** The button opens a small window with the sign-on page, and the login page says "Waiting for the Windows sign-in". After a few seconds the window closes itself and the person is signed in, with the role of the account in Redis (`admin` or not), and lands on the page they came from. When something goes wrong the page says what: the browser blocked the window (allow pop-ups for the site), Windows could not tell who you are, the Windows account has no active account here, the sign-in could not be matched to this browser, the sign-in took too long or was already used, the window was closed, or the user accounts cannot be reached. The password form keeps working.
 
 **Check it.** Open the login page and press the button. The **Audit** page then shows **Signed in** with `method: sso` and the Windows user; a refused attempt shows **Sign-in failed** with a `reason` (`no_active_account`, `no_windows_user`, `address_mismatch`, `browser_address_changed` or `result_unreadable`).
@@ -310,6 +314,7 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 | The service stops with "another TimeVault service is already running against this database" | A second `timevault-server` uses the same database (schema). Stop the other one first; its lock is released when its process ends. |
 | The service stops with "not a TimeVault repository" | `TIMEVAULT_REPOSITORY_PATH` points at a non-empty folder without `timevault-repository.json`. Use an empty folder. |
 | `go` is not found by the scripts | Add Go to `PATH`, or put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env`. Setting the variable in one terminal only lasts for that terminal. |
+| After a rebuild the footer, the Settings page or `timevault-server version` still shows an old version number | Either the build command still has `-X main.version=<old number>` (a copy of an older command), so the program has the new code under the old number: build with the command in [Building the executable](#building-the-executable), which has no `-X`. Or the service still runs the old file: Windows does not let a running program file be replaced, so stop the service, copy the new file, start it, and run `version` on the file that is really started. A build made with `-trimpath` does not record `-ldflags`, so `go version -m` cannot show the flag; `version` is the check. |
 | The service listens on another port (or uses another setting) than the one written in `.env` | A `TIMEVAULT_*` variable in the process environment beats `.env`. The start-up log has a warning that names every setting it overrides (`TIMEVAULT_LISTEN_ADDR`, for a port). The usual cause is a variable left in the terminal by an older `dev-run.ps1`: start the service with `scripts\dev-run.ps1`, or load the session with `. .\scripts\dev-env.ps1`, which remove such variables. If it comes back, it is set in your Windows user or system environment. |
 | `dev-db.ps1` cannot find PostgreSQL | Set `TIMEVAULT_PG_BIN` or pass `-PgBin`. |
 | Sign-in answers 429 | Too many attempts: 5 per address or 10 failures per account name within 10 minutes (`Retry-After` says how long). Behind a reverse proxy all visitors share the proxy's address unless `TIMEVAULT_TRUSTED_PROXIES` lists the proxy. Wait, or restart the service (the counters are in memory). |
@@ -388,11 +393,13 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 
 ```powershell
 cd <repository folder>
-go build -trimpath -ldflags "-s -w -X main.version=0.1.5" -o timevault-server.exe ./cmd/timevault-server
+go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-server
 .\timevault-server.exe version
 ```
 
-只需 `go build -o timevault-server.exe ./cmd/timevault-server` 就够了。`-trimpath -ldflags "-s -w"` 只是让文件更小（约 22 MB，而不是 31 MB），`-X main.version=...` 设置 `version` 命令输出的文本（默认值是 `cmd/timevault-server/main.go` 中的版本号）。需要 Go 1.25 或更新版本（见 `go.mod`）。
+只需 `go build -o timevault-server.exe ./cmd/timevault-server` 就够了。`-trimpath -ldflags "-s -w"` 只是让文件更小（约 22 MB，而不是 31 MB）。需要 Go 1.25 或更新版本（见 `go.mod`）。
+
+**版本号**只写在一个地方，即 `cmd/timevault-server/main.go` 中的 `var version`，构建时直接从那里取，所以上面的命令得到的总是它所在源码的版本。`version` 命令、启动日志、每个页面的页脚、设置页和 `GET /api/v1/settings` 都会显示它。每次构建之后请运行 `.\timevault-server.exe version`。不要在命令里加 `-X main.version=<number>`：它会替换 `main.go` 中的版本号，所以为旧版本写的命令副本会一直打上旧的版本号。用 0.1.5 的源码加上 `-X main.version=0.1.4` 构建出来的程序，具备 0.1.5 的全部功能，却自称 0.1.4。
 
 **依赖和 `vendor\` 文件夹。** 构建需要 `go.mod` 中列出的 Go 模块，它们来自模块缓存（`go env GOMODCACHE`，由 Go 从模块代理下载填充），或者来自 `go.mod` 旁边的 `vendor\` 文件夹。存在 `vendor\` 文件夹时，Go 会自动使用它（等同于 `-mod=vendor`；`go build`、`go vet` 和 `go test` 都是如此）。这适合没有外网的服务器：在有这些模块的计算机上运行一次 `go mod vendor`（会写出约 600 个文件、7 MB），然后把 `vendor\` 文件夹和源码一起复制过去。
 
@@ -550,6 +557,8 @@ go test ./... -count=1
 
    两者都没有时，每次单点登录都会以"无法把这次登录与当前浏览器对应起来"结束，因为 TimeVault 拿代理的地址与浏览器的地址比较。
 
+   在直接访问 TimeVault 的开发机上（例如 `http://localhost:8660`）也会这样：TimeVault 看到的是回环地址（`127.0.0.1` 或 `::1`），而单点登录服务看到的是这台电脑的网络地址。请改用经过代理的站点地址访问，或者只在这台电脑上设置 `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`。
+
 **人们会看到什么。** 按钮会打开一个带有单点登录页面的小窗口，登录页显示"正在等待 Windows 登录"。几秒钟后窗口自行关闭，此人登录成功，拥有 Redis 中该账号的角色（`admin` 或不是），并回到他来时的页面。出问题时页面会说明原因：浏览器拦截了窗口（请允许本站弹出窗口）、Windows 无法识别你的身份、你的 Windows 账号在这里没有可用的账号、无法把这次登录与当前浏览器对应起来、登录耗时过长或已被使用、窗口被关闭，或无法连接用户账号服务。密码表单照常可用。
 
 **如何检查。** 打开登录页并点击按钮。**审计**页随后会显示**已登录**，带有 `method: sso` 和 Windows 用户；被拒绝的尝试显示**登录失败**，带有 `reason`（`no_active_account`、`no_windows_user`、`address_mismatch`、`browser_address_changed` 或 `result_unreadable`）。
@@ -655,6 +664,7 @@ Invoke-Expression "$s -Action stop"
 | 服务以"another TimeVault service is already running against this database"退出 | 另一个 `timevault-server` 正在使用同一个数据库（schema）。请先停止那一个；它的锁会在其进程结束时释放。 |
 | 服务以"not a TimeVault repository"退出 | `TIMEVAULT_REPOSITORY_PATH` 指向的非空文件夹中没有 `timevault-repository.json`。请使用空文件夹。 |
 | 脚本找不到 `go` | 把 Go 加入 `PATH`，或把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入 `.env`。只在某一个终端里设置该变量，仅对那个终端有效。 |
+| 重新构建之后，页脚、设置页或 `timevault-server version` 显示的仍是旧版本号 | 要么构建命令里还带着 `-X main.version=<旧版本号>`（旧命令的副本），于是程序是新代码、版本号却是旧的：请用[构建可执行文件](#构建可执行文件)中不带 `-X` 的命令构建。要么服务仍在运行旧文件：Windows 不允许替换正在运行的程序文件，所以请先停止服务，复制新文件，再启动它，并对真正启动的那个文件运行 `version`。用 `-trimpath` 构建时不会记录 `-ldflags`，所以 `go version -m` 看不到这个参数；请以 `version` 为准。 |
 | 服务监听的端口（或其他设置）与 `.env` 中写的不一致 | 进程环境变量中的 `TIMEVAULT_*` 变量优先于 `.env`。启动日志中有一条警告，会点名它覆盖的每一项设置（端口对应 `TIMEVAULT_LISTEN_ADDR`）。常见原因是旧版 `dev-run.ps1` 在终端里留下了变量：请用 `scripts\dev-run.ps1` 启动服务，或用 `. .\scripts\dev-env.ps1` 加载会话，它们都会移除这类变量。如果它又出现了，说明它设在你的 Windows 用户或系统环境变量里。 |
 | `dev-db.ps1` 找不到 PostgreSQL | 设置 `TIMEVAULT_PG_BIN` 或传入 `-PgBin`。 |
 | 登录返回 429 | 尝试次数过多：10 分钟内每个地址 5 次，或每个账号名 10 次失败（`Retry-After` 说明要等多久）。放在反向代理之后时，所有访问者共用代理的地址，除非 `TIMEVAULT_TRUSTED_PROXIES` 列出了该代理。请等待，或重启服务（计数保存在内存中）。 |

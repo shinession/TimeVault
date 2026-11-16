@@ -42,7 +42,8 @@ import (
 	"timevault/web"
 )
 
-// version is overridden at build time with -ldflags "-X main.version=...".
+// version is the one place the program version is written. The build command in docs/runbook.md does not
+// set it: -ldflags "-X main.version=..." would replace it, and an old copy of that command stamps an old number.
 var version = "0.1.5"
 
 func main() {
