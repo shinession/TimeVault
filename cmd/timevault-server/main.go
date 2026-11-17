@@ -44,7 +44,7 @@ import (
 
 // version is the one place the program version is written. The build command in docs/runbook.md does not
 // set it: -ldflags "-X main.version=..." would replace it, and an old copy of that command stamps an old number.
-var version = "0.1.5"
+var version = "0.1.6"
 
 func main() {
 	cmd := "serve"

@@ -236,6 +236,94 @@ func TestSSORefusesAnAddressThatIsNotTheBrowsers(t *testing.T) {
 	}
 }
 
+// A sign-in that is refused over the addresses says which addresses were seen and how the request reached the server,
+// so that the cause can be read from the audit record: a proxy in front that hides the browser behind its own address,
+// a proxy that TimeVault does not believe, or a browser that moved.
+func TestSSORefusalsSayHowTheRequestReachedTheServer(t *testing.T) {
+	startVia := func(v *harness, hdr map[string]string) ssoStart {
+		t.Helper()
+		res, body := v.postForm("/auth/sso/start", url.Values{"next": {"/"}}, hdr)
+		var start ssoStart
+		if res.StatusCode != http.StatusOK || json.Unmarshal([]byte(body), &start) != nil {
+			t.Fatalf("start = %d %s", res.StatusCode, body)
+		}
+		return start
+	}
+	pollVia := func(h, v *harness, token string, hdr map[string]string) {
+		t.Helper()
+		h.clock.Advance(2 * time.Second)
+		if _, body := v.postForm("/auth/sso/poll", url.Values{"token": {token}}, hdr); !strings.Contains(body, `"mismatch"`) {
+			t.Fatalf("poll = %s, want mismatch", body)
+		}
+	}
+	newest := func(h *harness) map[string]any {
+		t.Helper()
+		events := auditEvents(h, "auth.login_failed")
+		if len(events) == 0 {
+			t.Fatal("no failed sign-in is audited")
+		}
+		return detailOf(events[0])
+	}
+	check := func(got, want map[string]any) {
+		t.Helper()
+		for k, w := range want {
+			if got[k] != w {
+				t.Errorf("detail %q = %v, want %v (all of it: %v)", k, got[k], w, got)
+			}
+		}
+	}
+	signedOn := func(h *harness, token, addr string) {
+		h.dir.setSSO(token, auth.SSOResult{Status: "ok", ECode: userID, WindowsUser: `CO\e1001`, IP: addr, At: time.Now()})
+	}
+
+	// Two proxies in a row: the proxy next to TimeVault passed on the address of the proxy in front (10.9.0.7) instead
+	// of the browser's. TimeVault takes it for the browser; the sign-on service saw the real address.
+	h := ssoHarness(t, func(o *server.Options) { o.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.8.0.5/32")} })
+	v := h.visitor()
+	hidden := map[string]string{"X-Test-Client": "10.8.0.5", "X-Forwarded-For": "10.9.0.7"}
+	start := startVia(v, hidden)
+	signedOn(h, start.Token, "203.0.113.50")
+	pollVia(h, v, start.Token, hidden)
+	check(newest(h), map[string]any{"reason": "address_mismatch", "started_from": "10.9.0.7", "sso_address": "203.0.113.50",
+		"connection": "10.8.0.5", "trusted_proxy": true, "forwarded": "10.9.0.7"})
+
+	// The address of the browser changes between the start and the poll.
+	start = startVia(v, hidden)
+	moved := map[string]string{"X-Test-Client": "10.8.0.5", "X-Forwarded-For": "203.0.113.8"}
+	pollVia(h, v, start.Token, moved)
+	check(newest(h), map[string]any{"reason": "browser_address_changed", "started_from": "10.9.0.7",
+		"connection": "10.8.0.5", "trusted_proxy": true, "forwarded": "203.0.113.8"})
+
+	// A header from the network is cut short.
+	start = startVia(v, hidden)
+	long := strings.Repeat("a", 400)
+	pollVia(h, v, start.Token, map[string]string{"X-Test-Client": "10.8.0.5", "X-Forwarded-For": long})
+	if got, _ := newest(h)["forwarded"].(string); got != long[:256] {
+		t.Errorf("forwarded is %d characters long, want it cut to 256", len(got))
+	}
+
+	// The proxy is not listed: the header is there, TimeVault ignores it, and the record says so.
+	plain := ssoHarness(t, nil)
+	v2 := plain.visitor()
+	unlisted := map[string]string{"X-Test-Client": "198.51.100.77", "X-Forwarded-For": "203.0.113.7"}
+	start = startVia(v2, unlisted)
+	signedOn(plain, start.Token, "203.0.113.7")
+	pollVia(plain, v2, start.Token, unlisted)
+	check(newest(plain), map[string]any{"reason": "address_mismatch", "started_from": "198.51.100.77", "sso_address": "203.0.113.7",
+		"connection": "198.51.100.77", "trusted_proxy": false, "forwarded": "203.0.113.7"})
+
+	// Without a header there is no "forwarded".
+	direct := map[string]string{"X-Test-Client": "198.51.100.78"}
+	start = startVia(v2, direct)
+	signedOn(plain, start.Token, "203.0.113.9")
+	pollVia(plain, v2, start.Token, direct)
+	d := newest(plain)
+	check(d, map[string]any{"connection": "198.51.100.78", "trusted_proxy": false})
+	if _, has := d["forwarded"]; has {
+		t.Errorf("forwarded = %v although the request had no X-Forwarded-For", d["forwarded"])
+	}
+}
+
 func contains(list []string, s string) bool {
 	for _, x := range list {
 		if x == s {

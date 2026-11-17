@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -184,10 +185,30 @@ func (s *Server) handleSSOPoll(w http.ResponseWriter, r *http.Request) {
 		}
 		s.svc.Audit(r.Context(), audit.Event{Actor: truncate(actor, 64), Action: audit.ActionLoginFailed, Result: audit.ResultDenied, RemoteAddr: ip, Detail: detail})
 	}
+	// refuseAddress ends a sign-in whose addresses do not match. The audit record and the log say which addresses were
+	// compared and how this request reached the server, which is what tells a proxy that hides the browser from a
+	// proxy that TimeVault does not believe.
+	refuseAddress := func(actor, reason, message string, extra map[string]any) {
+		for k, v := range s.addressDetail(r) {
+			extra[k] = v
+		}
+		failed(actor, reason, extra)
+		keys := make([]string, 0, len(extra))
+		for k := range extra {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		attrs := []any{"reason", reason}
+		for _, k := range keys {
+			attrs = append(attrs, k, extra[k])
+		}
+		s.log.Warn(message, append(attrs, "hint", addressHint)...)
+		reply("mismatch")
+	}
 	if s.opts.SSORequireSameIP && ip != flow.ip && !sameAddress(ip, flow.ip) {
 		s.sso.drop(token)
-		failed("sso", "browser_address_changed", map[string]any{"started_from": flow.ip})
-		reply("mismatch")
+		refuseAddress("sso", "browser_address_changed", "single sign-on refused: the address of the browser changed during the sign-in",
+			map[string]any{"started_from": flow.ip})
 		return
 	}
 	if !s.sso.allowPoll(token, now) {
@@ -219,8 +240,8 @@ func (s *Server) handleSSOPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.opts.SSORequireSameIP && !sameAddress(res.IP, flow.ip) {
 		s.sso.drop(token)
-		failed(ssoActor(res.WindowsUser), "address_mismatch", map[string]any{"sso_address": truncate(res.IP, 64), "started_from": flow.ip})
-		reply("mismatch")
+		refuseAddress(ssoActor(res.WindowsUser), "address_mismatch", "single sign-on refused: the sign-on service saw another address for the browser than TimeVault did",
+			map[string]any{"sso_address": truncate(res.IP, 64), "started_from": flow.ip})
 		return
 	}
 	id, err := signOn.Identify(r.Context(), res.ECode)
@@ -278,14 +299,41 @@ func sameAddress(a, b string) bool {
 	return okA && okB && x == y
 }
 
+// connectionAddr is the address of the connection that carried the request: the browser, or the proxy in front of
+// the server.
+func connectionAddr(r *http.Request) string {
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// addressHint is logged with a sign-in that was refused because two addresses did not match.
+const addressHint = "started_from is the address TimeVault took for the browser. If it is the address of a server, a proxy in front " +
+	"of TimeVault hides the browser (docs/runbook.md, Two proxies in a row). If trusted_proxy is false and forwarded is set, " +
+	"TIMEVAULT_TRUSTED_PROXIES does not list the proxy that connects."
+
+// addressDetail says how a request reached the server: the address of its connection (a proxy, when there is one),
+// whether that is a trusted proxy, and the X-Forwarded-For header that came with it. Both are text from the
+// network, so they are cut short.
+func (s *Server) addressDetail(r *http.Request) map[string]any {
+	conn := connectionAddr(r)
+	trusted := false
+	if a, ok := parseAddr(conn); ok {
+		trusted = s.trustedProxy(a)
+	}
+	d := map[string]any{"connection": truncate(conn, 64), "trusted_proxy": trusted}
+	if fwd := strings.Join(r.Header.Values("X-Forwarded-For"), ", "); fwd != "" {
+		d["forwarded"] = truncate(fwd, 256)
+	}
+	return d
+}
+
 // clientIP is the address of the browser. It is the address of the connection, unless that is one of the
 // configured reverse proxies: then it is the nearest address in the X-Forwarded-For header that is not a proxy
 // itself. Anything the proxies did not add, the header's left side, is never believed.
 func (s *Server) clientIP(r *http.Request) string {
-	peer := r.RemoteAddr
-	if host, _, err := net.SplitHostPort(peer); err == nil {
-		peer = host
-	}
+	peer := connectionAddr(r)
 	if len(s.opts.TrustedProxies) == 0 {
 		return peer
 	}

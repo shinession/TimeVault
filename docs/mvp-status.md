@@ -2,7 +2,7 @@
 
 ## Overview
 
-This is the honest status of TimeVault against [plan.md](./plan.md). It is a **vertical slice**: one working path through search/browse, backup, history and restore on a local NTFS folder. It is not a production backup system, and nothing here has been run at the 5-million-file scale. Version 0.1.1 added open browsing, company sign-in with two roles, a Settings page for the monitored folders and automatic backups; version 0.1.3 added sorted, filtered and paged folder lists with a Type column, display folders for the monitored folders, and the rule that only administrators see the server's real folders; version 0.1.4 added single sign-on, folder sizes from Everything, the duration of every operation in the audit log, a limit of versions per file with rolling deletion, and automatic backups that are spread out; version 0.1.5 lets the site be served under a path prefix such as `/tv` behind a reverse proxy. The statements below are updated for them, and [changelog.md](./changelog.md) lists what changed.
+This is the honest status of TimeVault against [plan.md](./plan.md). It is a **vertical slice**: one working path through search/browse, backup, history and restore on a local NTFS folder. It is not a production backup system, and nothing here has been run at the 5-million-file scale. Version 0.1.1 added open browsing, company sign-in with two roles, a Settings page for the monitored folders and automatic backups; version 0.1.3 added sorted, filtered and paged folder lists with a Type column, display folders for the monitored folders, and the rule that only administrators see the server's real folders; version 0.1.4 added single sign-on, folder sizes from Everything, the duration of every operation in the audit log, a limit of versions per file with rolling deletion, and automatic backups that are spread out; version 0.1.5 lets the site be served under a path prefix such as `/tv` behind a reverse proxy; version 0.1.6 makes a single sign-on that is refused over the addresses say why, and documents two proxies in a row. The statements below are updated for them, and [changelog.md](./changelog.md) lists what changed.
 
 Status words: **Done** (implemented and tested), **Partial** (works with stated limits), **Not done** (planned, not implemented), **Not verified** (no evidence yet).
 
@@ -113,6 +113,14 @@ Not verified in 0.1.4: the company's own single sign-on service and Redis (the s
 
 Not verified in 0.1.5: the company's own nginx on the real server (the checks used a separate instance with the same block, except for `$http_host` in place of `$host` because it listens on another port than 80), single sign-on through it (the sign-on service and Redis were not available; the flow is tested with a fake directory), other people's browsers, and a deployment with a second proxy in front of the first.
 
+**Version 0.1.6.** Found after a report that single sign-on failed when the site was opened through the second server (`http://10.135.36.81/tv/`). Checked on the same machine: the tests use the private PostgreSQL cluster (port 55432), and the nginx check used a separate nginx instance (1.24, with its own prefix and loopback addresses only; the nginx that serves this computer was not touched).
+
+- **The fault was reproduced first.** Two nginx servers were built from the `/tv/` blocks of the company's two configuration files: the second server forwarding to the first, which forwards to a stand-in that prints what it receives. Through both, TimeVault was told the address of the front server, not the browser's; connecting to the first directly it was told the browser's address, which matches that single sign-on worked on `prod_eng` itself.
+- **The fix was run.** With the three `real_ip` lines in the `/tv/` block of `nginx_prod_eng.conf` (the real file, with the addresses of the rig in place of the servers'), TimeVault was told the address of the browser through the front server and directly, also when the browser sent a forged `X-Forwarded-For`, alone or claiming to have come through the front server. The other way (append, and list both proxies) was run as well.
+- **Automated checks.** `gofmt`, `go build ./...`, `go vet ./...` and `go test ./... -count=1` pass. A new test covers the extra details of a refused single sign-on: a front proxy that hides the browser, a browser that moved, a header that is cut short, a proxy that is not listed, and a connection without a header. It was also run against code that was broken on purpose, and failed as it should.
+
+Not verified in 0.1.6: the company's own servers (the steps ran on one computer, with loopback addresses for them), the address that the second server really connects from (the lines need it, and `started_from` of a refused sign-in shows it), a browser that reaches the servers over different address families, and the whole browser flow of single sign-on through the two servers (the program, the sign-on service and Redis were not run together behind both nginx servers; what changed is the address that TimeVault records, which was checked at the header level and with the tests).
+
 1. Run the P0 spikes that were skipped: VSS create/read/cleanup on a test volume and USN checkpoint reading, then record ADRs.
 2. Build a synthetic 5M-entry catalog and measure listing, history browse, backup walk time and PostgreSQL size.
 3. Add a repository backup (an off-host copy) and consider retention by age (the version limit per file exists since 0.1.4).
@@ -125,7 +133,7 @@ Not verified in 0.1.5: the company's own nginx on the real server (the checks us
 
 ## 概述
 
-这是 TimeVault 相对于 [plan.md](./plan.md) 的真实状态。它是一个**垂直切片**：在本地 NTFS 文件夹上，打通"搜索/浏览、备份、历史、恢复"这一条完整路径。它不是生产级备份系统，这里的任何内容都没有在 500 万文件规模上运行过。0.1.1 版增加了开放浏览、带两种角色的公司账号登录、管理监控文件夹的设置页和自动备份；0.1.3 版增加了可排序、可筛选、可分页的文件夹列表（带类型列）、监控文件夹的显示文件夹，以及只有管理员才能看到服务器真实文件夹的规则；0.1.4 版增加了单点登录、来自 Everything 的文件夹大小、审计日志中每个操作的耗时、每个文件的版本数上限及滚动删除，以及错开时间的自动备份；0.1.5 版让站点可以放在反向代理之后的 `/tv` 等路径前缀下提供服务。下文的表述已按它们更新，[changelog.md](./changelog.md) 列出了具体改动。
+这是 TimeVault 相对于 [plan.md](./plan.md) 的真实状态。它是一个**垂直切片**：在本地 NTFS 文件夹上，打通"搜索/浏览、备份、历史、恢复"这一条完整路径。它不是生产级备份系统，这里的任何内容都没有在 500 万文件规模上运行过。0.1.1 版增加了开放浏览、带两种角色的公司账号登录、管理监控文件夹的设置页和自动备份；0.1.3 版增加了可排序、可筛选、可分页的文件夹列表（带类型列）、监控文件夹的显示文件夹，以及只有管理员才能看到服务器真实文件夹的规则；0.1.4 版增加了单点登录、来自 Everything 的文件夹大小、审计日志中每个操作的耗时、每个文件的版本数上限及滚动删除，以及错开时间的自动备份；0.1.5 版让站点可以放在反向代理之后的 `/tv` 等路径前缀下提供服务；0.1.6 版让因地址而被拒绝的单点登录说明原因，并说明了两层代理的配置。下文的表述已按它们更新，[changelog.md](./changelog.md) 列出了具体改动。
 
 状态用语：**已完成**（已实现且有测试）、**部分完成**（可用但有所述限制）、**未完成**（有计划但未实现）、**未验证**（暂无证据）。
 
@@ -235,6 +243,14 @@ Not verified in 0.1.5: the company's own nginx on the real server (the checks us
 - **真实程序与浏览器。** 编译好的服务在 nginx 之后运行，先用公司的 `/tv/` 配置块原样，再用推荐的配置块。重定向链始终在 `/tv/` 之下。浏览器打开 `/tv/`，不刷新地跟随文件夹链接，登录（保留了来源页面），用表单启动备份并看着任务完成（轮询 `/tv/api/v1/jobs/<id>`），切换为中文，打开设置页（**地址前缀** `/tv`），然后退出登录。页面中的每个地址都在 `/tv/` 之下，Cookie 的 `Path=/tv`，服务在自己的端口上带前缀和不带前缀也都能回答。用公司的配置块时，伪造的 `X-Forwarded-For` 会被当作客户端的地址记入审计日志；用 `X-Forwarded-For $remote_addr` 则不会。
 
 0.1.5 中未验证：真实服务器上公司自己的 nginx（检查使用的是同一配置块的独立实例，只是因为它监听的端口不是 80，把 `$host` 换成了 `$http_host`）、通过它的单点登录（单点登录服务和 Redis 当时不可用；该流程用模拟目录测试过）、其他人的浏览器，以及第一层代理前面还有第二层代理的部署。
+
+**0.1.6 版。** 起因是有人反馈：通过第二台服务器（`http://10.135.36.81/tv/`）打开站点时，单点登录失败。在同一台机器上检查：测试使用私有 PostgreSQL 集群（端口 55432），nginx 的检查使用了一个独立的 nginx 实例（1.24，有自己的前缀，只使用回环地址；为这台电脑提供服务的 nginx 没有被动过）。
+
+- **先复现了故障。** 用公司两个配置文件中的 `/tv/` 配置块搭了两个 nginx 服务器：第二台转发给第一台，第一台再转发给一个会打印收到内容的替身。经过两层时，TimeVault 得到的是前面那台服务器的地址，而不是浏览器的地址；直接连接第一台时得到的是浏览器的地址，这与单点登录在 `prod_eng` 上本身是正常的相符。
+- **运行了修复。** 在 `nginx_prod_eng.conf` 的 `/tv/` 配置块里加上三行 `real_ip`（真实的文件，只是把服务器的地址换成测试用的地址）之后，经过前面的服务器和直接访问，TimeVault 得到的都是浏览器的地址，即使浏览器发送了伪造的 `X-Forwarded-For`（单独发送，或声称自己是经过前面的服务器来的）。另一种做法（追加，并把两个代理都列出）也运行过。
+- **自动化检查。** `gofmt`、`go build ./...`、`go vet ./...` 和 `go test ./... -count=1` 通过。新增的测试覆盖了被拒绝的单点登录的额外详细信息：把浏览器隐藏起来的前置代理、地址变了的浏览器、被截短的头、没有被列入的代理，以及没有该头的连接。它也在被有意改坏的代码上运行过，并且按预期失败了。
+
+0.1.6 中未验证：公司自己的服务器（这些步骤是在一台电脑上用回环地址代表服务器运行的）、第二台服务器真正用来连接的地址（配置行需要它，被拒绝的登录的 `started_from` 会显示它）、浏览器通过不同地址族访问这两台服务器的情况，以及通过这两台服务器的完整单点登录浏览器流程（程序、单点登录服务和 Redis 没有放在两个 nginx 服务器之后一起运行；改变的是 TimeVault 记录的地址，它已经在请求头层面和测试中检查过）。
 
 ## 建议的下一步
 

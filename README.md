@@ -4,7 +4,7 @@
 
 **TimeVault — enterprise file backup, search and time travel** for Windows and NTFS. It keeps point-in-time recovery points of local folders, lets you browse the past state of any folder, search by name, and restore files into a safe folder below a restore root after a preview.
 
-**Status: version 0.1.5 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings. It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
+**Status: version 0.1.6 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings. It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
 
 ### What works today
 
@@ -68,7 +68,7 @@ Open `http://127.0.0.1:8660/`. Anyone can browse; to back up, restore or change 
 
 **TimeVault —— 企业文件备份、搜索与时间回溯**，面向 Windows 和 NTFS。它为本地文件夹保存时间点恢复点，可以浏览任意文件夹过去的状态、按名称搜索，并在预览之后把文件恢复到恢复根目录下的安全文件夹中。
 
-**状态：0.1.5 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），只有两种角色，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
+**状态：0.1.6 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），只有两种角色，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
 
 ### 目前可用的功能
 

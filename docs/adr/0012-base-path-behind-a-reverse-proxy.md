@@ -23,7 +23,7 @@ Accepted for 0.1.5 (2026-11-16). Extends the web layer of [0005](./0005-redis-us
   - The script reads the prefix from `<meta name="tv-base">` for its own requests and for the links it does not follow itself; a link to another application on the host is not taken over by the in-page navigation.
 - **`next` and `back` are accepted in both forms.** The script puts the address of the page, with the prefix, into the links to the login and the language switch, so the server takes the prefix off an address it is given (`/tv/history?x=1` is `/history?x=1`) and checks it again afterwards: `/tv//host` would otherwise become `//host`, which a browser reads as another site. The poll of a single sign-on answers with the page to go to as the browser needs it (`/tv/backups`).
 - **The proxy may keep the prefix (recommended) or take it off.** Both work and both were run against this version. Keeping it is the simplest block and has no rewriting rule to get wrong. [runbook.md](../runbook.md) has the nginx block that was tested.
-- **The proxy has to tell the truth about the client.** The first proxy sets `X-Forwarded-For` to `$remote_addr`. A block that passes `$http_x_forwarded_for` on, as one written for a second proxy does, lets the browser choose the address that TimeVault records when `TIMEVAULT_TRUSTED_PROXIES` lists the proxy; it was reproduced on 2026-11-16.
+- **The proxy has to tell the truth about the client.** The proxy that the browser reaches sets `X-Forwarded-For` to `$remote_addr`. A block that passes `$http_x_forwarded_for` on, as one written for a second proxy does, lets the browser choose the address that TimeVault records when `TIMEVAULT_TRUSTED_PROXIES` lists the proxy; it was reproduced on 2026-11-16. When another proxy sits in front of it, the proxy next to TimeVault has to take the address of the browser from that proxy; see the update for 0.1.6 in [0009](./0009-single-sign-on-and-trusted-proxies.md).
 - **Shown and logged.** The start-up log says `serving under a path prefix`; the Settings page and `GET /api/v1/settings` show the prefix (`base_path`).
 
 ## Alternatives considered
@@ -70,7 +70,7 @@ Accepted for 0.1.5 (2026-11-16). Extends the web layer of [0005](./0005-redis-us
   - 脚本从 `<meta name="tv-base">` 读取前缀，用于它自己的请求和它不自己跟随的链接；指向同一主机上其他应用的链接不会被页面内导航接管。
 - **`next` 和 `back` 两种写法都接受。** 脚本会把带前缀的页面地址放进登录和切换语言的链接，所以服务器会从收到的地址上去掉前缀（`/tv/history?x=1` 就是 `/history?x=1`），然后再检查一遍：否则 `/tv//host` 会变成 `//host`，浏览器会把它当成另一个站点。单点登录的轮询以浏览器所需的形式回答要去的页面（`/tv/backups`）。
 - **代理可以保留前缀（推荐），也可以去掉。** 两种都可以，并且都在本版本上运行过。保留前缀是最简单的配置块，没有可能写错的改写规则。[runbook.md](../runbook.md) 中有测试过的 nginx 配置块。
-- **代理必须如实告知客户端地址。** 第一层代理把 `X-Forwarded-For` 设为 `$remote_addr`。像为第二层代理写的配置块那样传递 `$http_x_forwarded_for`，在 `TIMEVAULT_TRUSTED_PROXIES` 列出该代理时，会让浏览器自己选择 TimeVault 记录的地址；这一点已于 2026-11-16 复现。
+- **代理必须如实告知客户端地址。** 浏览器直接访问的那层代理把 `X-Forwarded-For` 设为 `$remote_addr`。像为第二层代理写的配置块那样传递 `$http_x_forwarded_for`，在 `TIMEVAULT_TRUSTED_PROXIES` 列出该代理时，会让浏览器自己选择 TimeVault 记录的地址；这一点已于 2026-11-16 复现。如果它前面还有另一层代理，紧挨着 TimeVault 的代理必须从那一层代理取得浏览器的地址；见 [0009](./0009-single-sign-on-and-trusted-proxies.md) 中 0.1.6 的更新。
 - **显示与记录。** 启动日志会写出 `serving under a path prefix`；设置页和 `GET /api/v1/settings` 会显示前缀（`base_path`）。
 
 ## 考虑过的备选方案

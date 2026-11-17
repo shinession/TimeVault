@@ -4,6 +4,29 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 0.1.6
+
+A single sign-on that is refused because of the addresses now says why, and the runbook describes two proxies in a row. It was found when the site was opened through a second server (`http://10.135.36.81/tv/`, whose nginx forwards to the nginx of `prod_eng`): every single sign-in ended with "The sign-in could not be matched to this browser". The reasons and the alternatives are in the update of [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md).
+
+### Added
+
+- **What a refused address check records.** The audit record of a single sign-on that was refused because of the addresses (`address_mismatch`, `browser_address_changed`) now has `connection` (the address that connected: the nearest proxy), `trusted_proxy` (whether that address is in `TIMEVAULT_TRUSTED_PROXIES`) and `forwarded` (the `X-Forwarded-For` header, cut to 256 characters, when there was one), next to `started_from` and `sso_address`. The service log has a warning with the same, and a hint on how to read it. A server's address in `started_from` means that a proxy in front hides the browser; `trusted_proxy` `false` with `forwarded` set means that the proxy is not listed.
+- **Two proxies in a row** in [runbook.md](./runbook.md#two-proxies-in-a-row): what goes wrong, the nginx lines that fix it, a second way, and how to check.
+
+### Changed
+
+- The runbook, the security notes and [ADR 0012](./adr/0012-base-path-behind-a-reverse-proxy.md) no longer say that the proxy has to be the first one: the proxy next to TimeVault has to pass on the address of the browser, whether it is the first or the second.
+
+### Upgrade notes
+
+1. **The program behaves as before** except for the extra details of a refused sign-in.
+2. **If another nginx sits in front of the one that serves TimeVault,** add `set_real_ip_from <address of the front nginx>; real_ip_header X-Forwarded-For; real_ip_recursive on;` to the `/tv/` block of the nginx next to TimeVault and reload it. `.env` stays as it is.
+
+### Known limits
+
+- Checked with the real nginx 1.24 on one computer, with the two `/tv/` blocks of the company's configuration and loopback addresses for the servers, and with automated tests of the new records; not on the company's servers.
+- A browser that reaches the front server over IPv4 and the sign-on service over IPv6 (or the reverse) is still seen with two addresses; the new details show both.
+
 ## 0.1.5
 
 TimeVault can be served under a path of a host name that other applications share, such as `http://prod_eng.co.murata.local/tv/`. Until now it assumed that it is at the root of its address, and behind `/tv/` the first redirect left the prefix and ended on another application. The reasons are in [ADR 0012](./adr/0012-base-path-behind-a-reverse-proxy.md).
@@ -208,6 +231,29 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 0.1.6
+
+因地址而被拒绝的单点登录现在会说明原因，runbook 也说明了两层代理的配置。它是在通过第二台服务器打开站点时发现的（`http://10.135.36.81/tv/`，它的 nginx 转发给 `prod_eng` 的 nginx）：每次单点登录都以"无法把这次登录与当前浏览器对应起来"结束。原因和备选方案见 [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md) 中的更新。
+
+### 新增
+
+- **被拒绝的地址检查会记录什么。** 因地址而被拒绝的单点登录（`address_mismatch`、`browser_address_changed`）的审计记录，现在除了 `started_from` 和 `sso_address`，还有 `connection`（连接过来的地址：最近的代理）、`trusted_proxy`（该地址是否在 `TIMEVAULT_TRUSTED_PROXIES` 中）和 `forwarded`（`X-Forwarded-For` 头，截断为 256 个字符，有该头时才有）。服务日志里有一条包含同样内容的警告，以及如何解读它的提示。`started_from` 里是某台服务器的地址，说明前面有代理把浏览器隐藏了；`trusted_proxy` 为 `false` 且有 `forwarded`，说明该代理没有被列入。
+- [runbook.md](./runbook.md#两层代理) 中的**两层代理**：会出什么问题、修复它的 nginx 配置行、另一种做法，以及如何检查。
+
+### 变更
+
+- runbook、安全说明和 [ADR 0012](./adr/0012-base-path-behind-a-reverse-proxy.md) 不再说代理必须是第一层：紧挨着 TimeVault 的代理必须把浏览器的地址传下去，无论它是第一层还是第二层。
+
+### 升级说明
+
+1. **程序的行为与以前一样**，只是被拒绝的登录多了一些详细信息。
+2. **如果提供 TimeVault 的 nginx 前面还有另一个 nginx，** 请在紧挨着 TimeVault 的 nginx 的 `/tv/` 配置块里加上 `set_real_ip_from <前面 nginx 的地址>; real_ip_header X-Forwarded-For; real_ip_recursive on;` 并重新加载它。`.env` 保持不变。
+
+### 已知限制
+
+- 用真实的 nginx 1.24 在一台电脑上检查过，使用公司配置中的两个 `/tv/` 配置块，并用回环地址代表服务器，另外还有针对新记录的自动化测试；没有在公司的服务器上检查。
+- 如果浏览器通过 IPv4 访问前面的服务器、通过 IPv6 访问单点登录服务（或者相反），仍会被看成两个地址；新的详细信息会显示这两个地址。
 
 ## 0.1.5
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.5). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
+How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.6). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
 
 ## Prerequisites
 
@@ -100,7 +100,7 @@ Every setting is an environment variable or a line of the `.env` file (see [Wher
 | `TIMEVAULT_COOKIE_SECURE` | `false` | Adds `Secure` to cookies. Set it to `true` behind HTTPS. |
 | `TIMEVAULT_SSO_HOST` | empty | The company sign-on service, as `host`, `host:port` or `http(s)://host[:port]` (the scheme defaults to `http`). When set, the login page offers "Sign in with Windows (SSO)"; see [Single sign-on](#single-sign-on). Needs `TIMEVAULT_REDIS_URL`. |
 | `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `true` | The address that the sign-on service saw must be the address of the browser that asked for the sign-in. Turn it off only when the address of the browser cannot be known (`TIMEVAULT_TRUSTED_PROXIES` is the better way). |
-| `TIMEVAULT_TRUSTED_PROXIES` | empty | Reverse proxies, as addresses or CIDR ranges separated by commas (`127.0.0.1,::1,10.0.0.0/24`), whose `X-Forwarded-For` header is believed. The client address then comes from that header; it is used by the single sign-on check, the **From** column of the audit log and the sign-in throttle. The proxy must set that header itself; see [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path). |
+| `TIMEVAULT_TRUSTED_PROXIES` | empty | Reverse proxies, as addresses or CIDR ranges separated by commas (`127.0.0.1,::1,10.0.0.0/24`), whose `X-Forwarded-For` header is believed. The client address then comes from that header; it is used by the single sign-on check, the **From** column of the audit log and the sign-in throttle. The proxy must set that header itself; see [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path), and [Two proxies in a row](#two-proxies-in-a-row) when another proxy sits in front of it. |
 | `TIMEVAULT_BASE_PATH` | empty | The path prefix the site is served under behind a reverse proxy, such as `/tv` for `http://host/tv/`. Empty means the site is at the root of its address. `tv`, `/tv` and `/tv/` all mean `/tv`; letters, digits and `- _ . ~` only, and it must not start with a path of the application itself (`api`, `static`, `login`, `explorer`, `history`, `versions`, `backups`, `jobs`, `restore`, `audit`, `status`, `settings`, `lang`, `logout`, `auth`, `healthz`). Every address the pages, the redirects and the cookies give out carries it; a request with or without it is accepted. See [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path). |
 | `TIMEVAULT_EVERYTHING_URL` | empty | Base URL of the Everything HTTP server, for example `http://127.0.0.1:<port>/`. Empty disables search. |
 | `TIMEVAULT_EVERYTHING_USERNAME`, `TIMEVAULT_EVERYTHING_PASSWORD` | empty | Optional HTTP Basic credentials for Everything. The password is a secret. |
@@ -144,7 +144,7 @@ Use this when one host name serves several applications and TimeVault is one of 
 
 1. Put the prefix into `.env`: `TIMEVAULT_BASE_PATH=/tv`, and restart the service. The start-up log says `serving under a path prefix` and the Settings page shows the **Address prefix**. Without the setting nothing changes.
 2. In the proxy, send `/tv/` to the service. The service accepts a request with the prefix and without it, so the proxy may pass the address on as it is (recommended, the simplest) or take the prefix off.
-3. The proxy is the first server that the browser reaches, so it must tell TimeVault the address of the browser, and it has to be listed in `TIMEVAULT_TRUSTED_PROXIES` (`127.0.0.1` when the proxy runs on the same computer). An nginx block that was run against this version:
+3. The proxy next to TimeVault must tell it the address of the browser, and it has to be listed in `TIMEVAULT_TRUSTED_PROXIES` (`127.0.0.1` when the proxy runs on the same computer). The block below is for a proxy that the browser reaches itself; when another proxy sits in front of it, add what [Two proxies in a row](#two-proxies-in-a-row) says. An nginx block that was run against this version:
 
    ```nginx
    location = /tv {
@@ -184,6 +184,37 @@ Use this when one host name serves several applications and TimeVault is one of 
 - The prefix is part of the addresses people bookmark and send. Changing it later breaks those.
 - TimeVault shares its origin (scheme, host and port) with the other applications of that host name. A host name or a port of its own is the stronger setup; see [security.md](./security.md).
 
+## Two proxies in a row
+
+Use this when another nginx sits in front of the one that serves TimeVault. In the first deployment the server `s2` (`http://10.135.36.81/tv/`) forwards `/tv/` to the nginx of `prod_eng.co.murata.local`, which forwards it to TimeVault: browser → s2 → prod_eng → TimeVault. The decision and the alternatives are in the update of [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md).
+
+**What goes wrong.** The nginx next to TimeVault sees the address of the nginx in front of it, not the address of the browser. With `proxy_set_header X-Forwarded-For $remote_addr;` it writes that address into the header, so TimeVault takes the front server for the browser. Single sign-on compares that address with the one the sign-on service recorded, and the browser opened the sign-on service directly, so the service recorded the real address. Every single sign-in then ends with "The sign-in could not be matched to this browser" (`address_mismatch`). It was reproduced on 2026-11-17 with the real nginx 1.24 and the `/tv/` blocks of both servers. Through the nginx next to TimeVault alone (`http://prod_eng.co.murata.local/tv/`) nothing is hidden, so it works there.
+
+**Set it up.** The front nginx keeps the block of [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path) (`X-Forwarded-For $remote_addr`, so a browser cannot choose the address). The nginx next to TimeVault has to take the address of the browser from the header that the front nginx sends, and from nobody else's. Add the three `real_ip` lines to its `/tv/` block, with the address that the front nginx connects from, and leave the rest of the block as it is:
+
+```nginx
+location ^~ /tv/ {
+    client_max_body_size 512M;
+
+    # The nginx in front: one line for each. Its X-Forwarded-For is believed, anybody else's is not.
+    set_real_ip_from 10.135.36.81;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # ... the rest of the block, as before (X-Forwarded-For $remote_addr included)
+}
+```
+
+For a request that comes from the front nginx, nginx now makes `$remote_addr` the address of the browser; a request from anybody else keeps the address it connects from, and the header that it sends is ignored. `TIMEVAULT_TRUSTED_PROXIES` stays as it is (`127.0.0.1`, the nginx next to TimeVault). Reload nginx; TimeVault does not need a restart. The address after `set_real_ip_from` is the one the front nginx connects from, as the nginx next to TimeVault sees it (its access log shows it, and so does `started_from` of a refused single sign-on); it is not necessarily the address people type.
+
+**Another way.** In the nginx next to TimeVault append instead of replace (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`), put both proxies into `.env` (`TIMEVAULT_TRUSTED_PROXIES=127.0.0.1,10.135.36.81`) and restart TimeVault. TimeVault takes the right-most address of the header that is not a listed proxy, so what a browser writes on the left is not believed. The `real_ip` way keeps `.env` as it is and makes the access log of that nginx show the browser.
+
+Both ways were run against this version, through the front nginx and directly, with and without a forged `X-Forwarded-For`: TimeVault was told the address of the browser every time.
+
+**Check it.** Open TimeVault through the front server and sign in: the **From** column of the Audit page shows the address of the browser, not that of a server. When a single sign-on is refused because of the addresses, the **Sign-in failed** entry and a warning in the service log say what TimeVault saw: `started_from` (the address it took for the browser), `sso_address` (the one the sign-on service recorded), `connection` (the address that connected: the nearest proxy), `trusted_proxy` (whether that address is listed in `TIMEVAULT_TRUSTED_PROXIES`) and `forwarded` (the `X-Forwarded-For` header, cut to 256 characters). If `started_from` is the address of a server, a proxy in front hides the browser: set it up as above. If `trusted_proxy` is `false` and `forwarded` is set, the proxy that connects is not in `TIMEVAULT_TRUSTED_PROXIES`. A browser that reaches the front server over IPv4 and the sign-on service over IPv6 (or the reverse) is also seen with two addresses; the two values show it.
+
+**Not verified.** The company's own servers: the steps were run on one computer with a copy of the two `/tv/` blocks and loopback addresses for the servers.
+
 ## Tests
 
 `go test ./...` runs everything. Tests that need PostgreSQL are skipped unless `TIMEVAULT_TEST_DATABASE_URL` points at a database; each test creates a private schema named `tvtest_<random>` and drops it, so use a separate test database such as `timevault_test`, never the working database. `dev-db.ps1` writes the URL for the private cluster into `.env`; if `.env` points at your own PostgreSQL server instead, create the test database there first (`CREATE DATABASE timevault_test OWNER timevault;`) and set `TIMEVAULT_TEST_DATABASE_URL` in `.env`; the role needs no other rights. Tests that exercise junctions and Windows file locking run only on Windows. Everything live tests are described in [Everything search](#everything-search). The Redis tests need no Redis: they use an in-process fake with pickle data written by Python.
@@ -211,7 +242,7 @@ Optional. A person who is signed in to Windows at the company can sign in to Tim
 
 **What a person sees.** The button opens a small window with the sign-on page, and the login page says "Waiting for the Windows sign-in". After a few seconds the window closes itself and the person is signed in, with the role of the account in Redis (`admin` or not), and lands on the page they came from. When something goes wrong the page says what: the browser blocked the window (allow pop-ups for the site), Windows could not tell who you are, the Windows account has no active account here, the sign-in could not be matched to this browser, the sign-in took too long or was already used, the window was closed, or the user accounts cannot be reached. The password form keeps working.
 
-**Check it.** Open the login page and press the button. The **Audit** page then shows **Signed in** with `method: sso` and the Windows user; a refused attempt shows **Sign-in failed** with a `reason` (`no_active_account`, `no_windows_user`, `address_mismatch`, `browser_address_changed` or `result_unreadable`).
+**Check it.** Open the login page and press the button. The **Audit** page then shows **Signed in** with `method: sso` and the Windows user; a refused attempt shows **Sign-in failed** with a `reason` (`no_active_account`, `no_windows_user`, `address_mismatch`, `browser_address_changed` or `result_unreadable`). For the two reasons about the addresses it also shows the addresses that were compared and how the request reached the server (`started_from`, `sso_address`, `connection`, `trusted_proxy`, `forwarded`; see [Two proxies in a row](#two-proxies-in-a-row)), and the service log has a warning with the same.
 
 ## Everything search
 
@@ -322,7 +353,7 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 | A company account cannot sign in | Wrong password, account not activated, no password stored, or the login matches more than one account (employee ID, name or e-mail address; the service log says so without naming anyone). Run `check-redis-users`: unreadable records, records without a password and employee IDs on more than one key are counted there. Try the employee ID, which is the least ambiguous. |
 | `check-redis-users` reports unreadable records | A hash that the decoder cannot read (a field is missing or has an unexpected type). The report gives the position of the key among all keys sorted by name, so it can be found with `redis-cli`. Such a record cannot sign in. |
 | There is no "Sign in with Windows (SSO)" button | `TIMEVAULT_SSO_HOST` is empty, or there is no Redis user directory (`TIMEVAULT_REDIS_URL`). The start-up log and the Settings page show `sso_host`. |
-| The single sign-in says "The sign-in could not be matched to this browser" | The address that the sign-on service recorded is not the address TimeVault sees for the browser. Behind a reverse proxy set `TIMEVAULT_TRUSTED_PROXIES` to the proxy (the proxy has to send `X-Forwarded-For`), or set `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`. The Audit page shows the failure with the reason `address_mismatch` (`browser_address_changed` when the address of the browser changed during the sign-in). |
+| The single sign-in says "The sign-in could not be matched to this browser" | The address that the sign-on service recorded is not the address TimeVault sees for the browser. Behind a reverse proxy set `TIMEVAULT_TRUSTED_PROXIES` to the proxy (the proxy has to send `X-Forwarded-For`), or set `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`. The Audit page shows the failure with the reason `address_mismatch` (`browser_address_changed` when the address of the browser changed during the sign-in), with what TimeVault saw: `started_from` (the address it took for the browser), `sso_address`, `connection`, `trusted_proxy` and `forwarded`. If `started_from` is the address of a server, another proxy sits in front of the one next to TimeVault and hides the browser: see [Two proxies in a row](#two-proxies-in-a-row). If `trusted_proxy` is `false` and `forwarded` is set, the proxy that connects is not in `TIMEVAULT_TRUSTED_PROXIES`. |
 | Opening `/tv/` ends on another application (for example the portal), or the pages have no style and their links leave `/tv/` | TimeVault does not know its prefix. Use version 0.1.5 or later, set `TIMEVAULT_BASE_PATH=/tv` in `.env` and restart; the start-up log must say "serving under a path prefix". Without it every redirect and link starts at the root of the host, outside `/tv/`. |
 | Behind `/tv/` the audit log shows `127.0.0.1` for everybody, or single sign-on says it could not be matched to this browser | The proxy does not pass the address of the browser on, or TimeVault does not believe the proxy. Set `proxy_set_header X-Forwarded-For $remote_addr;` in the proxy block, and `TIMEVAULT_TRUSTED_PROXIES=127.0.0.1` (the address the proxy connects from) in `.env`. |
 | After signing in, a page whose address has no `/tv` shows you as signed out | With a base path the cookies are limited to it. Use the addresses under `/tv/`; every link and redirect of the pages already leads there. |
@@ -352,7 +383,7 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 
 ## 概述
 
-介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.5 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
+介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.6 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
 
 ## 前置条件
 
@@ -450,7 +481,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 | `TIMEVAULT_COOKIE_SECURE` | `false` | 给 Cookie 加上 `Secure`。在 HTTPS 之后请设为 `true`。 |
 | `TIMEVAULT_SSO_HOST` | 空 | 公司单点登录服务，写成 `host`、`host:port` 或 `http(s)://host[:port]`（协议默认为 `http`）。设置后，登录页会提供"使用 Windows 账号登录（SSO）"；见[单点登录](#单点登录)。需要 `TIMEVAULT_REDIS_URL`。 |
 | `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `true` | 单点登录服务看到的地址必须与请求登录的浏览器的地址一致。只有在无法得知浏览器的地址时才关闭它（更好的做法是 `TIMEVAULT_TRUSTED_PROXIES`）。 |
-| `TIMEVAULT_TRUSTED_PROXIES` | 空 | 反向代理，写成用逗号分隔的地址或 CIDR 范围（`127.0.0.1,::1,10.0.0.0/24`），它们的 `X-Forwarded-For` 头会被信任。此后客户端地址取自该头；它用于单点登录检查、审计日志的**来源**列和登录限流。代理必须自己设置这个头；见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)。 |
+| `TIMEVAULT_TRUSTED_PROXIES` | 空 | 反向代理，写成用逗号分隔的地址或 CIDR 范围（`127.0.0.1,::1,10.0.0.0/24`），它们的 `X-Forwarded-For` 头会被信任。此后客户端地址取自该头；它用于单点登录检查、审计日志的**来源**列和登录限流。代理必须自己设置这个头；见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)；它前面还有另一层代理时，见[两层代理](#两层代理)。 |
 | `TIMEVAULT_BASE_PATH` | 空 | 站点放在反向代理之后时所处的路径前缀，例如 `http://host/tv/` 对应 `/tv`。为空表示站点位于其地址的根路径。`tv`、`/tv` 和 `/tv/` 都表示 `/tv`；只能包含字母、数字和 `- _ . ~`，并且不能以应用自己的路径开头（`api`、`static`、`login`、`explorer`、`history`、`versions`、`backups`、`jobs`、`restore`、`audit`、`status`、`settings`、`lang`、`logout`、`auth`、`healthz`）。页面、重定向和 Cookie 给出的每个地址都带有它；带或不带它的请求都会被接受。见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)。 |
 | `TIMEVAULT_EVERYTHING_URL` | 空 | Everything HTTP 服务的基础 URL，例如 `http://127.0.0.1:<port>/`。为空表示禁用搜索。 |
 | `TIMEVAULT_EVERYTHING_USERNAME`、`TIMEVAULT_EVERYTHING_PASSWORD` | 空 | Everything 的可选 HTTP Basic 凭据。密码属于机密。 |
@@ -494,7 +525,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 
 1. 在 `.env` 中写入前缀：`TIMEVAULT_BASE_PATH=/tv`，然后重启服务。启动日志会写出 `serving under a path prefix`，设置页会显示**地址前缀**。不设置这一项则什么都不变。
 2. 在代理中把 `/tv/` 转给本服务。服务既接受带前缀的请求，也接受不带前缀的请求，所以代理可以原样转发地址（推荐，最简单），也可以去掉前缀。
-3. 代理是浏览器最先到达的服务器，所以它必须把浏览器的地址告诉 TimeVault，并且必须列入 `TIMEVAULT_TRUSTED_PROXIES`（代理和服务在同一台电脑上时填 `127.0.0.1`）。下面是用本版本运行过的 nginx 配置块：
+3. 紧挨着 TimeVault 的代理必须把浏览器的地址告诉它，并且必须列入 `TIMEVAULT_TRUSTED_PROXIES`（代理和服务在同一台电脑上时填 `127.0.0.1`）。下面的配置块适用于浏览器直接访问的代理；如果它前面还有另一层代理，请再加上[两层代理](#两层代理)中所说的内容。下面是用本版本运行过的 nginx 配置块：
 
    ```nginx
    location = /tv {
@@ -534,6 +565,37 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 - 前缀是人们收藏和发送的地址的一部分。以后再更改它会让这些地址失效。
 - TimeVault 与该主机名下的其他应用共享源（协议、主机和端口）。给它单独的主机名或端口是更强的做法；见 [security.md](./security.md)。
 
+## 两层代理
+
+当提供 TimeVault 的 nginx 前面还有另一个 nginx 时使用。在第一次部署中，服务器 `s2`（`http://10.135.36.81/tv/`）把 `/tv/` 转发给 `prod_eng.co.murata.local` 的 nginx，后者再转发给 TimeVault：浏览器 → s2 → prod_eng → TimeVault。决定和备选方案见 [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md) 中的更新。
+
+**会出什么问题。** 紧挨着 TimeVault 的 nginx 看到的是它前面那个 nginx 的地址，而不是浏览器的地址。用 `proxy_set_header X-Forwarded-For $remote_addr;` 时，它把这个地址写进该头，于是 TimeVault 把前面的服务器当成了浏览器。单点登录会拿这个地址与单点登录服务记录的地址比较，而浏览器是直接打开单点登录服务的，所以服务记录的是真实地址。结果每次单点登录都以"无法把这次登录与当前浏览器对应起来"（`address_mismatch`）结束。这一点已于 2026-11-17 用真实的 nginx 1.24 和两台服务器的 `/tv/` 配置块复现。只经过紧挨着 TimeVault 的 nginx（`http://prod_eng.co.murata.local/tv/`）时没有什么被隐藏，所以那样是正常的。
+
+**如何设置。** 前面的 nginx 保持[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)中的配置块（`X-Forwarded-For $remote_addr`，这样浏览器无法自己选择地址）。紧挨着 TimeVault 的 nginx 必须从前面的 nginx 发来的头中取得浏览器的地址，并且不信任任何其他来源。在它的 `/tv/` 配置块里加上三行 `real_ip` 配置，写上前面的 nginx 连接过来所用的地址，配置块的其余部分保持不变：
+
+```nginx
+location ^~ /tv/ {
+    client_max_body_size 512M;
+
+    # The nginx in front: one line for each. Its X-Forwarded-For is believed, anybody else's is not.
+    set_real_ip_from 10.135.36.81;
+    real_ip_header X-Forwarded-For;
+    real_ip_recursive on;
+
+    # ... the rest of the block, as before (X-Forwarded-For $remote_addr included)
+}
+```
+
+对于来自前面 nginx 的请求，nginx 现在会把 `$remote_addr` 设为浏览器的地址；来自其他任何来源的请求保持它连接时所用的地址，它发来的头会被忽略。`TIMEVAULT_TRUSTED_PROXIES` 保持不变（`127.0.0.1`，即紧挨着 TimeVault 的 nginx）。重新加载 nginx 即可，TimeVault 不需要重启。`set_real_ip_from` 后面的地址是前面的 nginx 连接过来所用的地址，是紧挨着 TimeVault 的 nginx 看到的那个（它的访问日志里有，被拒绝的单点登录的 `started_from` 里也有）；它不一定是人们输入的地址。
+
+**另一种做法。** 在紧挨着 TimeVault 的 nginx 里改为追加而不是替换（`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`），把两个代理都写进 `.env`（`TIMEVAULT_TRUSTED_PROXIES=127.0.0.1,10.135.36.81`），并重启 TimeVault。TimeVault 取该头中最右边的、不是已列出代理的地址，所以浏览器在左边写的内容不会被信任。`real_ip` 的做法不需要改 `.env`，并且让那个 nginx 的访问日志显示浏览器的地址。
+
+两种做法都在本版本上运行过，经过前面的 nginx 和直接访问，有伪造的 `X-Forwarded-For` 和没有时都试过：每一次 TimeVault 得到的都是浏览器的地址。
+
+**如何检查。** 通过前面的服务器打开 TimeVault 并登录：**审计**页的**来源**列显示的是浏览器的地址，而不是某台服务器的地址。当单点登录因为地址被拒绝时，**登录失败**记录和服务日志里的一条警告会说明 TimeVault 看到了什么：`started_from`（它当作浏览器的地址）、`sso_address`（单点登录服务记录的地址）、`connection`（连接过来的地址：最近的代理）、`trusted_proxy`（该地址是否列在 `TIMEVAULT_TRUSTED_PROXIES` 中）和 `forwarded`（`X-Forwarded-For` 头，截断为 256 个字符）。如果 `started_from` 是某台服务器的地址，说明前面有代理把浏览器隐藏了：按上面的方法设置。如果 `trusted_proxy` 是 `false` 且设置了 `forwarded`，说明连接过来的代理不在 `TIMEVAULT_TRUSTED_PROXIES` 中。如果浏览器通过 IPv4 访问前面的服务器、通过 IPv6 访问单点登录服务（或者相反），也会被看成两个地址；这两个值能看出这一点。
+
+**未验证。** 公司自己的服务器：以上步骤是在一台电脑上，用两个 `/tv/` 配置块的副本和代表服务器的回环地址运行的。
+
 ## 测试
 
 `go test ./...` 运行全部测试。需要 PostgreSQL 的测试在 `TIMEVAULT_TEST_DATABASE_URL` 未指向某个数据库时会被跳过；每个测试都会创建名为 `tvtest_<random>` 的私有 schema 并在结束后删除，所以请使用单独的测试数据库，例如 `timevault_test`，不要使用正式使用的数据库。`dev-db.ps1` 会把私有集群的 URL 写入 `.env`；如果 `.env` 指向的是你自己的 PostgreSQL 服务器，请先在那里创建测试数据库（`CREATE DATABASE timevault_test OWNER timevault;`），并在 `.env` 中设置 `TIMEVAULT_TEST_DATABASE_URL`；该角色不需要其他权限。涉及联接点和 Windows 文件锁的测试只在 Windows 上运行。Everything 在线测试见 [Everything 搜索](#everything-搜索)。Redis 测试不需要 Redis：它们使用进程内的模拟服务和 Python 生成的 pickle 数据。
@@ -561,7 +623,7 @@ go test ./... -count=1
 
 **人们会看到什么。** 按钮会打开一个带有单点登录页面的小窗口，登录页显示"正在等待 Windows 登录"。几秒钟后窗口自行关闭，此人登录成功，拥有 Redis 中该账号的角色（`admin` 或不是），并回到他来时的页面。出问题时页面会说明原因：浏览器拦截了窗口（请允许本站弹出窗口）、Windows 无法识别你的身份、你的 Windows 账号在这里没有可用的账号、无法把这次登录与当前浏览器对应起来、登录耗时过长或已被使用、窗口被关闭，或无法连接用户账号服务。密码表单照常可用。
 
-**如何检查。** 打开登录页并点击按钮。**审计**页随后会显示**已登录**，带有 `method: sso` 和 Windows 用户；被拒绝的尝试显示**登录失败**，带有 `reason`（`no_active_account`、`no_windows_user`、`address_mismatch`、`browser_address_changed` 或 `result_unreadable`）。
+**如何检查。** 打开登录页并点击按钮。**审计**页随后会显示**已登录**，带有 `method: sso` 和 Windows 用户；被拒绝的尝试显示**登录失败**，带有 `reason`（`no_active_account`、`no_windows_user`、`address_mismatch`、`browser_address_changed` 或 `result_unreadable`）。对于与地址有关的两种原因，它还会显示比较的两个地址和请求是怎样到达服务器的（`started_from`、`sso_address`、`connection`、`trusted_proxy`、`forwarded`；见[两层代理](#两层代理)），服务日志里也有一条包含同样内容的警告。
 
 ## Everything 搜索
 
@@ -672,7 +734,7 @@ Invoke-Expression "$s -Action stop"
 | 公司账号无法登录 | 密码错误、账号未启用、没有保存密码，或登录名匹配到多个账号（工号、姓名或邮箱；服务日志会说明这一点，但不会点名任何人）。请运行 `check-redis-users`：不可读的记录、没有密码的记录和出现在多个键上的工号都会在那里计数。可以试试工号，它是歧义最小的。 |
 | `check-redis-users` 报告有不可读的记录 | 有解码器无法读取的哈希（缺少字段或字段类型出乎意料）。报告会给出该键在所有按名称排序的键中的位置，可据此用 `redis-cli` 找到它。这样的记录无法登录。 |
 | 没有"使用 Windows 账号登录（SSO）"按钮 | `TIMEVAULT_SSO_HOST` 为空，或者没有 Redis 用户目录（`TIMEVAULT_REDIS_URL`）。启动日志和设置页会显示 `sso_host`。 |
-| 单点登录提示"无法把这次登录与当前浏览器对应起来" | 单点登录服务记录的地址不是 TimeVault 看到的该浏览器的地址。在反向代理之后，请把 `TIMEVAULT_TRUSTED_PROXIES` 设为该代理（代理必须发送 `X-Forwarded-For`），或设置 `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`。审计页会以原因 `address_mismatch` 显示这次失败（登录过程中浏览器的地址变了则为 `browser_address_changed`）。 |
+| 单点登录提示"无法把这次登录与当前浏览器对应起来" | 单点登录服务记录的地址不是 TimeVault 看到的该浏览器的地址。在反向代理之后，请把 `TIMEVAULT_TRUSTED_PROXIES` 设为该代理（代理必须发送 `X-Forwarded-For`），或设置 `TIMEVAULT_SSO_REQUIRE_SAME_IP=false`。审计页会以原因 `address_mismatch` 显示这次失败（登录过程中浏览器的地址变了则为 `browser_address_changed`），并附上 TimeVault 看到的内容：`started_from`（它当作浏览器的地址）、`sso_address`、`connection`、`trusted_proxy` 和 `forwarded`。如果 `started_from` 是某台服务器的地址，说明紧挨着 TimeVault 的代理前面还有另一层代理，把浏览器隐藏了：见[两层代理](#两层代理)。如果 `trusted_proxy` 是 `false` 且设置了 `forwarded`，说明连接过来的代理不在 `TIMEVAULT_TRUSTED_PROXIES` 中。 |
 | 打开 `/tv/` 后落到了另一个应用（例如门户页），或者页面没有样式、链接都离开了 `/tv/` | TimeVault 不知道自己的前缀。请使用 0.1.5 或更高版本，在 `.env` 中设置 `TIMEVAULT_BASE_PATH=/tv` 并重启；启动日志必须写出"serving under a path prefix"。没有它时，每个重定向和链接都从主机根路径开始，在 `/tv/` 之外。 |
 | 在 `/tv/` 之后，审计日志里所有人都是 `127.0.0.1`，或者单点登录提示无法与当前浏览器对应 | 代理没有传递浏览器的地址，或者 TimeVault 不信任该代理。请在代理配置块中设置 `proxy_set_header X-Forwarded-For $remote_addr;`，并在 `.env` 中设置 `TIMEVAULT_TRUSTED_PROXIES=127.0.0.1`（代理连接过来所用的地址）。 |
 | 登录之后，某个地址里没有 `/tv` 的页面把你显示为未登录 | 设置了前缀之后，Cookie 被限制在该前缀之内。请使用 `/tv/` 之下的地址；页面上的每个链接和重定向本来就都指向那里。 |
