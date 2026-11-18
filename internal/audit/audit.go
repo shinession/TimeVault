@@ -118,6 +118,12 @@ type Filter struct {
 	// BeforeID continues after a previous page (events with a smaller id).
 	BeforeID int64
 	Limit    int
+	// OnlySources limits the list to the events of the sources in SourceIDs and the events that belong to no
+	// source (sign-ins and the like). With an empty SourceIDs only the latter are listed. The cancellation of a job
+	// that an older version recorded without its source belongs to the source of the job; when the job is gone it
+	// cannot be placed, and it is left out.
+	OnlySources bool
+	SourceIDs   []int64
 }
 
 // List returns events newest first.
@@ -125,11 +131,19 @@ func (l *Logger) List(ctx context.Context, f Filter) ([]Event, error) {
 	if f.Limit <= 0 || f.Limit > 500 {
 		f.Limit = 50
 	}
+	if f.SourceIDs == nil {
+		f.SourceIDs = []int64{}
+	}
 	rows, err := l.pool.Query(ctx,
-		`SELECT id, at, actor, action, target_type, target_id, source_id, result, remote_addr, detail, duration_ms
-		 FROM audit_events
-		 WHERE ($1 = '' OR action = $1) AND ($2 = '' OR actor = $2) AND ($3 = 0 OR id < $3)
-		 ORDER BY id DESC LIMIT $4`, f.Action, f.Actor, f.BeforeID, f.Limit)
+		`SELECT e.id, e.at, e.actor, e.action, e.target_type, e.target_id, e.source_id, e.result, e.remote_addr, e.detail, e.duration_ms
+		 FROM audit_events e
+		 LEFT JOIN jobs j ON e.source_id IS NULL AND e.target_type = 'job'
+		                 AND j.id = CASE WHEN e.target_id ~ '^[0-9]{1,18}$' THEN e.target_id::bigint END
+		 WHERE ($1 = '' OR e.action = $1) AND ($2 = '' OR e.actor = $2) AND ($3 = 0 OR e.id < $3)
+		   AND (NOT $5::boolean
+		        OR COALESCE(e.source_id, j.source_id) = ANY($6::bigint[])
+		        OR (e.source_id IS NULL AND e.target_type <> 'job'))
+		 ORDER BY e.id DESC LIMIT $4`, f.Action, f.Actor, f.BeforeID, f.Limit, f.OnlySources, f.SourceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("audit: list: %w", err)
 	}

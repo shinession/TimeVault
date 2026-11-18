@@ -10,7 +10,7 @@
 <section class="tv-card tv-job" data-job-id="{{.View.Job.ID}}"{{if .View.Active}} data-job-active="1"{{end}} data-job-reload>
   <div class="tv-card-head">
     <h1>{{$.JobKindLabel .View.Job.Kind}} <span class="tv-chip tv-chip-{{.View.Job.State}}" data-job-field="state">{{$.StateLabel .View.Job.State}}</span></h1>
-    {{if and .View.Active $.CanBackup}}
+    {{if .CanCancel}}
     <form method="post" action="{{url (printf "/jobs/%d/cancel" .View.Job.ID)}}" class="tv-inline-form">
       {{template "csrf" $}}
       <button class="tv-btn" type="submit">{{$.T "job.cancel"}}</button>

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"timevault/internal/access"
 	"timevault/internal/auth"
 	"timevault/internal/catalog"
 	"timevault/internal/pathutil"
@@ -19,10 +20,11 @@ type sourceOption struct {
 	Selected bool
 }
 
-// pickSource returns the sources and the one selected by the "source" parameter
-// (the first when absent). selected is nil when no source is registered.
-func (s *Server) pickSource(r *http.Request) (opts []sourceOption, selected *catalog.SourceSummary, err error) {
-	sources, err := s.svc.Sources(r.Context())
+// pickSource returns the folders the visitor may browse and the one selected by the "source" parameter
+// (the first when absent). selected is nil when there is none to show. A folder that is not among them, hidden
+// or not, is "not found".
+func (s *Server) pickSource(r *http.Request, sess auth.Session) (opts []sourceOption, selected *catalog.SourceSummary, err error) {
+	sources, err := s.visibleSources(r.Context(), sess)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -71,7 +73,7 @@ type explorerData struct {
 }
 
 func (s *Server) handleExplorer(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	opts, sel, err := s.pickSource(r)
+	opts, sel, err := s.pickSource(r, sess)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -171,7 +173,7 @@ type historyData struct {
 func defaultDest(now time.Time) string { return "restore-" + now.Format("20060102-150405") }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	opts, sel, err := s.pickSource(r)
+	opts, sel, err := s.pickSource(r, sess)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -256,10 +258,8 @@ type versionsData struct {
 }
 
 func (s *Server) handleVersions(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	srcID := intParam(r, "source")
-	src, err := s.svc.Source(r.Context(), srcID)
-	if err != nil {
-		s.handleErr(w, r, err)
+	src, ok := s.source(w, r, sess, intParam(r, "source"), access.Browse)
+	if !ok {
 		return
 	}
 	rel, err := cleanPathParam(r)

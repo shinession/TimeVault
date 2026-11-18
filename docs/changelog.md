@@ -4,6 +4,46 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 0.1.7
+
+What an account may do is now decided for each monitored folder: **Browse**, **Back up** (back up now, including the full re-read) and **Full control**, given to guests, to everybody who is signed in, or to single employee IDs, and set on the Settings page together with the folder. Administrators have full control of every folder. A folder that a visitor may not browse is not there for them at all. The decisions and the alternatives are in [ADR 0013](./adr/0013-per-folder-access-levels.md).
+
+### Added
+
+- **Three levels per folder.** Each includes the ones before it. Browse: see the folder, its history, jobs and audit events, and restore from it (which needs a signed-in account). Back up: also **Back up now**, **Full re-read**, **Verify** and stopping the jobs of the folder. Full control: also change the folder's name, display folder, exclude patterns, on or off, schedule, versions kept and who may do what with it; not the folder on the server's disk, and not adding folders (administrators only). Guests can only be given Browse.
+- **Who may do what** on the Settings page: three lists per folder (Browse, Back up, Full control) with check boxes for **Guests (not signed in)**, **Everyone who is signed in** and the people of the user directory (by name and employee ID, with a box to find one). They are in the form that adds a folder (administrators) and in the form that edits it (administrators and whoever has Full control); the forms are built when asked for (`/settings?add=1`, `/settings?edit=<id>`).
+- **Hidden folders.** A folder that a visitor has no level on is missing from the Explorer, Time Machine, Backups, Settings, Audit and job pages and from the API, and asking for it directly gives the same "not found" as for a folder that does not exist (a visitor who has not signed in is told that signing in may show it). A refusal for a folder that can be seen is a `403`, and the audit log shows it as **Access denied** with the folder and the level that was needed.
+- **API:** `level` (and, for those with Full control, `access`) in `GET /api/v1/sources`; `access` in `POST /api/v1/sources` and `PATCH /api/v1/sources/{id}`; `confirm_lockout` and the error `lockout_not_confirmed`. A person in `access` may be written `user:<employee ID>`.
+- **A warning before somebody gives up their own Full control.** When somebody who is not an administrator saves lists that no longer give them Full control, the form asks for a tick and the API answers `409 lockout_not_confirmed` until `confirm_lockout` is sent.
+- **A revision of the lists** (`access_rev`) in the edit form, in `GET /api/v1/sources` (for those who have Full control) and in `PATCH /api/v1/sources/{id}`. A form that did not change the lists leaves them alone, so saving a schedule cannot bring back grants that somebody else took away while the form was open; a form or a request that changes them is refused (`409`, `access_changed`) when somebody else has changed them since, and the form comes back with the lists as they are now and with what else was typed.
+- **Migration `0005_source_access`** (table `source_access`), and the list of the active accounts of the Redis user directory for the editor (`Directory.Accounts`, kept for a minute).
+
+### Changed
+
+- **Rights are per folder.** The rule that every signed-in account may back up, verify, cancel jobs and restore on every folder is gone; each folder says so. A restore needs Browse on the folder and a signed-in account.
+- **What is shown is cut to the visible folders:** the Explorer and Time Machine selectors, the Backups, Settings, Audit and job pages and their API, the counts of queued and running jobs on the Status page, and the table that hides the server's real folders in text. Events that belong to no folder (sign-ins and the like) stay visible to every signed-in account, as before. The audit record of a refused request holds the route, not the path that was typed.
+- **The pages that show a folder check a signed-in visitor with the user directory** (as the pages that change something already did), so an account that was deactivated or demoted is a guest at once.
+- **A change of a folder** checks the grants again in its own transaction, after it has locked the row, so a Full control that was revoked meanwhile cannot undo its own revocation. Somebody who is not an administrator can never write the folder on the server's disk (`root_path` from them is `403`).
+- **Restore keys.** Repeating a restore with the same `idempotency_key` returns the original job only to the account that started it for that folder; a key that somebody else used is `409`.
+- **Audit.** The events about a folder (a refusal, a stopped job, the creation and the change of a folder) carry the folder; older `job.cancel` events are attributed through their job. Everybody but administrators sees the events of the folders they may browse and the events that belong to no folder.
+- **The Settings page** shows the level on each folder, and the **Edit** button only where the visitor has Full control. Enter in the box that finds a person no longer saves the form.
+- **Who may do what is for those who may change it**, also in the audit log: the lists in the details of the events that create a folder or change its lists (`access`) are `[hidden]` for those who only browse or back up the folder.
+- **A recovery point that is not one of the folder** in a restore preview or start is answered `404`, like a number that does not exist; it used to be a `400` that told that the point exists in another folder.
+
+### Upgrade notes
+
+1. **Apply the migration:** `timevault-server migrate`, or start with `TIMEVAULT_AUTO_MIGRATE=true`. It gives every folder that exists what everybody could do until 0.1.6 (guests browse, everybody who is signed in may back up and restore), so nothing changes until an administrator narrows it with **Edit** on the Settings page. A folder that is added afterwards has no access until somebody is given it (only administrators see it).
+2. **Do not start 0.1.6 against a database that migration `0005` has changed.** 0.1.6 does not know the table, so it would let every visitor see every folder and every signed-in account back up and restore them again. If you have to go back, put the database from before the upgrade back.
+3. **Scripts that use the API:** `GET /api/v1/sources` and the other calls only know the folders the caller may browse, and a request for another folder is `404`; `PATCH` needs Full control and `POST` an administrator, as before. A script that signs in with an ordinary account keeps working on the folders that existed; for a folder that is added later the account needs a level on it. The employee IDs in `access` are stored and shown in upper case. A script that reads the lists and writes them back can send the `access_rev` it read together with `access`, and is told (`409`) when somebody changed them meanwhile.
+4. The build command and `.env` do not change.
+
+### Known limits
+
+- Rights are for a monitored folder as a whole, not for a path inside it; NTFS permissions and Active Directory groups are not consulted.
+- Not closed (see [security.md](./security.md) and [ADR 0013](./adr/0013-per-folder-access-levels.md)): a restore that is already queued or running goes on when the account that started it loses Browse; somebody with Full control who renames their folder to the name of a folder that they cannot see is told that the name is taken; while Redis cannot answer, a session is trusted as issued, so an account that was deactivated or demoted keeps its rights until Redis answers again.
+- The editor lists every active account of the user directory in each of the three lists, so the form grows with the directory (checked with 303 accounts); the list is read from Redis at most once a minute.
+- Checked with automated tests and with the compiled program in a browser against a scratch database and a fake Redis (see [mvp-status.md](./mvp-status.md)); not with the company's Redis and real accounts.
+
 ## 0.1.6
 
 A single sign-on that is refused because of the addresses now says why, and the runbook describes two proxies in a row. It was found when the site was opened through a second server (`http://10.135.36.81/tv/`, whose nginx forwards to the nginx of `prod_eng`): every single sign-in ended with "The sign-in could not be matched to this browser". The reasons and the alternatives are in the update of [ADR 0009](./adr/0009-single-sign-on-and-trusted-proxies.md).
@@ -231,6 +271,46 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 0.1.7
+
+账号能做什么，现在按每个监控文件夹分别决定：**浏览**、**备份**（立即备份，包括完整重读）和**完全控制**，可以授予访客、所有已登录的人或单个工号，并在设置页设置文件夹时一并设定。管理员对每个文件夹都拥有完全控制权。访问者无权浏览的文件夹，对他们来说根本不存在。决定和备选方案见 [ADR 0013](./adr/0013-per-folder-access-levels.md)。
+
+### 新增
+
+- **每个文件夹三个级别。** 每个级别都包含前面的级别。浏览：查看文件夹、它的历史、任务和审计事件，并从中恢复（这需要已登录的账号）。备份：另外还有**立即备份**、**完整重读**、**校验**，以及停止该文件夹的任务。完全控制：另外还可以修改文件夹的名称、显示文件夹、排除规则、启停、计划、保留的版本数，以及谁能对它做什么；不能修改服务器磁盘上的文件夹，也不能添加文件夹（仅限管理员）。访客只能被授予"浏览"。
+- 设置页上的**谁能做什么**：每个文件夹有三个列表（浏览、备份、完全控制），用复选框选择**访客（未登录）**、**所有已登录的人**和用户目录中的人员（按姓名和工号列出，有一个用来查找的输入框）。它们出现在添加文件夹的表单（管理员）和编辑文件夹的表单（管理员和拥有完全控制权的人）中；这些表单在被请求时才构建（`/settings?add=1`、`/settings?edit=<id>`）。
+- **隐藏的文件夹。** 访问者在其上没有任何级别的文件夹，不会出现在文件浏览、时间机器、备份、设置、审计和任务页面以及 API 中，直接请求它会得到与请求不存在的文件夹相同的"未找到"（未登录的访问者会被告知登录后也许能看到）。对能看到的文件夹的拒绝是 `403`，审计日志把它显示为**访问被拒绝**，并带上该文件夹和所需的级别。
+- **API：** `GET /api/v1/sources` 中的 `level`（对拥有完全控制权的人还有 `access`）；`POST /api/v1/sources` 和 `PATCH /api/v1/sources/{id}` 中的 `access`；`confirm_lockout` 和错误 `lockout_not_confirmed`。`access` 中的人员可以写成 `user:<工号>`。
+- **在有人放弃自己的完全控制权之前给出警告。** 不是管理员的人保存的列表如果不再让他们拥有完全控制权，表单会要求勾选确认，API 则在发送 `confirm_lockout` 之前返回 `409 lockout_not_confirmed`。
+- **列表的修订号**（`access_rev`）出现在编辑表单、`GET /api/v1/sources`（给拥有完全控制权的人）和 `PATCH /api/v1/sources/{id}` 中。没有修改列表的表单不会去动它们，所以保存计划时，不会把别人在表单打开期间取消的授权又带回来；修改了列表的表单或请求，如果此后别人已经修改了它们，就会被拒绝（`409`，`access_changed`），表单会带着列表现在的样子和其他已输入的内容重新出现。
+- **迁移 `0005_source_access`**（表 `source_access`），以及为编辑器提供的 Redis 用户目录有效账号列表（`Directory.Accounts`，缓存一分钟）。
+
+### 变更
+
+- **权限按文件夹分别决定。** "每个已登录的账号都可以对每个文件夹备份、校验、取消任务和恢复"这条规则不再存在；由每个文件夹自己说了算。恢复需要对该文件夹的"浏览"权限，并且需要已登录的账号。
+- **展示的内容被裁剪到可见的文件夹：** 文件浏览和时间机器的选择框、备份、设置、审计和任务页面及其 API、状态页上排队和运行中任务的数量，以及在文本中隐藏服务器真实文件夹的映射表。不属于任何文件夹的事件（登录等）仍然像以前一样对每个已登录的账号可见。被拒绝请求的审计记录保存的是路由，而不是输入的路径。
+- **显示文件夹的页面会向用户目录核实已登录的访问者**（和那些会改变内容的页面以前就做的一样），所以被停用或被降级的账号会立即变成访客。
+- **对文件夹的修改**会在锁定该行之后，在自己的事务中再次检查授权，所以期间被撤销的"完全控制"不能撤销自己的撤销。不是管理员的人永远不能写入服务器磁盘上的文件夹（他们提交 `root_path` 会得到 `403`）。
+- **恢复的幂等键。** 用相同的 `idempotency_key` 重复恢复，只会把原来的任务返回给针对该文件夹启动它的那个账号；别人用过的键返回 `409`。
+- **审计。** 与某个文件夹有关的事件（拒绝、任务被停止、文件夹的创建和修改）带有该文件夹；旧的 `job.cancel` 事件通过它的任务归属到文件夹。除管理员外，其他人看到他们可以浏览的文件夹的事件，以及不属于任何文件夹的事件。
+- **设置页**显示每个文件夹上的级别，并且只在访问者拥有完全控制权的地方显示**编辑**按钮。在"查找人员"的输入框中按回车不再保存表单。
+- **谁能做什么只给能修改它的人看**，审计日志中也是如此：创建文件夹或修改其列表的事件详情中的列表（`access`），对只能浏览或备份该文件夹的人是 `[hidden]`。
+- **不是该文件夹的恢复点**出现在恢复预览或启动请求中时，会返回 `404`，与不存在的编号一样；以前是一个 `400`，它会透露该恢复点存在于另一个文件夹。
+
+### 升级说明
+
+1. **应用迁移：** `timevault-server migrate`，或者用 `TIMEVAULT_AUTO_MIGRATE=true` 启动。它会给每个已有的文件夹设置到 0.1.6 为止所有人都能做的事（访客可以浏览，所有已登录的人可以备份和恢复），所以在管理员用设置页的**编辑**收紧之前没有任何变化。之后添加的文件夹在有人被授权之前没有任何访问权限（只有管理员能看到）。
+2. **不要让 0.1.6 去启动一个已被迁移 `0005` 改过的数据库。** 0.1.6 不认识这张表，所以它会再次让每个访问者看到每个文件夹，让每个已登录账号对它们备份和恢复。如果必须回退，请把升级之前的数据库放回去。
+3. **使用 API 的脚本：** `GET /api/v1/sources` 和其他调用只认识调用者可以浏览的文件夹，请求其他文件夹会得到 `404`；`PATCH` 需要完全控制权、`POST` 需要管理员，和以前一样。用普通账号登录的脚本在已有的文件夹上继续可用；对于之后添加的文件夹，账号需要在其上有一个级别。`access` 中的工号以大写形式保存和显示。读取列表再写回去的脚本，可以把它读到的 `access_rev` 与 `access` 一起发送，这样在期间有人修改了列表时会得到 `409`。
+4. 构建命令和 `.env` 都不变。
+
+### 已知限制
+
+- 权限针对整个监控文件夹，而不是其中的某个路径；不会查询 NTFS 权限和 Active Directory 组。
+- 尚未解决的（见 [security.md](./security.md) 和 [ADR 0013](./adr/0013-per-folder-access-levels.md)）：启动恢复的账号失去"浏览"权限后，已排队或正在运行的恢复仍会继续；拥有完全控制权的人把自己的文件夹重命名为一个他们看不到的文件夹的名称时，会被告知该名称已被占用；Redis 无法应答期间，会话按签发时的状态被信任，所以被停用或被降级的账号会一直保留它的权限，直到 Redis 重新应答。
+- 编辑器在三个列表中的每一个里都列出用户目录的每个有效账号，所以表单会随目录变大（检查过 303 个账号）；这份列表最多每分钟从 Redis 读取一次。
+- 已通过自动化测试检查，并用编译后的程序在浏览器中针对临时数据库和模拟的 Redis 检查过（见 [mvp-status.md](./mvp-status.md)）；没有用公司的 Redis 和真实账号检查。
 
 ## 0.1.6
 

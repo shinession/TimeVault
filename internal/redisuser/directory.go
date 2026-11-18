@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"timevault/internal/auth"
 )
@@ -15,6 +16,9 @@ import (
 type Directory struct {
 	store *Store
 	log   *slog.Logger
+	// accounts is the list of accounts kept by Accounts; clock tells it how old that is.
+	accounts accountList
+	clock    func() time.Time
 }
 
 // NewDirectory wraps an open Store. A nil logger discards its messages.
@@ -22,7 +26,7 @@ func NewDirectory(store *Store, log *slog.Logger) *Directory {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	return &Directory{store: store, log: log}
+	return &Directory{store: store, log: log, clock: time.Now}
 }
 
 // Ping checks that Redis answers.

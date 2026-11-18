@@ -123,8 +123,8 @@ func (s *Server) handleLang(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.safeNext(r.URL.Query().Get("next")), http.StatusSeeOther)
 }
 
-func (s *Server) handleHome(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-	sources, err := s.svc.Sources(r.Context())
+func (s *Server) handleHome(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	sources, err := s.visibleSources(r.Context(), sess)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return

@@ -98,15 +98,14 @@ type Permission string
 const (
 	// PermBrowse is open to everyone, signed in or not.
 	PermBrowse Permission = "browse"
-	// PermAccount covers what any signed-in account may do, such as signing out.
+	// PermAccount covers what any signed-in account may do, such as signing out. What an account may do with
+	// one monitored folder (back it up, restore from it, change its settings) is decided per folder by the
+	// access package, not here.
 	PermAccount Permission = "account"
-	// PermBackup covers backing up, verifying and cancelling a job.
-	PermBackup Permission = "backup"
-	// PermRestore covers the restore preview and restoring.
-	PermRestore Permission = "restore"
 	// PermAudit covers the audit log, the service status and the settings page.
 	PermAudit Permission = "audit"
-	// PermManage covers adding, editing and switching off monitored folders.
+	// PermManage is the administrator: it adds monitored folders, sees the folders on the server's disk, and has
+	// full control of every monitored folder.
 	PermManage Permission = "manage"
 )
 
@@ -134,7 +133,7 @@ func (s Session) Can(p Permission) bool {
 	switch p {
 	case PermBrowse:
 		return true
-	case PermAccount, PermBackup, PermRestore, PermAudit:
+	case PermAccount, PermAudit:
 		return s.SignedIn()
 	case PermManage:
 		return s.SignedIn() && s.Role == RoleAdmin

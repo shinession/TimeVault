@@ -6,26 +6,32 @@
 {{if not .Sources}}
 <section class="tv-card tv-empty">
   {{template "icon" "folder"}}
+  {{if $.CanManage}}
   <h2>{{$.T "backups.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "backups.no_sources_text"}}</p>
-  {{if $.CanManage}}<a class="tv-btn tv-btn-primary" href="{{url "/settings"}}">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a>{{end}}
+  <a class="tv-btn tv-btn-primary" href="{{url "/settings"}}">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a>
+  {{else}}
+  <h2>{{$.T "explorer.no_sources_title"}}</h2>
+  <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
+  {{end}}
 </section>
 {{else if $.CanAudit}}
 <p><a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/settings"}}">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a></p>
 {{end}}
 
 {{range .Sources}}
+{{$card := .}}
 <section class="tv-card tv-source">
   <div class="tv-card-head">
     <div>
-      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "backups.disabled"}}</span>{{end}}</h2>
+      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "backups.disabled"}}</span>{{end}}{{if $.SignedIn}} <span class="tv-chip tv-chip-level" title="{{$.T "level.yours"}}">{{$.LevelLabel .Level}}</span>{{end}}</h2>
       {{if or .DisplayPath $.ShowPhysical}}<p class="tv-muted tv-path">
         {{if .DisplayPath}}<code>{{.DisplayPath}}</code>{{end}}
         {{if $.ShowPhysical}}<span class="tv-small">{{if .DisplayPath}}<br>{{$.T "location.on_server"}}: {{end}}<code>{{.RootPath}}</code></span>{{end}}
       </p>{{end}}
     </div>
     <div class="tv-actions">
-      {{if and $.CanBackup .Enabled}}
+      {{if and .CanBackup .Enabled}}
       <form method="post" action="{{url "/backups/run"}}" class="tv-inline-form">
         {{template "csrf" $}}
         <input type="hidden" name="source_id" value="{{.ID}}">
@@ -37,7 +43,7 @@
         <input type="hidden" name="rehash" value="1">
         <button class="tv-btn" type="submit"{{if .Active}} disabled{{end}} title="{{$.T "backups.rehash_hint"}}">{{$.T "backups.run_rehash"}}</button>
       </form>
-      {{else if and (not $.SignedIn) .Enabled}}
+      {{else if and .SignInToBackup .Enabled}}
       <a class="tv-btn tv-btn-small" data-no-boost href="{{url "/login" "next" $.RequestURI}}">{{template "icon" "user"}} {{$.T "backups.sign_in_to_run"}}</a>
       {{end}}
     </div>
@@ -84,7 +90,7 @@
           <td class="num">{{if .SkippedCount}}<span class="tv-chip tv-chip-warn">{{.SkippedCount}}</span>{{else}}0{{end}}</td>
           <td>{{if eq .State "committed"}}<span class="tv-chip tv-chip-{{.Verification}}">{{$.VerifyLabel .Verification}}</span>{{if .Partial}} <span class="tv-chip tv-chip-warn" title="{{$.T "points.partial_hint"}}">{{$.T "points.partial"}}</span>{{end}}{{else}}-{{end}}</td>
           <td class="tv-actions">
-            {{if and (eq .State "committed") $.CanBackup}}
+            {{if and (eq .State "committed") $card.CanBackup}}
             <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
             <form method="post" action="{{url "/backups/verify"}}" class="tv-inline-form">
               {{template "csrf" $}}

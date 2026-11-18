@@ -108,7 +108,7 @@ func TestTheDisplayFolderIsRequiredAndCheckedWhenTheServerHostIsSet(t *testing.T
 	}
 
 	// The settings form offers the field, and asks for it.
-	_, body := bob.get("/settings")
+	_, body := bob.get("/settings?add=1")
 	if !strings.Contains(body, `name="display_path"`) || !strings.Contains(body, `required`) || !strings.Contains(body, `\\`+testHost+`\share\folder`) {
 		t.Errorf("the settings page lacks the display folder field:\n%s", body)
 	}

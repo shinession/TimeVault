@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"timevault/internal/access"
 	"timevault/internal/auth"
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
@@ -83,8 +84,14 @@ func (s *Server) viewJob(j jobs.Job, sources map[int64]string) jobView {
 
 type sourceCard struct {
 	catalog.SourceSummary
-	Active   *jobView
-	Attempts []catalog.Point
+	// Level is what the visitor may do with the folder.
+	Level access.Level
+	// CanBackup says that the visitor may back the folder up and verify its recovery points; SignInToBackup that a
+	// visitor who has not signed in is offered the sign-in for it, because an account could.
+	CanBackup      bool
+	SignInToBackup bool
+	Active         *jobView
+	Attempts       []catalog.Point
 	// Minutes is the interval of the schedule; 0 when there is none.
 	Minutes int
 	// NextRun is when the schedule starts the next backup; nil without a schedule or when the source is switched off.
@@ -104,7 +111,7 @@ type backupsData struct {
 func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, error) {
 	ctx := r.Context()
 	signedIn, view := sess.SignedIn(), s.viewerFor(ctx, sess)
-	sources, err := s.svc.Sources(ctx)
+	sources, err := s.visibleSources(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +119,9 @@ func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, 
 	for _, src := range sources {
 		names[src.ID] = src.Name
 	}
-	recent, err := s.svc.Jobs(ctx, nil, "", 25)
+	filter := jobs.Filter{Limit: 25}
+	filter.OnlySources, filter.SourceIDs = restrictTo(sess, sources)
+	recent, err := s.svc.Jobs(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +152,9 @@ func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, 
 			attempts[i] = view.point(attempts[i])
 		}
 		card := sourceCard{SourceSummary: src, Active: active[src.ID], Attempts: attempts, NextRun: nextRun(src.Source, now)}
+		card.Level = levelOn(sess, src.Source)
+		card.CanBackup = card.Level >= access.Backup
+		card.SignInToBackup = !signedIn && src.Access.OffersAccounts(access.Backup)
 		if src.ScheduleMinutes != nil {
 			card.Minutes = *src.ScheduleMinutes
 		}
@@ -167,7 +179,11 @@ func (s *Server) handleRunBackup(w http.ResponseWriter, r *http.Request, sess au
 		s.fail(w, r, http.StatusBadRequest, "errors.generic")
 		return
 	}
-	job, created, err := s.svc.StartBackup(r.Context(), s.actor(r, sess), intParam(r, "source_id"), r.PostFormValue("rehash") != "")
+	src, ok := s.source(w, r, sess, intParam(r, "source_id"), access.Backup)
+	if !ok {
+		return
+	}
+	job, created, err := s.svc.StartBackup(r.Context(), s.actor(r, sess), src.ID, r.PostFormValue("rehash") != "")
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -188,7 +204,11 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, sess auth.
 		s.fail(w, r, http.StatusBadRequest, "errors.generic")
 		return
 	}
-	job, created, err := s.svc.StartVerify(r.Context(), s.actor(r, sess), intParam(r, "source_id"), intParam(r, "point_id"), r.PostFormValue("deep") != "")
+	src, ok := s.source(w, r, sess, intParam(r, "source_id"), access.Backup)
+	if !ok {
+		return
+	}
+	job, created, err := s.svc.StartVerify(r.Context(), s.actor(r, sess), src.ID, intParam(r, "point_id"), r.PostFormValue("deep") != "")
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -204,8 +224,11 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, sess auth.
 // --- Job page -----------------------------------------------------------------------------
 
 type jobData struct {
-	View      jobView
-	Source    *catalog.Source
+	View   jobView
+	Source *catalog.Source
+	// CanCancel says that the visitor may stop the job: the job is still running and they may back the folder up,
+	// or it is their own restore.
+	CanCancel bool
 	Point     *catalog.Point
 	Events    []jobs.Event
 	Items     []restore.StoredItem
@@ -229,6 +252,12 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		s.handleErr(w, r, err)
 		return
 	}
+	// The job of a folder the visitor may not browse is not there for them.
+	src, err := s.jobSource(ctx, sess, job, access.Browse)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
 	// A restore job shows where files were written and why some were not, so it is for accounts only.
 	if job.Kind == jobs.KindRestore {
 		verified, ok := s.requireSignIn(w, r)
@@ -244,13 +273,13 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		job.Error = ""
 	}
 	job = view.job(job)
-	d := &jobData{}
+	d := &jobData{Source: src}
 	names := map[int64]string{}
-	if job.SourceID != nil {
-		if src, err := s.svc.Source(ctx, *job.SourceID); err == nil {
-			d.Source = &src
-			names[src.ID] = src.Name
-		}
+	if src != nil {
+		names[src.ID] = src.Name
+		d.CanCancel = job.Active() && mayCancel(sess, levelOn(sess, *src), job)
+	} else if isAdmin(sess) {
+		d.CanCancel = job.Active()
 	}
 	if job.PointID != nil {
 		if pt, err := s.cat().GetPoint(ctx, *job.PointID); err == nil {
@@ -296,7 +325,26 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request, sess au
 		s.handleErr(w, r, service.ErrNotFound)
 		return
 	}
-	ok, err := s.svc.CancelJob(r.Context(), s.actor(r, sess), id)
+	ctx := r.Context()
+	job, err := s.svc.Job(ctx, id)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	src, err := s.jobSource(ctx, sess, job, access.Browse)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	level := access.Full
+	if src != nil {
+		level = levelOn(sess, *src)
+	}
+	if !mayCancel(sess, level, job) {
+		s.levelDenied(w, r, sess, job.SourceID, access.Backup)
+		return
+	}
+	ok, err := s.svc.CancelJob(ctx, s.actor(r, sess), id)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return

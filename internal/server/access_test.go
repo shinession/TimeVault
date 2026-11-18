@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -174,6 +175,25 @@ func (d *fakeDirectory) Ping(context.Context) error {
 }
 
 func (d *fakeDirectory) Addr() string { return "directory.test:6379" }
+
+var _ auth.AccountLister = (*fakeDirectory)(nil)
+
+// Accounts lists the active accounts by name, like the real directory.
+func (d *fakeDirectory) Accounts(context.Context) ([]auth.Account, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.down {
+		return nil, auth.ErrUnavailable
+	}
+	var out []auth.Account
+	for _, a := range d.accounts {
+		if !a.Inactive {
+			out = append(out, auth.Account{ID: strings.ToUpper(a.ID), Name: a.Name})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
 
 // testClock is the time the sign-in manager sees, so a test can let a minute pass.
 type testClock struct {
@@ -462,7 +482,7 @@ func TestRolesDecideWhoMayManageMonitoredFolders(t *testing.T) {
 
 	// An ordinary account may look at the settings and at the audit log, but not change the folders.
 	res, body := alice.get("/settings")
-	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Only an administrator can change the monitored folders.") ||
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "Only an administrator can add monitored folders.") ||
 		strings.Contains(body, `action="/settings/sources`) || !strings.Contains(body, "Alice Wong") {
 		t.Errorf("settings page of an ordinary account = %d\n%s", res.StatusCode, body)
 	}
@@ -498,7 +518,7 @@ func TestRolesDecideWhoMayManageMonitoredFolders(t *testing.T) {
 	}
 
 	// An administrator changes the list.
-	res, body = bob.get("/settings")
+	res, body = bob.get("/settings?add=1&edit=" + src)
 	if res.StatusCode != http.StatusOK || !strings.Contains(body, `action="/settings/sources"`) || !strings.Contains(body, `action="/settings/sources/`+src+`"`) {
 		t.Errorf("settings page of an administrator = %d", res.StatusCode)
 	}
@@ -516,9 +536,13 @@ func TestRolesDecideWhoMayManageMonitoredFolders(t *testing.T) {
 	if docs == nil || docs["schedule_minutes"] != float64(15) || docs["root_path"] != other {
 		t.Fatalf("the folder an administrator added = %v", out)
 	}
-	_, out = alice.api("GET", "/api/v1/audit?action=source.create", nil)
+	// The creation of a folder belongs to the folder: it is nobody's business but the administrators' until the folder is given to others.
+	_, out = bob.api("GET", "/api/v1/audit?action=source.create", nil)
 	if events, _ := out["events"].([]any); len(events) != 1 || events[0].(map[string]any)["actor"] != adminID {
 		t.Errorf("the new folder is attributed to the administrator: %v", out)
+	}
+	if _, out = alice.api("GET", "/api/v1/audit?action=source.create", nil); len(out["events"].([]any)) != 0 {
+		t.Errorf("Alice sees the creation of a folder that is not given to her: %v", out)
 	}
 }
 

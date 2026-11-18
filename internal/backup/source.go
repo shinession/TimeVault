@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"timevault/internal/access"
 	"timevault/internal/catalog"
 	"timevault/internal/pathutil"
 )
@@ -25,6 +26,17 @@ type SourceRequest struct {
 	DisplayPath string
 	// MaxVersions is the most versions of one file to keep; nil or 0 means unlimited.
 	MaxVersions *int
+	// Access is who may do what with the folder. On a new source nil means nobody but administrators; on an update
+	// nil leaves the grants as they are, and an empty list removes them all.
+	Access *access.List
+	// KeepRoot, on an update, leaves the folder on the server as it is stored: RootPath is ignored and the update
+	// never writes it, so it cannot undo a change of the folder that was made at the same time. It is for those who
+	// may not change the folder.
+	KeepRoot bool
+	// Authorize, on an update, is called with the grants stored at the moment of the change, with the source
+	// locked, before anything is written; an error stops the change. It lets the caller check again that the one
+	// who asks may still do it.
+	Authorize func(current access.List) error
 	// ConfirmPrune says that deleting the versions a lower limit makes unnecessary is meant. Without it such an
 	// update is refused (see service.PruneNotConfirmedError).
 	ConfirmPrune bool
@@ -113,7 +125,14 @@ func (e *Engine) prepare(ctx context.Context, req SourceRequest, actor string, c
 		}
 		display = u.String()
 	}
-	root, err := e.checkRoot(ctx, req.RootPath, cur)
+	requestedRoot := req.RootPath
+	if req.KeepRoot {
+		if cur == nil {
+			return catalog.NewSource{}, invalid("a new source needs its folder")
+		}
+		requestedRoot = ""
+	}
+	root, err := e.checkRoot(ctx, requestedRoot, cur)
 	if err != nil {
 		return catalog.NewSource{}, err
 	}
@@ -133,7 +152,14 @@ func (e *Engine) prepare(ctx context.Context, req SourceRequest, actor string, c
 			maxVersions = m
 		}
 	}
-	return catalog.NewSource{Name: name, RootPath: root, Excludes: excludes, CreatedBy: actor, ScheduleMinutes: req.ScheduleMinutes, DisplayPath: display, MaxVersions: maxVersions}, nil
+	var granted access.List
+	if req.Access != nil {
+		if err := req.Access.Valid(); err != nil {
+			return catalog.NewSource{}, invalid("%v", err)
+		}
+		granted = *req.Access
+	}
+	return catalog.NewSource{Name: name, RootPath: root, Excludes: excludes, CreatedBy: actor, ScheduleMinutes: req.ScheduleMinutes, DisplayPath: display, MaxVersions: maxVersions, Access: granted}, nil
 }
 
 // checkRoot validates the folder of a source and returns it cleaned. cur is the

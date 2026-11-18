@@ -491,6 +491,57 @@ input[type="checkbox"]:disabled { opacity: .5; cursor: not-allowed; }
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red) 38%, transparent);
 }
 
+/* Access editor of the folder settings (who has each level) and the summary of it on the folder's card. */
+.tv-access { grid-column: 1 / -1; display: flex; flex-direction: column; gap: .75rem; min-width: 0; margin: 0; padding: 0; border: 0; }
+.tv-access > legend { padding: 0; margin-bottom: .35rem; color: var(--muted); font-size: .875rem; font-weight: 600; }
+.tv-access-levels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .875rem; }
+.tv-access-level {
+  display: flex;
+  flex-direction: column;
+  gap: .5rem;
+  min-width: 0;
+  padding: .875rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+.tv-access-head { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.tv-access-head h4 { margin: 0; font-size: 1rem; }
+.tv-access-groups { display: flex; flex-direction: column; gap: .35rem; }
+.tv-access-filter {
+  width: 100%;
+  min-height: 2.25rem;
+  padding: .35rem .7rem;
+  border: 1px solid var(--field-line);
+  border-radius: var(--r-md);
+  background: var(--field);
+  color: var(--text);
+}
+.tv-access-filter:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent);
+  outline: none;
+}
+.tv-access-people {
+  display: flex;
+  flex-direction: column;
+  max-height: 15rem;
+  overflow: auto;
+  padding: .25rem;
+  border: 1px solid var(--field-line);
+  border-radius: var(--r-md);
+  background: var(--field);
+}
+.tv-access-people .tv-check { padding: .3rem .45rem; border-radius: var(--r-sm); }
+.tv-access-people .tv-check:hover { background: var(--hover); }
+.tv-access-people > p { padding: .35rem .45rem; }
+.tv-access-summary { display: flex; flex-direction: column; gap: .35rem; }
+.tv-access-summary h3 { margin: 0; color: var(--muted); font-size: .8125rem; font-weight: 600; }
+.tv-access-summary ul { display: flex; flex-direction: column; gap: .35rem; margin: 0; padding: 0; list-style: none; }
+.tv-access-summary li { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; }
+
+/* The card a page opens its form in is scrolled into view below the sticky header. */
+[data-scroll-into-view] { scroll-margin-top: 5rem; }
+
 .tv-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
 .tv-source-form { display: flex; align-items: center; gap: .5rem; margin: 0; }
 
@@ -943,7 +994,7 @@ a.tv-row:focus-visible { outline-offset: -2px; }
 .tv-chip-protected, .tv-chip-verified, .tv-chip-succeeded, .tv-chip-committed, .tv-chip-ok, .tv-chip-same,
 .tv-chip-audit-ok, .tv-chip-status-ok, .tv-chip-action-create { --chip: var(--green); }
 
-.tv-chip-new, .tv-chip-running, .tv-chip-building, .tv-chip-live,
+.tv-chip-new, .tv-chip-running, .tv-chip-building, .tv-chip-live, .tv-chip-level,
 .tv-chip-action-rename, .tv-chip-action-mkdir { --chip: var(--blue); }
 
 .tv-chip-changed, .tv-chip-modified, .tv-chip-warn, .tv-chip-not_captured, .tv-chip-validated, .tv-chip-queued,
@@ -1219,6 +1270,7 @@ a.tv-row:focus-visible { outline-offset: -2px; }
 
 @media (max-width: 900px) {
   .tv-table th, .tv-table td { padding-inline: .5rem; }
+  .tv-access-levels { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 720px) {

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"timevault/internal/access"
 	"timevault/internal/audit"
 	"timevault/internal/auth"
 	"timevault/internal/backup"
@@ -21,24 +22,26 @@ import (
 
 func (s *Server) apiRoutes() {
 	m := s.mux
-	// Reading is open to everyone.
+	// Reading is open to everyone, for the folders that let guests browse. What is shown depends on who asks (a
+	// folder may be for some accounts only), so a request with a session cookie is checked with the user directory.
 	m.HandleFunc("GET /api/v1/session", s.open(s.apiSession))
 	m.HandleFunc("GET /api/v1/sources", s.openChecked(s.apiSources))
-	m.HandleFunc("GET /api/v1/files", s.open(s.apiFiles))
-	m.HandleFunc("GET /api/v1/search", s.open(s.apiSearch))
-	m.HandleFunc("GET /api/v1/recovery-points", s.open(s.apiPoints))
-	m.HandleFunc("GET /api/v1/history/tree", s.open(s.apiHistoryTree))
-	m.HandleFunc("GET /api/v1/history/versions", s.open(s.apiHistoryVersions))
+	m.HandleFunc("GET /api/v1/files", s.openChecked(s.apiFiles))
+	m.HandleFunc("GET /api/v1/search", s.openChecked(s.apiSearch))
+	m.HandleFunc("GET /api/v1/recovery-points", s.openChecked(s.apiPoints))
+	m.HandleFunc("GET /api/v1/history/tree", s.openChecked(s.apiHistoryTree))
+	m.HandleFunc("GET /api/v1/history/versions", s.openChecked(s.apiHistoryVersions))
 	m.HandleFunc("GET /api/v1/jobs/{id}", s.openChecked(s.apiJob))
-	// Everything that works on data, and what reveals the server, needs an account.
+	// Everything that works on data, and what reveals the server, needs an account. What the account may do with
+	// one folder is checked by the handler.
 	m.HandleFunc("GET /api/v1/health", s.need(auth.PermAudit, s.apiHealth))
 	m.HandleFunc("GET /api/v1/settings", s.need(auth.PermAudit, s.apiSettings))
 	m.HandleFunc("GET /api/v1/audit", s.need(auth.PermAudit, s.apiAudit))
-	m.HandleFunc("POST /api/v1/backups", s.need(auth.PermBackup, s.apiStartBackup))
-	m.HandleFunc("POST /api/v1/restores/preview", s.need(auth.PermRestore, s.apiRestorePreview))
-	m.HandleFunc("POST /api/v1/restores", s.need(auth.PermRestore, s.apiRestoreStart))
+	m.HandleFunc("POST /api/v1/backups", s.need(auth.PermAccount, s.apiStartBackup))
+	m.HandleFunc("POST /api/v1/restores/preview", s.need(auth.PermAccount, s.apiRestorePreview))
+	m.HandleFunc("POST /api/v1/restores", s.need(auth.PermAccount, s.apiRestoreStart))
 	m.HandleFunc("POST /api/v1/sources", s.need(auth.PermManage, s.apiAddSource))
-	m.HandleFunc("PATCH /api/v1/sources/{id}", s.need(auth.PermManage, s.apiUpdateSource))
+	m.HandleFunc("PATCH /api/v1/sources/{id}", s.need(auth.PermAccount, s.apiUpdateSource))
 }
 
 // --- JSON plumbing -------------------------------------------------------------------
@@ -129,13 +132,31 @@ type apiSource struct {
 	MaxVersions *int      `json:"max_versions"`
 	CreatedAt   time.Time `json:"created_at"`
 	LatestPoint *apiPoint `json:"latest_point,omitempty"`
+	// Level is what the caller may do with the folder: browse, backup or full.
+	Level string `json:"level"`
+	// Access is who may do what with the folder, only given to those who may change it; AccessRev names the state of
+	// those lists (send it back with access to be told when somebody else has changed them since).
+	Access    *access.Spec `json:"access,omitempty"`
+	AccessRev string       `json:"access_rev,omitempty"`
 }
 
-func toAPISource(src catalog.Source) apiSource {
-	return apiSource{
-		ID: src.ID, Name: src.Name, DisplayPath: src.DisplayPath, RootPath: src.RootPath, Excludes: src.Excludes, Enabled: src.Enabled,
+// toAPISource describes a folder to the caller: the folder on the server's disk only to administrators, and who may
+// do what only to those who may change it.
+func toAPISource(src catalog.Source, sess auth.Session) apiSource {
+	level := levelOn(sess, src)
+	a := apiSource{
+		ID: src.ID, Name: src.Name, DisplayPath: src.DisplayPath, Excludes: src.Excludes, Enabled: src.Enabled,
 		ScheduleMinutes: src.ScheduleMinutes, LastRunAt: src.LastRunAt, LastRunMS: src.LastRunMS, MaxVersions: src.MaxVersions, CreatedAt: src.CreatedAt,
+		Level: level.String(),
 	}
+	if isAdmin(sess) {
+		a.RootPath = src.RootPath
+	}
+	if level >= access.Full {
+		spec := src.Access.Spec()
+		a.Access, a.AccessRev = &spec, src.Access.Digest()
+	}
+	return a
 }
 
 type apiEntry struct {
@@ -288,17 +309,14 @@ func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request, sess auth.Ses
 }
 
 func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	sources, err := s.svc.Sources(r.Context())
+	sources, err := s.visibleSources(r.Context(), sess)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
 	out := make([]apiSource, 0, len(sources))
 	for _, src := range sources {
-		a := toAPISource(src.Source)
-		if !sess.Can(auth.PermManage) {
-			a.RootPath = ""
-		}
+		a := toAPISource(src.Source, sess)
 		if src.Latest != nil {
 			p := toAPIPoint(*src.Latest)
 			a.LatestPoint = &p
@@ -310,12 +328,13 @@ func (s *Server) apiSources(w http.ResponseWriter, r *http.Request, sess auth.Se
 
 func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	var body struct {
-		Name            string   `json:"name"`
-		DisplayPath     string   `json:"display_path"`
-		RootPath        string   `json:"root_path"`
-		Excludes        []string `json:"excludes"`
-		ScheduleMinutes *int     `json:"schedule_minutes"`
-		MaxVersions     *int     `json:"max_versions"`
+		Name            string       `json:"name"`
+		DisplayPath     string       `json:"display_path"`
+		RootPath        string       `json:"root_path"`
+		Excludes        []string     `json:"excludes"`
+		ScheduleMinutes *int         `json:"schedule_minutes"`
+		MaxVersions     *int         `json:"max_versions"`
+		Access          *access.Spec `json:"access"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -323,16 +342,25 @@ func (s *Server) apiAddSource(w http.ResponseWriter, r *http.Request, sess auth.
 	if body.Excludes == nil {
 		body.Excludes = backup.DefaultExcludes
 	}
+	// A new folder is seen by administrators only until somebody is given access to it.
+	grants := access.List{}
+	if body.Access != nil {
+		var err error
+		if grants, err = s.grantsOf(r.Context(), *body.Access, nil); err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
+	}
 	src, err := s.svc.AddSource(r.Context(), s.actor(r, sess), backup.SourceRequest{
 		Name: body.Name, DisplayPath: body.DisplayPath, RootPath: body.RootPath, Excludes: body.Excludes, ScheduleMinutes: body.ScheduleMinutes,
-		MaxVersions: body.MaxVersions,
+		MaxVersions: body.MaxVersions, Access: &grants,
 	})
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
 	w.Header().Set("Location", "/api/v1/sources")
-	writeJSON(w, http.StatusCreated, toAPISource(src))
+	writeJSON(w, http.StatusCreated, toAPISource(src, sess))
 }
 
 // optionalInt tells a field that is missing from the JSON from an explicit null.
@@ -355,30 +383,40 @@ func (o *optionalInt) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// apiUpdateSource changes the fields that are present in the body and leaves the others as they are.
+// apiUpdateSource changes the fields that are present in the body and leaves the others as they are. Whoever has
+// full control of the folder may do it; the folder on the server's disk can only be changed by an administrator.
 func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		s.handleErr(w, r, service.ErrNotFound)
 		return
 	}
-	cur, err := s.svc.Source(r.Context(), id)
-	if err != nil {
-		s.handleErr(w, r, err)
+	cur, ok := s.source(w, r, sess, id, access.Full)
+	if !ok {
 		return
 	}
 	var body struct {
-		Name            *string     `json:"name"`
-		DisplayPath     *string     `json:"display_path"`
-		RootPath        *string     `json:"root_path"`
-		Excludes        *[]string   `json:"excludes"`
-		Enabled         *bool       `json:"enabled"`
-		ScheduleMinutes optionalInt `json:"schedule_minutes"`
-		MaxVersions     optionalInt `json:"max_versions"`
+		Name            *string      `json:"name"`
+		DisplayPath     *string      `json:"display_path"`
+		RootPath        *string      `json:"root_path"`
+		Excludes        *[]string    `json:"excludes"`
+		Enabled         *bool        `json:"enabled"`
+		ScheduleMinutes optionalInt  `json:"schedule_minutes"`
+		MaxVersions     optionalInt  `json:"max_versions"`
+		Access          *access.Spec `json:"access"`
+		// AccessRev is the access_rev of the folder that the access lists were made from. When it is sent and
+		// the grants of the folder have changed since, nothing is changed (409 access_changed).
+		AccessRev string `json:"access_rev"`
 		// ConfirmPrune says that deleting the older versions a lower limit makes unnecessary is meant.
 		ConfirmPrune bool `json:"confirm_prune"`
+		// ConfirmLockout says that taking away the caller's own full control of the folder is meant.
+		ConfirmLockout bool `json:"confirm_lockout"`
 	}
 	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.RootPath != nil && !isAdmin(sess) {
+		s.rootPathDenied(w, r, sess, id)
 		return
 	}
 	req := backup.SourceRequest{Name: cur.Name, DisplayPath: cur.DisplayPath, RootPath: cur.RootPath, Excludes: cur.Excludes,
@@ -405,21 +443,35 @@ func (s *Server) apiUpdateSource(w http.ResponseWriter, r *http.Request, sess au
 	if body.MaxVersions.Set {
 		req.MaxVersions = body.MaxVersions.Value
 	}
+	rev := ""
+	if body.Access != nil {
+		grants, err := s.grantsOf(r.Context(), *body.Access, cur.Access)
+		if err == nil {
+			err = s.lockout(sess, grants, body.ConfirmLockout)
+		}
+		if err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
+		req.Access, rev = &grants, body.AccessRev
+	}
+	if !isAdmin(sess) {
+		// The folder on the server is not theirs to change, and the update must not write it at all: it could undo
+		// a change that an administrator makes at the same moment.
+		req.RootPath, req.KeepRoot = "", true
+	}
+	req.Authorize = authorizeChange(sess, access.Full, rev)
 	src, err := s.svc.UpdateSource(r.Context(), s.actor(r, sess), id, req, enabled)
 	if err != nil {
-		s.handleErr(w, r, err)
+		s.folderRefused(w, r, sess, id, access.Full, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, toAPISource(src))
+	writeJSON(w, http.StatusOK, toAPISource(src, sess))
 }
 
-func (s *Server) sourceFromQuery(w http.ResponseWriter, r *http.Request) (catalog.Source, bool) {
-	src, err := s.svc.Source(r.Context(), intParam(r, "source_id"))
-	if err != nil {
-		s.handleErr(w, r, err)
-		return catalog.Source{}, false
-	}
-	return src, true
+// sourceFromQuery is source for the endpoints that take the folder as the source_id parameter.
+func (s *Server) sourceFromQuery(w http.ResponseWriter, r *http.Request, sess auth.Session, min access.Level) (catalog.Source, bool) {
+	return s.source(w, r, sess, intParam(r, "source_id"), min)
 }
 
 // hideReasons hides the real folders in the reasons files were not captured, for everybody but administrators. The
@@ -443,7 +495,7 @@ func (s *Server) hideReasons(r *http.Request, sess auth.Session, lists ...[]apiE
 }
 
 func (s *Server) apiFiles(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	src, ok := s.sourceFromQuery(w, r)
+	src, ok := s.sourceFromQuery(w, r, sess, access.Browse)
 	if !ok {
 		return
 	}
@@ -482,8 +534,8 @@ func (s *Server) apiFiles(w http.ResponseWriter, r *http.Request, sess auth.Sess
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-	src, ok := s.sourceFromQuery(w, r)
+func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	src, ok := s.sourceFromQuery(w, r, sess, access.Browse)
 	if !ok {
 		return
 	}
@@ -507,8 +559,8 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) apiPoints(w http.ResponseWriter, r *http.Request, _ auth.Session) {
-	src, ok := s.sourceFromQuery(w, r)
+func (s *Server) apiPoints(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	src, ok := s.sourceFromQuery(w, r, sess, access.Browse)
 	if !ok {
 		return
 	}
@@ -525,7 +577,7 @@ func (s *Server) apiPoints(w http.ResponseWriter, r *http.Request, _ auth.Sessio
 }
 
 func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	src, ok := s.sourceFromQuery(w, r)
+	src, ok := s.sourceFromQuery(w, r, sess, access.Browse)
 	if !ok {
 		return
 	}
@@ -582,7 +634,7 @@ func (s *Server) apiHistoryTree(w http.ResponseWriter, r *http.Request, sess aut
 }
 
 func (s *Server) apiHistoryVersions(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	src, ok := s.sourceFromQuery(w, r)
+	src, ok := s.sourceFromQuery(w, r, sess, access.Browse)
 	if !ok {
 		return
 	}
@@ -628,7 +680,11 @@ func (s *Server) apiStartBackup(w http.ResponseWriter, r *http.Request, sess aut
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	job, created, err := s.svc.StartBackup(r.Context(), s.actor(r, sess), body.SourceID, body.Rehash)
+	src, ok := s.source(w, r, sess, body.SourceID, access.Backup)
+	if !ok {
+		return
+	}
+	job, created, err := s.svc.StartBackup(r.Context(), s.actor(r, sess), src.ID, body.Rehash)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -649,6 +705,11 @@ func (s *Server) apiJob(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 	}
 	job, err := s.svc.Job(r.Context(), id)
 	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	// The job of a folder the visitor may not browse is not there for them.
+	if _, err := s.jobSource(r.Context(), sess, job, access.Browse); err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
@@ -704,6 +765,10 @@ func (s *Server) apiRestorePreview(w http.ResponseWriter, r *http.Request, sess 
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	// Whoever may browse a folder may restore from it.
+	if _, ok := s.source(w, r, sess, body.SourceID, access.Browse); !ok {
+		return
+	}
 	plan, token, err := s.svc.PreviewRestore(r.Context(), s.actor(r, sess), body.request())
 	if err != nil {
 		s.handleErr(w, r, err)
@@ -734,7 +799,7 @@ func (s *Server) apiRestorePreview(w http.ResponseWriter, r *http.Request, sess 
 			"rename": t.Rename, "skip_same": t.SkipSame, "skip_exists": t.SkipExists, "blocked": t.Blocked,
 			"missing_objects": t.Missing, "not_captured": t.NotCaptured,
 		},
-		"sample": conv(plan.Sample), "problems": conv(view.problems(plan.Problems)),
+		"sample": conv(view.problems(plan.Sample)), "problems": conv(view.problems(plan.Problems)),
 	}
 	if destReal != "" {
 		out["destination_real"] = destReal
@@ -752,6 +817,9 @@ func (s *Server) apiRestoreStart(w http.ResponseWriter, r *http.Request, sess au
 	if !decodeJSON(w, r, &body) {
 		return
 	}
+	if _, ok := s.source(w, r, sess, body.SourceID, access.Browse); !ok {
+		return
+	}
 	job, err := s.svc.StartRestore(r.Context(), s.actor(r, sess), body.request(), body.ConfirmationToken, body.IdempotencyKey, body.ConfirmOverwrite)
 	if err != nil {
 		s.handleErr(w, r, err)
@@ -762,9 +830,19 @@ func (s *Server) apiRestoreStart(w http.ResponseWriter, r *http.Request, sess au
 }
 
 func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	events, err := s.svc.AuditEvents(r.Context(), audit.Filter{
+	filter := audit.Filter{
 		Action: r.FormValue("action"), Actor: r.FormValue("actor"), BeforeID: intParam(r, "before"), Limit: intParamDefault(r, "limit", 50, 1, 500),
-	})
+	}
+	if !isAdmin(sess) {
+		// The events of a folder are for the people who may see the folder, like on the Audit page.
+		visible, err := s.visibleSources(r.Context(), sess)
+		if err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
+		filter.OnlySources, filter.SourceIDs = restrictTo(sess, visible)
+	}
+	events, err := s.svc.AuditEvents(r.Context(), filter)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return

@@ -15,10 +15,12 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
+	"timevault/internal/access"
 	"timevault/internal/audit"
 	"timevault/internal/auth"
 	"timevault/internal/backup"
@@ -149,26 +151,30 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /auth/sso/poll", s.handleSSOPoll)
 	m.HandleFunc("POST /logout", s.need(auth.PermAccount, s.handleLogout))
 
-	// Anyone may look at what is protected and at its history.
-	m.HandleFunc("GET /{$}", s.open(s.handleHome))
+	// Anyone may look at the folders that let guests browse; a folder that does not is not there for them. What a
+	// signed-in account may do with a folder is decided per folder (see access.go), by the handlers. These pages
+	// decide what to show by who is asking, so an account that looks signed in is first checked with the user
+	// directory (openChecked): a deactivated account or one that lost its role must not keep what only it could see.
+	m.HandleFunc("GET /{$}", s.openChecked(s.handleHome))
 	m.HandleFunc("/", s.handleNotFound)
-	m.HandleFunc("GET /explorer", s.open(s.handleExplorer))
-	m.HandleFunc("GET /history", s.open(s.handleHistory))
-	m.HandleFunc("GET /versions", s.open(s.handleVersions))
+	m.HandleFunc("GET /explorer", s.openChecked(s.handleExplorer))
+	m.HandleFunc("GET /history", s.openChecked(s.handleHistory))
+	m.HandleFunc("GET /versions", s.openChecked(s.handleVersions))
 	m.HandleFunc("GET /backups", s.openChecked(s.handleBackups))
 	m.HandleFunc("GET /jobs/{id}", s.openChecked(s.handleJob))
 
-	// Everything that works on data needs an account.
-	m.HandleFunc("POST /backups/run", s.need(auth.PermBackup, s.handleRunBackup))
-	m.HandleFunc("POST /backups/verify", s.need(auth.PermBackup, s.handleVerify))
-	m.HandleFunc("POST /jobs/{id}/cancel", s.need(auth.PermBackup, s.handleCancelJob))
-	m.HandleFunc("POST /restore/preview", s.need(auth.PermRestore, s.handleRestorePreview))
-	m.HandleFunc("POST /restore/start", s.need(auth.PermRestore, s.handleRestoreStart))
+	// Everything that works on data needs an account; the folder-level check is made by the handler.
+	m.HandleFunc("POST /backups/run", s.need(auth.PermAccount, s.handleRunBackup))
+	m.HandleFunc("POST /backups/verify", s.need(auth.PermAccount, s.handleVerify))
+	m.HandleFunc("POST /jobs/{id}/cancel", s.need(auth.PermAccount, s.handleCancelJob))
+	m.HandleFunc("POST /restore/preview", s.need(auth.PermAccount, s.handleRestorePreview))
+	m.HandleFunc("POST /restore/start", s.need(auth.PermAccount, s.handleRestoreStart))
 	m.HandleFunc("GET /audit", s.need(auth.PermAudit, s.handleAudit))
 	m.HandleFunc("GET /status", s.need(auth.PermAudit, s.handleStatus))
 	m.HandleFunc("GET /settings", s.need(auth.PermAudit, s.handleSettings))
 	m.HandleFunc("POST /settings/sources", s.need(auth.PermManage, s.handleAddSource))
-	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermManage, s.handleUpdateSource))
+	// Whoever has full control of a folder may change its settings; the handler checks that.
+	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermAccount, s.handleUpdateSource))
 
 	s.apiRoutes()
 }
@@ -231,9 +237,9 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 
 type sessionHandler func(w http.ResponseWriter, r *http.Request, sess auth.Session)
 
-// open serves everyone. The session is the visitor's when they are signed in
-// and the zero Session otherwise. Only the cookie is read, so browsing never
-// depends on the user directory being reachable.
+// open serves everyone, for what does not depend on who asks. The session is the visitor's when they are signed in
+// and the zero Session otherwise. Only the cookie is read, so the answer is the cookie's and never depends on the
+// user directory being reachable; it must not decide what a visitor may see or do.
 func (s *Server) open(next sessionHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, _ := s.auth.Session(r)
@@ -241,11 +247,11 @@ func (s *Server) open(next sessionHandler) http.HandlerFunc {
 	}
 }
 
-// openChecked serves everyone like open, for the pages and endpoints that show
-// more to an account than to a visitor (who requested a job, why it failed, the
-// folders on the server's disk). A visitor who looks signed in is first checked
-// with the user directory, so an account that was deactivated meanwhile sees
-// what anyone sees.
+// openChecked serves everyone like open, for the pages and endpoints that show more to an account than to a
+// visitor: which folders there are (a folder may be for some accounts only), who requested a job, why it failed,
+// the folders on the server's disk. A visitor who looks signed in is first checked with the user directory, so an
+// account that was deactivated meanwhile, or that lost its role, sees what anyone sees. While the directory cannot
+// be reached the session is trusted as issued (see auth.Manager.Verify), so browsing keeps working.
 func (s *Server) openChecked(next sessionHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, _ := s.signedIn(w, r)
@@ -320,9 +326,17 @@ func (s *Server) askToSignIn(w http.ResponseWriter, r *http.Request) {
 
 // denied audits and answers a request that was understood but refused.
 func (s *Server) denied(w http.ResponseWriter, r *http.Request, sess auth.Session, reason, pageKey string, status int, apiCode, apiMessage string) {
+	s.refused(w, r, sess, nil, map[string]any{"reason": reason}, pageKey, status, apiCode, apiMessage)
+}
+
+// refused is denied for a request that concerns a monitored folder: the audit record belongs to the folder, so
+// people who cannot see the folder do not see the record either. The record names the route that matched, never
+// the address as it was typed: that text is the visitor's, and it would be shown to others in the audit log.
+func (s *Server) refused(w http.ResponseWriter, r *http.Request, sess auth.Session, source *int64, detail map[string]any, pageKey string, status int, apiCode, apiMessage string) {
 	a := s.actor(r, sess)
+	detail["method"], detail["path"] = r.Method, routeOf(r)
 	s.svc.Audit(r.Context(), audit.Event{Actor: a.User, Action: audit.ActionAccessDenied, Result: audit.ResultDenied,
-		RemoteAddr: a.Remote, Detail: map[string]any{"reason": reason, "method": r.Method, "path": r.URL.Path}})
+		SourceID: source, RemoteAddr: a.Remote, Detail: detail})
 	if isAPI(r) {
 		writeJSONError(w, status, apiCode, apiMessage)
 		return
@@ -331,6 +345,29 @@ func (s *Server) denied(w http.ResponseWriter, r *http.Request, sess auth.Sessio
 }
 
 func isAPI(r *http.Request) bool { return strings.HasPrefix(r.URL.Path, "/api/") }
+
+var (
+	routeWildcard = regexp.MustCompile(`\{[^{}]*\}`)
+	routeNumber   = regexp.MustCompile(`^[0-9]{1,18}$`)
+)
+
+// routeOf names the route of a request: the pattern that matched, with the numbers it captured filled in
+// (/jobs/12/cancel) and the other wildcards left as they are, so that no text a visitor typed gets into it.
+func routeOf(r *http.Request) string {
+	route := r.Pattern
+	if _, rest, found := strings.Cut(route, " "); found {
+		route = rest
+	}
+	if route == "" {
+		return "(no route)"
+	}
+	return routeWildcard.ReplaceAllStringFunc(route, func(wildcard string) string {
+		if v := r.PathValue(strings.Trim(wildcard, "{}.")); routeNumber.MatchString(v) {
+			return v
+		}
+		return wildcard
+	})
+}
 
 func (s *Server) actor(r *http.Request, sess auth.Session) service.Actor {
 	return service.Actor{User: sess.User, Remote: s.clientIP(r)}
@@ -407,9 +444,13 @@ func classify(err error) (int, string) {
 	switch {
 	case errors.Is(err, service.ErrNotFound), errors.Is(err, catalog.ErrNotFound):
 		return http.StatusNotFound, "errors.not_found"
+	case errors.Is(err, service.ErrForbidden):
+		return http.StatusForbidden, "errors.forbidden"
+	case errors.Is(err, errLockout):
+		return http.StatusConflict, "errors.lockout_not_confirmed"
 	case errors.Is(err, pathutil.ErrUnsafePath):
 		return http.StatusBadRequest, "errors.bad_path"
-	case errors.Is(err, backup.ErrInvalidSource), errors.Is(err, restore.ErrInvalidRequest), errors.Is(err, search.ErrBadQuery):
+	case errors.Is(err, backup.ErrInvalidSource), errors.Is(err, access.ErrInvalid), errors.Is(err, restore.ErrInvalidRequest), errors.Is(err, search.ErrBadQuery):
 		return http.StatusBadRequest, ""
 	case errors.Is(err, catalog.ErrConflict):
 		return http.StatusConflict, ""
@@ -435,6 +476,10 @@ func classify(err error) (int, string) {
 	var unconfirmed *service.PruneNotConfirmedError
 	if errors.As(err, &unconfirmed) {
 		return http.StatusConflict, "errors.prune_not_confirmed"
+	}
+	var changed *accessChangedError
+	if errors.As(err, &changed) {
+		return http.StatusConflict, "errors.access_changed"
 	}
 	return http.StatusInternalServerError, "errors.internal"
 }
@@ -509,6 +554,11 @@ func (s *Server) failPage(w http.ResponseWriter, r *http.Request, status int, ke
 	}
 	sess, _ := s.auth.Session(r)
 	p := s.newPage(r, sess, "errors.title", "")
+	// A folder somebody may not see is answered like one that does not exist; a visitor who has not signed in is
+	// told that signing in may show it.
+	if status == http.StatusNotFound && !sess.SignedIn() && detail == "" {
+		detail = p.T("errors.sign_in_hint")
+	}
 	p.Data = errorData{Status: status, Key: key, Detail: detail, Ref: ref}
 	s.render(w, r, "error", status, p)
 }

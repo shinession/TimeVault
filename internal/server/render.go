@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"timevault/internal/access"
 	"timevault/internal/audit"
 	"timevault/internal/auth"
 	"timevault/internal/catalog"
@@ -54,9 +55,12 @@ type Page struct {
 
 // SignedIn reports whether the visitor has signed in. The Can* methods tell
 // the templates which controls to offer; the server enforces the same rules.
-func (p *Page) SignedIn() bool   { return p.sess.SignedIn() }
-func (p *Page) CanBackup() bool  { return p.sess.Can(auth.PermBackup) }
-func (p *Page) CanRestore() bool { return p.sess.Can(auth.PermRestore) }
+// What a visitor may do with one folder (back it up, change its settings) is not here: the pages that show a
+// folder carry that level themselves, see access.go.
+func (p *Page) SignedIn() bool { return p.sess.SignedIn() }
+
+// CanRestore reports whether the visitor may restore from the folders they can browse: every signed-in account may.
+func (p *Page) CanRestore() bool { return p.sess.SignedIn() }
 func (p *Page) CanAudit() bool   { return p.sess.Can(auth.PermAudit) }
 func (p *Page) CanManage() bool  { return p.sess.Can(auth.PermManage) }
 
@@ -196,6 +200,19 @@ func (p *Page) LiveLabel(v service.LiveStatus) string {
 }
 func (p *Page) NowLabel(v catalog.NowStatus) string { return p.label("now.", string(v)) }
 
+// LevelLabel names a level a visitor can have on a folder.
+func (p *Page) LevelLabel(l access.Level) string { return p.label("level.", l.String()) }
+
+// LevelHint says what a level allows.
+func (p *Page) LevelHint(l access.Level) string { return p.label("level.hint.", l.String()) }
+
+// pagePair hands a template that is called with a single value both the page, for its translations, and a value of
+// its own.
+type pagePair struct {
+	Page  *Page
+	Value any
+}
+
 // ComponentDetail is the detail text of a status row: translated when the
 // service supplied a key for it, otherwise exactly as reported.
 func (p *Page) ComponentDetail(c service.Component) string {
@@ -238,6 +255,7 @@ func (s *Server) funcs() template.FuncMap {
 		"iso":       func(t time.Time) string { return t.UTC().Format(time.RFC3339) },
 		"lower":     strings.ToLower,
 		"join":      strings.Join,
+		"pair":      func(p *Page, v any) pagePair { return pagePair{Page: p, Value: v} },
 	}
 }
 

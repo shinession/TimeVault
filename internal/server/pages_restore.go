@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"timevault/internal/access"
 	"timevault/internal/audit"
 	"timevault/internal/auth"
 	"timevault/internal/restore"
@@ -51,6 +52,7 @@ func (s *Server) renderPreview(w http.ResponseWriter, r *http.Request, sess auth
 	}
 	view := s.viewerFor(r.Context(), sess)
 	plan.Problems = view.problems(plan.Problems)
+	plan.Sample = view.problems(plan.Sample)
 	data := &previewData{
 		Plan: plan, Token: token, Idem: newID() + newID(), Paths: plan.Request.Paths,
 		Policy: string(plan.Request.Policy), Partial: plan.Request.AllowPartial,
@@ -69,6 +71,10 @@ func (s *Server) handleRestorePreview(w http.ResponseWriter, r *http.Request, se
 		return
 	}
 	req := parseRestoreForm(r)
+	// Whoever may browse a folder may restore from it (into the restore folder, never over the originals).
+	if _, ok := s.source(w, r, sess, req.SourceID, access.Browse); !ok {
+		return
+	}
 	if r.PostFormValue("scope") == "folder" {
 		// "Restore this folder" restores the folder being viewed instead of the ticked items.
 		req.Paths = []string{r.PostFormValue("current_path")}
@@ -85,6 +91,9 @@ func (s *Server) handleRestoreStart(w http.ResponseWriter, r *http.Request, sess
 		return
 	}
 	req := parseRestoreForm(r)
+	if _, ok := s.source(w, r, sess, req.SourceID, access.Browse); !ok {
+		return
+	}
 	job, err := s.svc.StartRestore(r.Context(), s.actor(r, sess), req, r.PostFormValue("token"), r.PostFormValue("idem"), r.PostFormValue("confirm_overwrite") != "")
 	switch {
 	case err == nil:
@@ -127,7 +136,18 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	before := intParam(r, "before")
 	const pageSize = 50
-	events, err := s.svc.AuditEvents(r.Context(), audit.Filter{Action: action, BeforeID: before, Limit: pageSize})
+	filter := audit.Filter{Action: action, BeforeID: before, Limit: pageSize}
+	if !isAdmin(sess) {
+		// What happened to a folder is for the people who may see the folder; events that belong to no folder
+		// (sign-ins and the like) are for every account, as they always were.
+		visible, err := s.visibleSources(r.Context(), sess)
+		if err != nil {
+			s.handleErr(w, r, err)
+			return
+		}
+		filter.OnlySources, filter.SourceIDs = restrictTo(sess, visible)
+	}
+	events, err := s.svc.AuditEvents(r.Context(), filter)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return

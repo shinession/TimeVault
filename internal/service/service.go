@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"timevault/internal/access"
 	"timevault/internal/audit"
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
@@ -29,6 +30,9 @@ import (
 
 // ErrNotFound is returned for unknown sources, points, jobs and paths.
 var ErrNotFound = errors.New("not found")
+
+// ErrForbidden is returned when a visitor who can see a monitored folder is not allowed to do what was asked of it.
+var ErrForbidden = errors.New("you are not allowed to do this")
 
 // ErrSourceDisabled is returned when a backup is requested for a monitored folder that is switched off.
 var ErrSourceDisabled = errors.New("the monitored folder is switched off")
@@ -199,6 +203,7 @@ func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceReque
 	if src.MaxVersions != nil {
 		detail["max_versions"] = *src.MaxVersions
 	}
+	detail["access"] = src.Access.Spec()
 	_ = s.record(ctx, a, audit.ActionSourceCreate, "source", fmt.Sprint(id), &id, audit.ResultOK, detail)
 	return src, nil
 }
@@ -247,9 +252,20 @@ func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backu
 			return catalog.Source{}, fmt.Errorf("%w: the folder of a source that already has backups cannot be changed; disable it and add the new folder as a new source", backup.ErrInvalidSource)
 		}
 	}
+	// The grants that this change replaces are the ones stored when it is applied, read under the lock of the source
+	// in its transaction, not the ones read above: the record of the change must not blame it for a change of the
+	// grants (or of the folder) that somebody else made meanwhile.
+	grantsBefore, haveBefore := cur.Access, false
+	authorize := func(current access.List) error {
+		grantsBefore, haveBefore = current, true
+		if req.Authorize != nil {
+			return req.Authorize(current)
+		}
+		return nil
+	}
 	src, err := s.cat.UpdateSource(ctx, id, catalog.SourceUpdate{
-		Name: ns.Name, RootPath: ns.RootPath, Excludes: ns.Excludes, Enabled: enabled, ScheduleMinutes: ns.ScheduleMinutes,
-		DisplayPath: ns.DisplayPath, MaxVersions: ns.MaxVersions,
+		Name: ns.Name, RootPath: ns.RootPath, KeepRoot: req.KeepRoot, Excludes: ns.Excludes, Enabled: enabled, ScheduleMinutes: ns.ScheduleMinutes,
+		DisplayPath: ns.DisplayPath, MaxVersions: ns.MaxVersions, Access: req.Access, Authorize: authorize,
 	})
 	if errors.Is(err, catalog.ErrNotFound) {
 		return catalog.Source{}, ErrNotFound
@@ -257,7 +273,14 @@ func (s *Service) UpdateSource(ctx context.Context, a Actor, id int64, req backu
 	if err != nil {
 		return catalog.Source{}, err
 	}
-	if changes := sourceChanges(cur, src); len(changes) > 0 {
+	changed := src
+	if req.KeepRoot {
+		changed.RootPath = cur.RootPath
+	}
+	if haveBefore {
+		cur.Access = grantsBefore
+	}
+	if changes := sourceChanges(cur, changed); len(changes) > 0 {
 		_ = s.record(ctx, a, audit.ActionSourceUpdate, "source", fmt.Sprint(id), &id, audit.ResultOK, changes)
 	}
 	// A lower limit takes effect at once, not only with the next backup.
@@ -297,6 +320,9 @@ func sourceChanges(before, after catalog.Source) map[string]any {
 	if (before.MaxVersions == nil) != (after.MaxVersions == nil) ||
 		(before.MaxVersions != nil && *before.MaxVersions != *after.MaxVersions) {
 		change("max_versions", before.MaxVersions, after.MaxVersions)
+	}
+	if !before.Access.Equal(after.Access) {
+		change("access", before.Access.Spec(), after.Access.Spec())
 	}
 	return changes
 }
@@ -508,14 +534,19 @@ func (s *Service) StartVerify(ctx context.Context, a Actor, sourceID, pointID in
 	return job, created, nil
 }
 
-// CancelJob asks a job to stop.
+// CancelJob asks a job to stop. The audit record belongs to the folder of the job, so that it is shown to the same
+// people as the rest of that folder's events.
 func (s *Service) CancelJob(ctx context.Context, a Actor, jobID int64) (bool, error) {
+	job, err := s.Job(ctx, jobID)
+	if err != nil {
+		return false, err
+	}
 	ok, err := s.jobs.Cancel(ctx, jobID)
 	if err != nil {
 		return false, err
 	}
 	if ok {
-		_ = s.record(ctx, a, audit.ActionJobCancel, "job", fmt.Sprint(jobID), nil, audit.ResultOK, nil)
+		_ = s.record(ctx, a, audit.ActionJobCancel, "job", fmt.Sprint(jobID), job.SourceID, audit.ResultOK, nil)
 	}
 	return ok, nil
 }
@@ -529,9 +560,14 @@ func (s *Service) Job(ctx context.Context, id int64) (jobs.Job, error) {
 	return j, err
 }
 
-// Jobs lists recent jobs.
-func (s *Service) Jobs(ctx context.Context, sourceID *int64, kind string, limit int) ([]jobs.Job, error) {
-	return jobs.List(ctx, s.pool, jobs.Filter{SourceID: sourceID, Kind: kind, Limit: limit})
+// Jobs lists recent jobs, newest first, as the filter says.
+func (s *Service) Jobs(ctx context.Context, f jobs.Filter) ([]jobs.Job, error) {
+	return jobs.List(ctx, s.pool, f)
+}
+
+// JobCounts counts the queued and the running jobs that the filter selects.
+func (s *Service) JobCounts(ctx context.Context, f jobs.Filter) (queued, running int, err error) {
+	return jobs.Counts(ctx, s.pool, f)
 }
 
 // JobEvents returns a job's log lines after afterID.
@@ -650,6 +686,9 @@ func manifestText(res backup.VerifyResult) string {
 
 // PreviewRestore builds the dry-run plan and the confirmation token for it.
 func (s *Service) PreviewRestore(ctx context.Context, a Actor, req restore.Request) (restore.Plan, string, error) {
+	if err := s.checkRestorePoint(ctx, req); err != nil {
+		return restore.Plan{}, "", err
+	}
 	plan, err := s.restore.Preview(ctx, req)
 	if err != nil {
 		return plan, "", err
@@ -661,21 +700,37 @@ func (s *Service) PreviewRestore(ctx context.Context, a Actor, req restore.Reque
 	return plan, s.restore.IssueToken(plan, a.User), nil
 }
 
+// checkRestorePoint answers a recovery point that is not one of the folder like one that does not exist (as Point
+// does for the history pages), so that the answer of a restore cannot tell a visitor that a number is a point of a
+// folder they may not browse. The restore package itself calls that an invalid request.
+func (s *Service) checkRestorePoint(ctx context.Context, req restore.Request) error {
+	_, err := s.Point(ctx, req.SourceID, req.PointID)
+	return err
+}
+
 // StartRestore queues a confirmed restore. Without a valid token for exactly
 // this plan, or without an explicit overwrite confirmation when files would be
 // replaced, nothing is queued. The audit record is written first: a restore
 // that cannot be audited does not run.
 func (s *Service) StartRestore(ctx context.Context, a Actor, req restore.Request, token, idempotencyKey string, confirmOverwrite bool) (jobs.Job, error) {
 	// A repeated submission (double click, retry) returns the job it created the first
-	// time. By then the destination has changed, so re-checking the preview would only fail.
+	// time. By then the destination has changed, so re-checking the preview would only fail. The key is chosen
+	// by the caller, so it only finds the caller's own restore of this folder: a key that another account or
+	// another folder has used is refused, instead of handing out that job.
 	if idempotencyKey != "" {
 		existing, found, err := s.jobs.FindByKey(ctx, jobs.KindRestore, idempotencyKey)
 		if err != nil {
 			return jobs.Job{}, err
 		}
-		if found && existing.RequestedBy == a.User {
+		if found {
+			if !ownRestore(existing, a, req.SourceID) {
+				return jobs.Job{}, errKeyUsed
+			}
 			return existing, nil
 		}
+	}
+	if err := s.checkRestorePoint(ctx, req); err != nil {
+		return jobs.Job{}, err
 	}
 	plan, err := s.restore.Confirm(ctx, req, token, a.User)
 	if err != nil {
@@ -698,11 +753,24 @@ func (s *Service) StartRestore(ctx context.Context, a Actor, req restore.Request
 			"partial_allowed": plan.Request.AllowPartial, "overwrite_confirmed": confirmOverwrite, "plan_digest": plan.Digest}); err != nil {
 		return jobs.Job{}, errors.New("the restore was not started because it could not be recorded in the audit log")
 	}
-	job, _, err := s.jobs.Enqueue(ctx, jobs.NewJob{
+	job, created, err := s.jobs.Enqueue(ctx, jobs.NewJob{
 		Kind: jobs.KindRestore, SourceID: &sourceID, PointID: &pointID, Params: params,
 		RequestedBy: a.User, IdempotencyKey: idempotencyKey,
 	})
+	if err == nil && !created && !ownRestore(job, a, sourceID) {
+		// Two requests with the same key at the same moment: the other one won, and it is not this caller's.
+		return jobs.Job{}, errKeyUsed
+	}
 	return job, err
+}
+
+// errKeyUsed is returned when the idempotency key of a restore was used by a restore that is not the caller's own
+// of the same folder.
+var errKeyUsed = fmt.Errorf("%w: this idempotency key was used by another restore; choose a new one", catalog.ErrConflict)
+
+// ownRestore reports whether job is a restore that actor requested for the source.
+func ownRestore(job jobs.Job, actor Actor, sourceID int64) bool {
+	return job.Kind == jobs.KindRestore && job.RequestedBy == actor.User && job.SourceID != nil && *job.SourceID == sourceID
 }
 
 func (s *Service) runRestore(ctx context.Context, job jobs.Job, rep *jobs.Reporter) error {

@@ -223,7 +223,7 @@ func TestSessionCookieAttributesAndRoundTrip(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.AddCookie(c)
 	got, ok := m.Session(req)
-	if !ok || got.User != "admin" || got.Name != "admin" || got.Role != RoleAdmin || got.CSRF != s.CSRF || !got.Can(PermRestore) || !got.Can(PermManage) {
+	if !ok || got.User != "admin" || got.Name != "admin" || got.Role != RoleAdmin || got.CSRF != s.CSRF || !got.Can(PermAccount) || !got.Can(PermManage) {
 		t.Fatalf("Session = %+v, %v", got, ok)
 	}
 
@@ -392,8 +392,6 @@ func TestPermissions(t *testing.T) {
 	}{
 		{PermBrowse, true, true, true},
 		{PermAccount, false, true, true},
-		{PermBackup, false, true, true},
-		{PermRestore, false, true, true},
 		{PermAudit, false, true, true},
 		{PermManage, false, false, true},
 		{"unknown", false, false, false},
@@ -438,8 +436,8 @@ func TestSessionCarriesTheCompanyAccount(t *testing.T) {
 	if !ok || got.User != "MES10001" || got.Name != "Li Yi" || got.Role != RoleUser || got.Ref != dir.account.Ref {
 		t.Fatalf("Session = %+v, %v", got, ok)
 	}
-	if !got.Can(PermBackup) || got.Can(PermManage) {
-		t.Fatal("a company user may operate but not manage")
+	if !got.Can(PermAccount) || got.Can(PermManage) {
+		t.Fatal("a company user is signed in but is not an administrator")
 	}
 }
 

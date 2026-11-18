@@ -7,19 +7,22 @@
   <div class="tv-card-head"><h2>{{template "icon" "folder"}} {{$.T "settings.sources"}}</h2></div>
   <p class="tv-muted">{{$.T "settings.sources_intro"}}</p>
   {{if not $.CanManage}}<p class="tv-alert tv-alert-info" role="note">{{$.T "settings.admin_only"}}</p>{{end}}
-  {{if not .Sources}}<p class="tv-empty-text">{{$.T "backups.no_sources_title"}}</p>{{end}}
+  {{if not .Sources}}<p class="tv-empty-text">{{if $.CanManage}}{{$.T "backups.no_sources_title"}}{{else}}{{$.T "explorer.no_sources_title"}}{{end}}</p>{{end}}
 </section>
 
 {{range .Sources}}
-<section class="tv-card tv-source">
+<section class="tv-card tv-source"{{if .Open}} data-scroll-into-view{{end}}>
   <div class="tv-card-head">
     <div>
-      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "settings.disabled"}}</span>{{end}}{{if and (not .DisplayPath) $.CanManage}} <span class="tv-chip tv-chip-warn">{{$.T "settings.no_display"}}</span>{{end}}</h2>
+      <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "settings.disabled"}}</span>{{end}}{{if and (not .DisplayPath) $.CanManage}} <span class="tv-chip tv-chip-warn">{{$.T "settings.no_display"}}</span>{{end}} <span class="tv-chip tv-chip-level" title="{{$.T "level.yours"}}">{{$.LevelLabel .Level}}</span></h2>
       {{if or .DisplayPath $.ShowPhysical}}<p class="tv-muted tv-path">
         {{if .DisplayPath}}<code>{{.DisplayPath}}</code>{{end}}
         {{if $.ShowPhysical}}<span class="tv-small">{{if .DisplayPath}}<br>{{$.T "location.on_server"}}: {{end}}<code>{{.RootPath}}</code></span>{{end}}
       </p>{{end}}
     </div>
+    {{if and .CanEdit (not .Open)}}
+    <div class="tv-actions"><a class="tv-btn tv-btn-small" href="{{url "/settings" "edit" .ID}}">{{template "icon" "settings"}} {{$.T "settings.edit"}}</a></div>
+    {{end}}
   </div>
 
   <dl class="tv-facts">
@@ -35,8 +38,26 @@
     <div><dt>{{$.T "backups.excludes"}}</dt><dd>{{if .Excludes}}<code>{{join .Excludes ", "}}</code>{{else}}-{{end}}</dd></div>
   </dl>
 
-  {{if $.CanManage}}
-  <details class="tv-details"{{if .Open}} open{{end}}>
+  {{if .CanEdit}}
+  <div class="tv-access-summary">
+    <h3>{{$.T "access.title"}}</h3>
+    {{if .Who}}
+    <ul>
+      {{range .Who}}
+      <li><strong>{{$.LevelLabel .Level}}</strong>
+        {{if .Guest}}<span class="tv-chip">{{$.T "access.guest"}}</span>{{end}}
+        {{if .Everyone}}<span class="tv-chip">{{$.T "access.everyone"}}</span>{{end}}
+        {{range .People}}<span class="tv-chip">{{.}}</span>{{end}}
+        {{if .More}}<span class="tv-muted tv-small">{{$.T "access.more" .More}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="tv-muted">{{$.T "access.nobody"}}</p>{{end}}
+  </div>
+  {{end}}
+
+  {{if .Open}}
+  <details class="tv-details" open>
     <summary>{{template "icon" "settings"}} {{$.T "settings.edit"}}</summary>
     <div class="tv-details-body">
       {{with .Error}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
@@ -46,9 +67,11 @@
         <label class="tv-field"><span>{{$.T "settings.field_display"}}</span>
           <input name="display_path" value="{{.Form.DisplayPath}}" placeholder="\\{{if $.Data.Deployment.ServerHost}}{{$.Data.Deployment.ServerHost}}{{else}}server{{end}}\share\folder" maxlength="500"{{if $.Data.Deployment.ServerHost}} required{{end}}>
           <small class="tv-muted">{{if $.Data.Deployment.ServerHost}}{{$.T "settings.display_hint_host" $.Data.Deployment.ServerHost $.Data.Deployment.ServerHost}}{{else}}{{$.T "settings.display_hint"}}{{end}}</small></label>
+        {{if $.CanManage}}
         <label class="tv-field"><span>{{$.T "settings.field_real"}}</span>
           <input name="root_path" value="{{.Form.RootPath}}" required{{if .HasPoints}} readonly{{end}}>
           <small class="tv-muted">{{$.T "settings.real_hint"}}{{if .HasPoints}} {{$.T "settings.path_locked"}}{{end}}</small></label>
+        {{end}}
         <label class="tv-field tv-field-wide"><span>{{$.T "backups.field_excludes"}}</span><textarea name="excludes" rows="4">{{.Form.Excludes}}</textarea>
           <small class="tv-muted">{{$.T "backups.excludes_hint"}}</small></label>
         <label class="tv-check tv-field-wide"><input type="checkbox" name="enabled" value="1"{{if .Form.Enabled}} checked{{end}}> <span>{{$.T "settings.enabled_label"}}</span></label>
@@ -63,8 +86,11 @@
         <label class="tv-field tv-field-wide"><span>{{$.T "settings.field_versions"}}</span>
           <input type="number" name="max_versions" value="{{.Form.MaxVersions}}" min="0" max="10000" step="1">
           <small class="tv-muted">{{$.T "settings.versions_hint"}}</small></label>
+        {{template "accesspicker" (pair $ .Picker)}}
         {{if .NeedsConfirm}}<label class="tv-check tv-field-wide"><input type="checkbox" name="confirm_prune" value="1" required> <span>{{$.T "settings.prune_confirm_label"}}</span></label>{{end}}
-        <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "settings.save"}}</button></div>
+        {{if .NeedsLockout}}<label class="tv-check tv-check-danger tv-field-wide"><input type="checkbox" name="confirm_lockout" value="1" required> <span>{{$.T "settings.lockout_confirm_label"}}</span></label>{{end}}
+        <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "settings.save"}}</button>
+          <a class="tv-btn tv-btn-ghost" href="{{url "/settings"}}">{{$.T "common.cancel"}}</a></div>
       </form>
     </div>
   </details>
@@ -73,8 +99,11 @@
 {{end}}
 
 {{if $.CanManage}}
-<section class="tv-card">
-  <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2></div>
+<section class="tv-card"{{if .AddOpen}} data-scroll-into-view{{end}}>
+  <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2>
+    {{if not .AddOpen}}<a class="tv-btn tv-btn-small" href="{{url "/settings" "add" 1}}">{{template "icon" "plus"}} {{$.T "settings.add_open"}}</a>{{end}}
+  </div>
+  {{if .AddOpen}}
   {{with .AddError}}<div class="tv-alert tv-alert-error" role="alert">{{.}}</div>{{end}}
   <form method="post" action="{{url "/settings/sources"}}" class="tv-form tv-form-grid">
     {{template "csrf" $}}
@@ -98,9 +127,13 @@
     <label class="tv-field tv-field-wide"><span>{{$.T "settings.field_versions"}}</span>
       <input type="number" name="max_versions" value="{{.AddForm.MaxVersions}}" min="0" max="10000" step="1">
       <small class="tv-muted">{{$.T "settings.versions_hint"}}</small></label>
-    <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "backups.add"}}</button></div>
+    {{template "accesspicker" (pair $ .AddPicker)}}
+    <p class="tv-muted tv-small tv-field-wide">{{$.T "access.new_folder_note"}}</p>
+    <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "backups.add"}}</button>
+      <a class="tv-btn tv-btn-ghost" href="{{url "/settings"}}">{{$.T "common.cancel"}}</a></div>
   </form>
   <p class="tv-muted tv-small">{{$.T "backups.source_rules"}}</p>
+  {{end}}
 </section>
 {{end}}
 

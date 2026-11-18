@@ -46,7 +46,7 @@ The MVP had one local administrator and put every page behind sign-in. The proje
 - A new sign-in needs Redis; browsing, an existing session and the local administrator do not.
 - **Passwords in that Redis data are stored in plain text** by the other application, and the sign-in form posts the password to TimeVault. Anyone on the network path can read it unless the connection is HTTPS: put a TLS reverse proxy in front before any other computer uses TimeVault and set `TIMEVAULT_COOKIE_SECURE=true`. Redis itself should require a password and not be reachable from the network.
 - The file names, sizes and modification times of every monitored folder are visible to anyone who can reach the port. Contents are not. See [security.md](../security.md).
-- Authorization is coarse: no per-source or per-path rights. Any signed-in account may restore any source and cancel any job.
+- Authorization is coarse: no per-source or per-path rights. Any signed-in account may restore any source and cancel any job. *(Changed in 0.1.7: what an account may do is decided for each monitored folder, see [0013](./0013-per-folder-access-levels.md). The other rows of the table above are the 0.1.1 rules; for folders, read them with that record.)*
 - The adapter assumes **one live record per employee ID**. When the other application leaves stale records behind (for example after an e-mail change), the newest `UpdateDate` wins at sign-in, but a session keeps following the record it signed in with; `check-redis-users` reports "ee_codes on more than one key" so that they can be cleaned up.
 - A sign-in costs one `SCAN` over the keyspace of the Redis database, and `/login` is open to everyone; the per-address limit bounds how often a visitor can cause it. A login that matches more than 200 keys (`MaxScan`) is refused as ambiguous instead of being answered from some of them.
 - Changing a password in the other application does not end TimeVault sessions that already exist; deactivating the account does, within a minute.
@@ -103,7 +103,7 @@ MVP 只有一个本地管理员，并且所有页面都需要登录。项目负�
 - 新的登录需要 Redis；浏览、已有的会话和本地管理员不需要。
 - **该 Redis 数据中的密码由另一个应用以明文保存**，而登录表单会把密码提交给 TimeVault。除非使用 HTTPS，否则网络路径上的任何人都能读到：在其他计算机使用 TimeVault 之前，请在前面放置 TLS 反向代理，并设置 `TIMEVAULT_COOKIE_SECURE=true`。Redis 本身应当要求密码，并且不能从网络访问。
 - 能访问该端口的任何人都能看到每个监控文件夹的文件名、大小和修改时间，但看不到内容。见 [security.md](../security.md)。
-- 授权比较粗：没有按备份源或按路径的权限。任何已登录账号都可以恢复任何备份源、取消任何任务。
+- 授权比较粗：没有按备份源或按路径的权限。任何已登录账号都可以恢复任何备份源、取消任何任务。*（0.1.7 中已改变：账号能做什么按监控文件夹分别决定，见 [0013](./0013-per-folder-access-levels.md)。上面表格中的其他行是 0.1.1 的规则；涉及文件夹时，请结合那份记录阅读。）*
 - 适配器假定**每个工号只有一条有效记录**。如果另一个应用留下了过期记录（例如修改邮箱之后），登录时取 `UpdateDate` 最新的一条，但会话会沿用它登录时的那条记录；`check-redis-users` 会报告"ee_codes on more than one key"，以便清理。
 - 一次登录会对 Redis 数据库的键空间执行一次 `SCAN`，而 `/login` 对所有人开放；按地址的限流限制了访问者能触发它的频率。匹配到超过 200 个键（`MaxScan`）的登录名会被当作有歧义而拒绝，而不是只依据其中一部分来回答。
 - 在另一个应用中修改密码，不会结束 TimeVault 中已有的会话；停用账号则会在一分钟内结束。

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"timevault/internal/access"
 	"timevault/internal/audit"
 	"timevault/internal/auth"
 	"timevault/internal/catalog"
@@ -28,19 +29,26 @@ type viewer struct {
 	physical bool
 	s        *Server
 	ctx      context.Context
+	sess     auth.Session
 	paths    *service.PathMap
 	loaded   bool
+	// full is the folders the visitor has full control of, read on first use (fullLoaded).
+	full       map[int64]bool
+	fullLoaded bool
 }
 
 func (s *Server) viewerFor(ctx context.Context, sess auth.Session) *viewer {
-	return &viewer{physical: sess.Can(auth.PermManage), s: s, ctx: ctx}
+	return &viewer{physical: sess.Can(auth.PermManage), s: s, ctx: ctx, sess: sess}
 }
 
-// pathMap is nil when the map could not be built; the texts that need it are then left out rather than shown.
+// pathMap is nil when the map could not be built; the texts that need it are then left out rather than shown. It
+// knows only the folders the visitor may browse (and the backup and restore folders): a text that quotes the real
+// folder of any other is not one the visitor is shown, and the map must not be a way to learn that such a folder
+// exists or what it is called.
 func (v *viewer) pathMap() *service.PathMap {
 	if !v.loaded {
 		v.loaded = true
-		paths, err := v.s.svc.PathMap(v.ctx)
+		paths, err := v.s.svc.PathMapFor(v.ctx, func(src catalog.Source) bool { return levelOn(v.sess, src) >= access.Browse })
 		if err != nil {
 			v.s.log.Warn("the map of the server's folders could not be built; texts that may quote them are left out", "error", err)
 			return nil
@@ -170,7 +178,8 @@ func (v *viewer) restoreItems(in []restore.StoredItem) []restore.StoredItem {
 	return out
 }
 
-// problems hides the real folders in the reasons a restore preview gives for the items it cannot restore.
+// problems hides the real folders in the reasons a restore preview gives for the items it cannot restore, and in the
+// paths of renamed items.
 func (v *viewer) problems(in []restore.Item) []restore.Item {
 	if v.physical {
 		return in
@@ -178,6 +187,7 @@ func (v *viewer) problems(in []restore.Item) []restore.Item {
 	out := make([]restore.Item, len(in))
 	for i, it := range in {
 		it.Problem = v.text(it.Problem)
+		it.Target = v.text(it.Target)
 		out[i] = it
 	}
 	return out
@@ -191,10 +201,44 @@ func (v *viewer) audit(in []audit.Event) []audit.Event {
 	for i, e := range in {
 		if len(e.Detail) > 0 {
 			e.Detail = v.detail(e.Detail)
+			if _, has := e.Detail[accessDetail]; has && !v.mayReadAccess(e.SourceID) {
+				e.Detail[accessDetail] = accessHidden
+			}
 		}
 		out[i] = e
 	}
 	return out
+}
+
+// accessDetail is the key of an audit detail that holds who may do what with a folder (the lists of a new folder, the
+// old and the new lists of a change), and accessHidden what is shown in its place to those who may not read it.
+const (
+	accessDetail = "access"
+	accessHidden = "[hidden]"
+)
+
+// mayReadAccess reports whether the visitor may read who may do what with the folder of an audit event: as on the
+// settings page and in the API, only those who have full control of it. The folders are read the first time it
+// is asked; when they cannot be read nobody is told.
+func (v *viewer) mayReadAccess(source *int64) bool {
+	if source == nil {
+		return false
+	}
+	if !v.fullLoaded {
+		v.fullLoaded = true
+		visible, err := v.s.visibleSources(v.ctx, v.sess)
+		if err != nil {
+			v.s.log.Warn("the folders of the visitor could not be read; who may do what is left out of the audit details", "error", err)
+			return false
+		}
+		v.full = map[int64]bool{}
+		for _, src := range visible {
+			if levelOn(v.sess, src.Source) >= access.Full {
+				v.full[src.ID] = true
+			}
+		}
+	}
+	return v.full[*source]
 }
 
 // detail masks every string of an audit detail. Without the folder map nothing of it is shown.
@@ -208,21 +252,46 @@ func (v *viewer) detail(in map[string]any) map[string]any {
 }
 
 // health hides the backup folder and the real restore folder in the status of the components. The free space of the
-// repository stays: it tells everybody whether backups can go on.
+// repository stays: it tells everybody whether backups can go on. The queued and running jobs are those of the
+// folders the visitor may browse: the count of all of them would tell that something is going on in a folder that
+// is not theirs.
 func (v *viewer) health(rep service.HealthReport) service.HealthReport {
 	if v.physical {
 		return rep
 	}
 	comps := make([]service.Component, len(rep.Components))
 	for i, c := range rep.Components {
-		if c.Name == "repository" && c.Key == "repo_free" && len(c.Args) == 2 {
+		switch {
+		case c.Name == "repository" && c.Key == "repo_free" && len(c.Args) == 2:
 			c.Key, c.Args = "repo_free_pct", c.Args[1:]
 			c.Detail = fmt.Sprintf("%d%% free", c.Args[0])
-		} else {
+		case c.Name == "jobs" && c.Key == "jobs_detail" && len(c.Args) == 2:
+			queued, running := v.visibleJobCounts()
+			rep.Queued, rep.Running = queued, running
+			c.Args = []any{running, queued}
+			c.Detail = fmt.Sprintf("%d running, %d queued", running, queued)
+		default:
 			c.Detail = v.text(c.Detail)
 		}
 		comps[i] = c
 	}
 	rep.Components = comps
 	return rep
+}
+
+// visibleJobCounts counts the queued and running jobs of the folders the visitor may browse. When they cannot be
+// counted, no job is claimed: the numbers are not worth a wrong answer that shows more than the visitor may see.
+func (v *viewer) visibleJobCounts() (queued, running int) {
+	visible, err := v.s.visibleSources(v.ctx, v.sess)
+	if err != nil {
+		v.s.log.Warn("the jobs of the visible folders could not be counted", "error", err)
+		return 0, 0
+	}
+	only, ids := restrictTo(v.sess, visible)
+	q, r, err := v.s.svc.JobCounts(v.ctx, jobs.Filter{OnlySources: only, SourceIDs: ids})
+	if err != nil {
+		v.s.log.Warn("the jobs of the visible folders could not be counted", "error", err)
+		return 0, 0
+	}
+	return q, r
 }

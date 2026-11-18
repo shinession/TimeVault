@@ -290,6 +290,66 @@ func TestListAndGet(t *testing.T) {
 	}
 }
 
+// Whoever may see only some folders is shown the jobs of those folders, and the counts of the queued and running
+// jobs are theirs too. A job that belongs to no folder is not theirs.
+func TestListAndCountCanBeLimitedToSomeSources(t *testing.T) {
+	r, pool := setup(t, 1)
+	ctx := context.Background()
+	a, b, c := addSource(t, pool, "a"), addSource(t, pool, "b"), addSource(t, pool, "c")
+	enqueue := func(kind string, src *int64) jobs.Job {
+		t.Helper()
+		j, _, err := r.Enqueue(ctx, jobs.NewJob{Kind: kind, SourceID: src, RequestedBy: "tester"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	jobA, jobB, jobC := enqueue(jobs.KindBackup, &a), enqueue(jobs.KindBackup, &b), enqueue(jobs.KindBackup, &c)
+	orphan := enqueue(jobs.KindVerify, nil)
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET state = 'running', started_at = now() WHERE id = $1`, jobA.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	ids := func(list []jobs.Job) string {
+		var out []string
+		for _, j := range list {
+			out = append(out, fmt.Sprint(j.ID))
+		}
+		return strings.Join(out, ",")
+	}
+	for _, tc := range []struct {
+		name           string
+		f              jobs.Filter
+		list           []int64
+		queued, active int
+	}{
+		{"everything", jobs.Filter{}, []int64{orphan.ID, jobC.ID, jobB.ID, jobA.ID}, 3, 1},
+		{"a and b", jobs.Filter{OnlySources: true, SourceIDs: []int64{a, b}}, []int64{jobB.ID, jobA.ID}, 1, 1},
+		{"c", jobs.Filter{OnlySources: true, SourceIDs: []int64{c}}, []int64{jobC.ID}, 1, 0},
+		{"no source at all", jobs.Filter{OnlySources: true}, nil, 0, 0},
+		{"an empty list", jobs.Filter{OnlySources: true, SourceIDs: []int64{}}, nil, 0, 0},
+		{"a source that is not there", jobs.Filter{OnlySources: true, SourceIDs: []int64{987654}}, nil, 0, 0},
+		{"b and c, backups only", jobs.Filter{OnlySources: true, SourceIDs: []int64{b, c}, Kind: jobs.KindBackup}, []int64{jobC.ID, jobB.ID}, 2, 0},
+		{"a and b, verifications only", jobs.Filter{OnlySources: true, SourceIDs: []int64{a, b}, Kind: jobs.KindVerify}, nil, 0, 0},
+	} {
+		list, err := jobs.List(ctx, pool, tc.f)
+		if err != nil {
+			t.Fatalf("%s: List: %v", tc.name, err)
+		}
+		var want []string
+		for _, id := range tc.list {
+			want = append(want, fmt.Sprint(id))
+		}
+		if got := ids(list); got != strings.Join(want, ",") {
+			t.Errorf("%s: List = %q, want %q", tc.name, got, strings.Join(want, ","))
+		}
+		queued, active, err := jobs.Counts(ctx, pool, tc.f)
+		if err != nil || queued != tc.queued || active != tc.active {
+			t.Errorf("%s: Counts = %d queued, %d running, %v; want %d and %d", tc.name, queued, active, err, tc.queued, tc.active)
+		}
+	}
+}
+
 // lockedBuffer lets the test read what the runner's worker goroutines logged.
 type lockedBuffer struct {
 	mu  sync.Mutex

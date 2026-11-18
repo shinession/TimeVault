@@ -1,3 +1,36 @@
+{{/* The access editor of a folder: for each level, who has it. Called as (pair $ editor), editor being an accessPicker. */}}
+{{define "accesspicker"}}{{$p := .Page}}{{with .Value}}
+<fieldset class="tv-access tv-field-wide" data-access>
+  <legend>{{$p.T "access.title"}}</legend>
+  <input type="hidden" name="access_set" value="1">
+  {{if .Rev}}<input type="hidden" name="access_rev" value="{{.Rev}}">{{end}}
+  <p class="tv-muted tv-small">{{$p.T "access.hint"}}</p>
+  {{if not .Listed}}<p class="tv-alert tv-alert-warn" role="note">{{$p.T "access.directory_down"}}</p>{{end}}
+  <div class="tv-access-levels">
+    {{range .Columns}}{{$col := .}}
+    <div class="tv-access-level" data-access-level>
+      <div class="tv-access-head">
+        <h4>{{$p.LevelLabel .Level}}</h4>
+        <span class="tv-muted tv-small" data-access-count>{{$p.T "access.selected" .Count}}</span>
+      </div>
+      <p class="tv-muted tv-small">{{$p.LevelHint .Level}}</p>
+      <div class="tv-access-groups">
+        {{if .AllowGuest}}<label class="tv-check"><input type="checkbox" name="{{.Field}}" value="guest" data-access-group{{if .Guest}} checked{{end}}> <span>{{$p.T "access.guest"}}</span></label>{{end}}
+        <label class="tv-check"><input type="checkbox" name="{{.Field}}" value="everyone" data-access-group{{if .Everyone}} checked{{end}}> <span>{{$p.T "access.everyone"}}</span></label>
+      </div>
+      <input type="search" class="tv-access-filter" data-access-filter hidden placeholder="{{$p.T "access.find"}}" aria-label="{{$p.T "access.find"}}" autocomplete="off">
+      <div class="tv-access-people" role="group" aria-label="{{$p.LevelLabel .Level}}">
+        {{range .People}}
+        <label class="tv-check" data-person="{{lower .ID}} {{lower .Name}}"><input type="checkbox" name="{{$col.Field}}" value="{{.Token}}" data-access-person{{if .Checked}} checked{{end}}>
+          <span>{{if .Gone}}{{.ID}} <span class="tv-chip tv-chip-warn">{{$p.T "access.gone"}}</span>{{else}}{{.Name}} <span class="tv-muted">({{.ID}})</span>{{end}}</span></label>
+        {{else}}<p class="tv-muted tv-small">{{$p.T "access.no_people"}}</p>{{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+</fieldset>
+{{end}}{{end}}
+
 {{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="{{url "/static/img/icons.svg"}}#{{.}}"></use></svg>{{end}}
 
 {{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}

@@ -64,7 +64,7 @@ func TestSettingsShowAndConfirmTheVersionLimit(t *testing.T) {
 	bob.loginAs(adminID)
 	id := itoa(h.env.Src.ID)
 
-	_, body := bob.get("/settings")
+	_, body := bob.get("/settings?edit=" + id)
 	if !strings.Contains(body, `name="max_versions"`) || !strings.Contains(body, "All versions of every file") || !strings.Contains(body, `value="0"`) {
 		t.Fatalf("the settings page offers no version limit:\n%s", body)
 	}
@@ -90,7 +90,7 @@ func TestSettingsShowAndConfirmTheVersionLimit(t *testing.T) {
 	}
 	waitUntil(t, "the old versions to be deleted", func() bool { return h.versionsOfFile("a.txt") == 2 })
 
-	_, body = bob.get("/settings")
+	_, body = bob.get("/settings?edit=" + id)
 	if !strings.Contains(body, "The newest 2 of each file") || !strings.Contains(body, `name="max_versions" value="2"`) {
 		t.Errorf("the settings page does not show the limit:\n%s", body)
 	}
@@ -122,7 +122,7 @@ func TestSettingsShowAndConfirmTheVersionLimit(t *testing.T) {
 
 	// The page is translated.
 	bob.get("/lang?set=zh")
-	if _, body := bob.get("/settings"); !strings.Contains(body, "每个文件保留的版本数") || !strings.Contains(body, "上次耗时") {
+	if _, body := bob.get("/settings?edit=" + id); !strings.Contains(body, "每个文件保留的版本数") || !strings.Contains(body, "上次耗时") {
 		t.Errorf("the Chinese settings page lacks the version limit:\n%s", body)
 	}
 }

@@ -110,6 +110,71 @@ func TestMigrationAddsTheDisplayPathToExistingSources(t *testing.T) {
 	}
 }
 
+// Migration 5 gives the folders that exist what everybody could do until then, and the table only takes grants
+// that mean something.
+func TestMigrationGivesExistingSourcesTheirOldRights(t *testing.T) {
+	pool := dbtest.New(t)
+	ctx := context.Background()
+	exec := func(query string, args ...any) error {
+		_, err := pool.Exec(ctx, query, args...)
+		return err
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Return to the schema of version 4 with two folders in it, then migrate again.
+	must(exec(`DROP TABLE source_access`))
+	must(exec(`DELETE FROM schema_migrations WHERE version = 5`))
+	must(exec(`INSERT INTO sources (name, root_path, root_key, created_by) VALUES ('first', 'D:\first', 'd:\first', 'tester'), ('second', 'D:\second', 'd:\second', 'tester')`))
+	applied, err := db.Migrate(ctx, pool, migrations.FS)
+	if err != nil || len(applied) != 1 || applied[0] != "0005_source_access.sql" {
+		t.Fatalf("Migrate = %v, %v; want only 0005_source_access.sql", applied, err)
+	}
+	rows, err := pool.Query(ctx, `SELECT s.name, a.kind, a.account, a.level FROM source_access a JOIN sources s ON s.id = a.source_id ORDER BY s.name, a.kind`)
+	must(err)
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var name, kind, account, level string
+		must(rows.Scan(&name, &kind, &account, &level))
+		got = append(got, fmt.Sprintf("%s/%s/%q/%s", name, kind, account, level))
+	}
+	must(rows.Err())
+	want := []string{`first/everyone/""/backup`, `first/guest/""/browse`, `second/everyone/""/backup`, `second/guest/""/browse`}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("grants after the migration = %v, want %v", got, want)
+	}
+
+	var id int64
+	must(pool.QueryRow(ctx, `SELECT id FROM sources WHERE name = 'first'`).Scan(&id))
+	insert := func(kind, account, level string) error {
+		return exec(`INSERT INTO source_access (source_id, kind, account, level) VALUES ($1, $2, $3, $4)`, id, kind, account, level)
+	}
+	if err := insert("user", "E1001", "full"); err != nil {
+		t.Errorf("a grant for an account: %v", err)
+	}
+	if err := insert("user", strings.Repeat("E", 64), "browse"); err != nil {
+		t.Errorf("an employee ID of 64 characters: %v", err)
+	}
+	for name, bad := range map[string][3]string{
+		"guests above browse":      {"guest", "", "backup"},
+		"an unknown kind":          {"group", "", "browse"},
+		"an unknown level":         {"everyone", "", "admin"},
+		"a user without an ID":     {"user", "", "browse"},
+		"an ID on everyone":        {"everyone", "E1", "browse"},
+		"an ID that is too long":   {"user", strings.Repeat("E", 65), "browse"},
+		"the same principal twice": {"user", "E1001", "browse"},
+	} {
+		if err := insert(bad[0], bad[1], bad[2]); err == nil {
+			t.Errorf("%s was stored", name)
+		}
+	}
+}
+
 func TestMigrationFilesAreValid(t *testing.T) {
 	if v, err := db.LatestVersion(migrations.FS); err != nil || v < 1 {
 		t.Fatalf("LatestVersion = %d, %v", v, err)

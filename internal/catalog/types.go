@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"timevault/internal/access"
 )
 
 var (
@@ -75,6 +77,9 @@ type Source struct {
 	// LastWalkItems is how many entries the search engine held below the folder when that scan started; nil when
 	// it was not asked or did not know the folder.
 	LastWalkItems *int64
+	// Access is who may do what with the folder. Only the code that decides what a visitor sees reads it; it is
+	// not a setting to show to everybody.
+	Access access.List
 }
 
 // SourceSummary is a source with its newest committed recovery point.

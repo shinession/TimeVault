@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"timevault/internal/access"
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
 	"timevault/internal/db/dbtest"
@@ -76,6 +77,8 @@ func New(t *testing.T) *Env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Like a folder that existed before the permissions did: guests browse, every account may also back up.
+	req.Access = access.Upgrade()
 	if e.Src, err = e.Cat.CreateSource(context.Background(), req); err != nil {
 		t.Fatal(err)
 	}

@@ -320,11 +320,69 @@
     }).catch(function () { finish('error'); });
   }
 
+  /* ---------- access editor (folder settings) ---------- */
+
+  // Each level of the editor lists who has it: "guest", "everyone" and people. A group already includes the people, so
+  // choosing one clears and locks the people of that level, and the two groups exclude each other. The server checks
+  // the same rules; this only keeps the form from being filled in wrongly, and filters a long list of people.
+  function initAccess(root) {
+    root.querySelectorAll('[data-access-level]').forEach(function (level) {
+      var groups = Array.prototype.slice.call(level.querySelectorAll('[data-access-group]'));
+      var people = Array.prototype.slice.call(level.querySelectorAll('[data-access-person]'));
+      var count = level.querySelector('[data-access-count]');
+      var filter = level.querySelector('[data-access-filter]');
+
+      function sync() {
+        var group = groups.filter(function (g) { return g.checked; });
+        people.forEach(function (p) {
+          if (group.length) { p.checked = false; }
+          p.disabled = group.length > 0;
+        });
+        if (count) {
+          var n = group.length ? group.length : people.filter(function (p) { return p.checked; }).length;
+          count.textContent = count.textContent.replace(/\d+/, String(n));
+        }
+      }
+
+      groups.forEach(function (g) {
+        g.addEventListener('change', function () {
+          if (g.checked) { groups.forEach(function (other) { if (other !== g) { other.checked = false; } }); }
+          sync();
+        });
+      });
+      people.forEach(function (p) { p.addEventListener('change', sync); });
+
+      if (filter) {
+        filter.hidden = false;
+        filter.addEventListener('input', function () {
+          var q = filter.value.trim().toLowerCase();
+          level.querySelectorAll('[data-person]').forEach(function (row) {
+            row.hidden = q !== '' && row.getAttribute('data-person').indexOf(q) < 0;
+          });
+        });
+        // Enter in the box finds somebody; it must not save the form, and the permissions in it, as a text field does.
+        filter.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter') { e.preventDefault(); }
+        });
+      }
+      sync();
+    });
+  }
+
+  // A page that opens a form (the settings page after "Edit") brings it into view; navigation resets the scroll
+  // position right after the content is swapped in, hence the timeout.
+  function initScrollTo(root) {
+    var el = root.querySelector('[data-scroll-into-view]');
+    if (el && el.scrollIntoView) { setTimeout(function () { el.scrollIntoView({ block: 'start' }); }, 0); }
+  }
+
   function init(root) {
     initSelection(root);
     initAutosubmit(root);
     initTimeline(root);
     initJobs(root);
+    initAccess(root);
+    initScrollTo(root);
     scheduleFab();
   }
 

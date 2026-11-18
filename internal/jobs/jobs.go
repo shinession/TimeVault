@@ -505,7 +505,27 @@ func Get(ctx context.Context, pool *pgxpool.Pool, id int64) (Job, error) {
 type Filter struct {
 	SourceID *int64
 	Kind     string
-	Limit    int
+	// OnlySources limits the list to the jobs of the sources in SourceIDs, none at all when that is empty. Jobs
+	// that belong to no source are left out too.
+	OnlySources bool
+	SourceIDs   []int64
+	Limit       int
+}
+
+// Counts says how many jobs are queued and how many are running, among those that Filter selects (its Kind, SourceID
+// and OnlySources/SourceIDs; Limit does not apply).
+func Counts(ctx context.Context, pool *pgxpool.Pool, f Filter) (queued, running int, err error) {
+	if f.SourceIDs == nil {
+		f.SourceIDs = []int64{}
+	}
+	err = pool.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE state = 'queued'), count(*) FILTER (WHERE state = 'running') FROM jobs
+		 WHERE ($1::bigint IS NULL OR source_id = $1) AND ($2 = '' OR kind = $2)
+		   AND (NOT $3::boolean OR source_id = ANY($4::bigint[]))`, f.SourceID, f.Kind, f.OnlySources, f.SourceIDs).Scan(&queued, &running)
+	if err != nil {
+		return 0, 0, fmt.Errorf("jobs: count: %w", err)
+	}
+	return queued, running, nil
 }
 
 // List returns recent jobs, newest first.
@@ -513,10 +533,14 @@ func List(ctx context.Context, pool *pgxpool.Pool, f Filter) ([]Job, error) {
 	if f.Limit <= 0 || f.Limit > 200 {
 		f.Limit = 30
 	}
+	if f.SourceIDs == nil {
+		f.SourceIDs = []int64{}
+	}
 	rows, err := pool.Query(ctx,
 		`SELECT `+jobColumns+` FROM jobs
 		 WHERE ($1::bigint IS NULL OR source_id = $1) AND ($2 = '' OR kind = $2)
-		 ORDER BY id DESC LIMIT $3`, f.SourceID, f.Kind, f.Limit)
+		   AND (NOT $4::boolean OR source_id = ANY($5::bigint[]))
+		 ORDER BY id DESC LIMIT $3`, f.SourceID, f.Kind, f.Limit, f.OnlySources, f.SourceIDs)
 	if err != nil {
 		return nil, fmt.Errorf("jobs: list: %w", err)
 	}
