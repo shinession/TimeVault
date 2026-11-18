@@ -334,14 +334,18 @@
 
   /* ---------- pictures of the accounts ---------- */
 
-  // The pictures are files of another application on the same host; the page says where (the tv-avatar meta tag,
-  // with {id} for the employee ID). That application answers 202 with a placeholder picture for somebody without a
-  // picture, so only an answer of 200 that is an image counts. A picture is asked for once while the page lives and
-  // kept as a data: URL, which the content security policy allows; a missing one is remembered for the session, so
-  // that a list of people does not ask again and again. Only pictures that are about to be seen are asked for.
+  // The page says where the pictures are (the tv-avatar meta tag, with {id} for the employee ID): an address of the
+  // host that keeps them, which the browser reads like any picture. That application sends them as text/plain, which
+  // an image element does not mind, and answers a missing picture with 202 and a placeholder of 480x320 pixels, which
+  // an image element shows like any other, so a picture of that size is taken for none (the pictures of people are
+  // far smaller). A picture is asked for once while the page lives. A missing one is remembered for ten minutes, so
+  // that a list of people does not ask again and again, and a host that did not answer for a moment is tried again
+  // soon. Only pictures that are about to be seen are asked for.
   var avatarMeta = document.querySelector('meta[name="tv-avatar"]');
   var AVATAR = avatarMeta ? (avatarMeta.getAttribute('content') || '') : '';
-  var AVATAR_MAX_BYTES = 512 * 1024;
+  var AVATAR_PLACEHOLDER_WIDTH = 480;
+  var AVATAR_PLACEHOLDER_HEIGHT = 320;
+  var AVATAR_MISS_MS = 10 * 60 * 1000;
   var AVATAR_PARALLEL = 4;
   var avatarCache = {};
   var avatarQueue = [];
@@ -349,26 +353,28 @@
   var avatarObserver = null;
 
   function avatarMissed(id) {
-    try { return sessionStorage.getItem('tv-avatar-miss:' + id) !== null; } catch (e) { return false; }
+    try {
+      var at = Number(sessionStorage.getItem('tv-avatar-miss:' + id));
+      return at > 0 && Date.now() - at < AVATAR_MISS_MS;
+    } catch (e) { return false; }
   }
 
   function rememberAvatarMiss(id) {
-    try { sessionStorage.setItem('tv-avatar-miss:' + id, '1'); } catch (e) { /* ignore */ }
+    try { sessionStorage.setItem('tv-avatar-miss:' + id, String(Date.now())); } catch (e) { /* ignore */ }
   }
 
+  // Resolves with the address of the picture when there is one, and with null when there is not.
   function readAvatar(id) {
-    return fetch(AVATAR.replace('{id}', encodeURIComponent(id)), { credentials: 'same-origin' }).then(function (res) {
-      if (res.status !== 200 || (res.headers.get('Content-Type') || '').indexOf('image/') !== 0) { return null; }
-      return res.blob().then(function (blob) {
-        if (blob.size === 0 || blob.size > AVATAR_MAX_BYTES) { return null; }
-        return new Promise(function (resolve) {
-          var reader = new FileReader();
-          reader.onload = function () { resolve(typeof reader.result === 'string' ? reader.result : null); };
-          reader.onerror = function () { resolve(null); };
-          reader.readAsDataURL(blob);
-        });
-      });
-    }).catch(function () { return null; });
+    return new Promise(function (resolve) {
+      var url = AVATAR.replace('{id}', encodeURIComponent(id));
+      var img = new Image();
+      img.onload = function () {
+        var placeholder = img.naturalWidth === AVATAR_PLACEHOLDER_WIDTH && img.naturalHeight === AVATAR_PLACEHOLDER_HEIGHT;
+        resolve(img.naturalWidth > 0 && !placeholder ? url : null);
+      };
+      img.onerror = function () { resolve(null); };
+      img.src = url;
+    });
   }
 
   function pumpAvatars() {
@@ -393,6 +399,7 @@
     return avatarCache[id];
   }
 
+  // The browser has the picture already, the same page asked for it a moment ago, so this does not ask the host again.
   function showAvatar(el, url) {
     var img = document.createElement('img');
     img.alt = '';

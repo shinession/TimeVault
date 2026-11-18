@@ -55,8 +55,9 @@ type Options struct {
 	// BasePath is the path prefix the site is served under behind a reverse proxy, such as /tv. Empty means the
 	// site is at the root of its address. See basepath.go.
 	BasePath string
-	// AvatarURL is where the picture of an account is, a path on the host that serves the site with {id} for the
-	// account name (config.Config.AvatarURL); empty means there are no pictures.
+	// AvatarURL is where the picture of an account is, with {id} for the account name (config.Config.AvatarURL): an
+	// http(s) address that the browser reads the picture from, or a path on the host the site is opened from. Empty
+	// means there are no pictures.
 	AvatarURL string
 	// Update tells about the automatic update and takes the request to look for a new version now; nil when the
 	// service does not update itself.
@@ -77,6 +78,7 @@ type Server struct {
 	assetVer string
 	mux      *http.ServeMux
 	sso      ssoFlows
+	csp      string
 }
 
 // New builds the server. webFS must contain the "templates" and "assets" folders.
@@ -94,6 +96,12 @@ func New(svc *service.Service, am *auth.Manager, webFS fs.FS, opts Options, log 
 	opts.BasePath = base
 	opts.Deployment.BasePath = base
 	s := &Server{svc: svc, auth: am, opts: opts, base: base, log: log}
+	source, external := pictureSource(opts.AvatarURL)
+	if external && source == "" {
+		log.Warn("the host of the pictures cannot be named in the content security policy, so the browser shows them only when the site is opened by the same address; use a host name of letters, digits and hyphens in TIMEVAULT_AVATAR_URL, or a name with a domain of at least two labels around it",
+			"avatar_url", opts.AvatarURL)
+	}
+	s.csp = contentSecurityPolicy(source)
 	if s.pages, err = parseTemplates(webFS, s.funcs()); err != nil {
 		return nil, err
 	}
@@ -229,8 +237,7 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; "+
-			"base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'")
+		h.Set("Content-Security-Policy", s.csp)
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")

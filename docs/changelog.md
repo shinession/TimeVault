@@ -4,6 +4,55 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 0.1.10
+
+Only the version number changes: in everything else the program is the one of 0.1.9. The version exists to try the automatic update from one release to the next on a server (see [Releasing and automatic updates](./runbook.md#releasing-and-automatic-updates)).
+
+### Changed
+
+- The version number is 0.1.10; `go build` is unchanged.
+
+### Upgrade notes
+
+1. **Nothing has to be done:** no migration, no new setting, and the service runs as before.
+2. **To try the update,** make the release with `.\scripts\release.ps1` and copy `timevault.exe`, then `timevault.json`, to the release folder that the servers read (`static\cd` of the other application when `TIMEVAULT_UPDATE_URL` is `http://<server host>/api/static/cd/timevault.json`). A service that runs 0.1.9 and has its address set finds the release within its interval (10 minutes by default; **Check now** on the Settings page looks at once), waits for its running jobs and restarts into 0.1.10. The program it replaced stays next to it as `timevault.old-0.1.9.exe`.
+3. **To run the test again,** publish the 0.1.9 release (its `timevault.exe`, then its `timevault.json`) in the same way: a version that differs is an update, in either direction. The script only builds the version that the source has, so keep a copy of the two files of each release.
+
+### Known limits
+
+- Checked with compiled programs against a scratch database and a stand-in for the static files, not on the production server (see [mvp-status.md](./mvp-status.md)). The known limits of 0.1.8 and 0.1.9 stand.
+
+## 0.1.9
+
+The pictures of the accounts show now, and the release has a place of its own. The cause of the missing pictures was found with the real application: it sends the `.webp` pictures as `text/plain`, and 0.1.8 only accepted `image/*`. The decisions and the alternatives are in [ADR 0015](./adr/0015-account-pictures-are-read-by-the-browser-from-their-host.md).
+
+### Fixed
+
+- **The pictures of the accounts were never shown (0.1.8).** The application that keeps them (the static files of the other company applications) sends a picture with `Content-Type: text/plain`, which an image does not mind but the script of 0.1.8 did not accept, and it answers a missing picture with `202` and a placeholder picture of 480×320 pixels. The script now loads each picture as an image: an error, or a picture of exactly that size, leaves the default picture. A missing picture is remembered for ten minutes (it was the whole browser session, which kept a host that had been down from being tried again).
+
+### Changed
+
+- **The pictures are read from `TIMEVAULT_SERVER_HOST`.** `TIMEVAULT_AVATAR_URL` is now an `http(s)` address, or a path on the host the site is opened from (the meaning it had in 0.1.8), or `off`. Not set, it is `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp`, and there are no pictures while the server host is not set either. The browser reads them, not the service, so they show whatever address the site is opened by.
+- **The content security policy** of every page lists the host of an absolute picture address in `img-src`, and nowhere else. A host name with an underscore (`prod_eng.co.example.local`) cannot be written in a policy, so the wildcard of its domain is listed instead (`http://*.co.example.local`); when no domain of two labels is left, the start-up log warns that the pictures only show when the site is opened by that same address.
+- The version number is 0.1.9; `go build` is unchanged.
+
+### Documented
+
+- **Where the release goes.** With the static files of the other company applications, the manifest is `http://<server host>/api/static/cd/timevault.json`, and a `package_url` that is a file name leads to `http://<server host>/api/static/cd/<name>` (the service has always looked it up next to the manifest; a test now covers this layout, and a `202` for a file that is not there). The address stays an explicit `TIMEVAULT_UPDATE_URL` in the `.env`: it is not derived from `TIMEVAULT_SERVER_HOST`, so updates are only ever on because the `.env` says so.
+- `configs/timevault.example.env` no longer says that a scheduled task that "repeats on failure" restarts the program after an update in the mode `exit`: the Task Scheduler setting "If the task fails, restart" did not (it was tried); a trigger that repeats every minute with "Do not start a new instance" does.
+
+### Upgrade notes
+
+1. **Pictures:** with `TIMEVAULT_SERVER_HOST` set, nothing else is needed. If the pictures are on the host of the site but `TIMEVAULT_SERVER_HOST` is not set, write `TIMEVAULT_AVATAR_URL=http://<host>/api/static/hr/{id}.webp`. A `.env` that sets the 0.1.8 default itself (`TIMEVAULT_AVATAR_URL=/api/static/hr/{id}.webp`) keeps working as it did, from the host the site is opened from.
+2. **Automatic updates:** nothing changes. Put `TIMEVAULT_UPDATE_URL=http://<server host>/api/static/cd/timevault.json` (with `TIMEVAULT_AUTO_MIGRATE=true`) into the `.env`, and copy `timevault.exe`, then `timevault.json`, to the `static\cd` folder of the other application. A server that runs 0.1.8 with its address set updates itself to 0.1.9 from there.
+3. No migration and no new required setting.
+
+### Known limits
+
+- The pictures are read in the clear over `http`, and the host of the pictures sees the address of every browser that shows one. A site served over `https` needs an `https` picture address.
+- A person without a picture keeps the default picture only while the placeholder of the other application has the size it has today (480×320 pixels); if that application changes it, the placeholder is shown until the size in `web/assets/js/app.js` is changed.
+- Checked with automated tests, with compiled programs against a scratch database, and in a real browser against the application that keeps the pictures on the computer of the build (see [mvp-status.md](./mvp-status.md)); not on the production server and not through the company's other nginx servers.
+
 ## 0.1.8
 
 Pictures of the accounts, and a program that updates itself. A build now writes a **release folder** (`timevault.exe` and `timevault.json`); a service that is told where that folder is reads it, downloads a new version, waits for its running jobs to finish and restarts itself. The decisions and the alternatives are in [ADR 0014](./adr/0014-self-update-from-a-release-manifest.md).
@@ -310,6 +359,55 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 0.1.10
+
+只改了版本号：在其他所有方面，程序和 0.1.9 一样。这个版本的用途是在服务器上试一试从一个发布自动更新到下一个发布（见[发布与自动更新](./runbook.md#发布与自动更新)）。
+
+### 变更
+
+- 版本号为 0.1.10；`go build` 的命令不变。
+
+### 升级说明
+
+1. **不需要做任何事：** 没有迁移，没有新增设置，服务的运行方式和以前一样。
+2. **试一试更新：** 用 `.\scripts\release.ps1` 制作发布，并把 `timevault.exe`，再把 `timevault.json`，复制到服务器读取的发布文件夹（当 `TIMEVAULT_UPDATE_URL` 是 `http://<服务器主机>/api/static/cd/timevault.json` 时，就是另一个应用的 `static\cd`）。运行 0.1.9 并且设置了地址的服务，会在它的间隔内发现这个发布（默认 10 分钟；设置页的**立即检查**会马上查看），等正在运行的任务结束，然后重启成 0.1.10。被替换的程序会留在旁边，名为 `timevault.old-0.1.9.exe`。
+3. **要再试一次，** 用同样的方式发布 0.1.9 的发布（先 `timevault.exe`，再 `timevault.json`）：版本不同就是更新，不分方向。脚本只会构建源码里的版本，所以请保留每个发布的两个文件的副本。
+
+### 已知限制
+
+- 已用编译后的程序，针对临时数据库和一个静态文件的替身检查过，没有在生产服务器上检查（见 [mvp-status.md](./mvp-status.md)）。0.1.8 和 0.1.9 的已知限制依然有效。
+
+## 0.1.9
+
+账号头像现在能显示了，发布也有了自己的位置。头像缺失的原因是用真实的应用找到的：它把 `.webp` 头像以 `text/plain` 发送，而 0.1.8 只接受 `image/*`。决定和备选方案见 [ADR 0015](./adr/0015-account-pictures-are-read-by-the-browser-from-their-host.md)。
+
+### 修复
+
+- **账号头像从未显示（0.1.8）。** 存放头像的应用（其他公司应用的静态文件）以 `Content-Type: text/plain` 发送头像，图片并不在意这一点，但 0.1.8 的脚本不接受；对于缺失的头像，它回答 `202` 并附带一张 480×320 像素的占位图。现在脚本把每张头像作为图片加载：出错，或者图片恰好是这个尺寸，都保留默认头像。缺失的头像会被记住十分钟（以前是整个浏览器会话，这会让曾经不可用的主机不再被尝试）。
+
+### 变更
+
+- **头像从 `TIMEVAULT_SERVER_HOST` 读取。** `TIMEVAULT_AVATAR_URL` 现在可以是 `http(s)` 地址、站点被打开时所用主机上的路径（0.1.8 中它的含义），或 `off`。未设置时，它是 `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp`；服务器主机也没有设置时，没有头像。由浏览器读取，而不是服务，所以无论用什么地址打开站点都能显示。
+- **内容安全策略。** 每个页面的策略都把绝对头像地址的主机列入 `img-src`，不用于其他任何地方。带下划线的主机名（`prod_eng.co.example.local`）无法写进策略，所以改为列出其所在域的通配符（`http://*.co.example.local`）；如果没有剩下两个标签的域，启动日志会警告：头像只有在用同一个地址打开站点时才会显示。
+- 版本号为 0.1.9；`go build` 的命令不变。
+
+### 文档
+
+- **发布放在哪里。** 使用其他公司应用的静态文件时，清单是 `http://<服务器主机>/api/static/cd/timevault.json`，是文件名的 `package_url` 指向 `http://<服务器主机>/api/static/cd/<名称>`（服务一直都是在清单旁边查找它；现在有测试覆盖这种布局，以及文件不存在时的 `202`）。地址仍然是 `.env` 中显式写出的 `TIMEVAULT_UPDATE_URL`：它不会从 `TIMEVAULT_SERVER_HOST` 推导，所以更新只会因为 `.env` 这样写才开启。
+- `configs/timevault.example.env` 不再说"失败时重复运行"的计划任务能在 `exit` 模式下于更新之后重新启动程序：任务计划程序的"如果任务失败，重新启动"设置做不到（已试过）；触发器每分钟重复一次并选择"不要启动新实例"的任务可以。
+
+### 升级说明
+
+1. **头像：** 设置了 `TIMEVAULT_SERVER_HOST` 时不需要做别的事。如果头像在站点所在的主机上，但没有设置 `TIMEVAULT_SERVER_HOST`，请写 `TIMEVAULT_AVATAR_URL=http://<主机>/api/static/hr/{id}.webp`。自己设置了 0.1.8 默认值（`TIMEVAULT_AVATAR_URL=/api/static/hr/{id}.webp`）的 `.env` 照常工作，仍然从站点被打开时所用的主机读取。
+2. **自动更新：** 没有变化。把 `TIMEVAULT_UPDATE_URL=http://<服务器主机>/api/static/cd/timevault.json`（以及 `TIMEVAULT_AUTO_MIGRATE=true`）写入 `.env`，并把 `timevault.exe`，再把 `timevault.json`，复制到另一个应用的 `static\cd` 文件夹。运行 0.1.8 并且设置了地址的服务器，会从那里自己更新到 0.1.9。
+3. 没有迁移，也没有新增的必填设置。
+
+### 已知限制
+
+- 头像通过 `http` 明文读取，存放头像的主机能看到每个显示头像的浏览器的地址。通过 `https` 提供的站点需要 `https` 头像地址。
+- 没有头像的人，只有在另一个应用的占位图保持现在的尺寸（480×320 像素）时才保留默认头像；如果该应用改了占位图，在修改 `web/assets/js/app.js` 中的尺寸之前，会显示占位图。
+- 已用自动化测试、针对临时数据库的编译后程序，以及在构建所用的电脑上针对存放头像的应用的真实浏览器检查过（见 [mvp-status.md](./mvp-status.md)）；没有在生产服务器上检查，也没有通过公司的其他 nginx 服务器检查。
 
 ## 0.1.8
 

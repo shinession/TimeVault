@@ -2,7 +2,7 @@
 
 ## Overview
 
-How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.8). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
+How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.10). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
 
 ## Prerequisites
 
@@ -105,7 +105,7 @@ Every setting is an environment variable or a line of the `.env` file (see [Wher
 | `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `true` | The address that the sign-on service saw must be the address of the browser that asked for the sign-in. Turn it off only when the address of the browser cannot be known (`TIMEVAULT_TRUSTED_PROXIES` is the better way). |
 | `TIMEVAULT_TRUSTED_PROXIES` | empty | Reverse proxies, as addresses or CIDR ranges separated by commas (`127.0.0.1,::1,10.0.0.0/24`), whose `X-Forwarded-For` header is believed. The client address then comes from that header; it is used by the single sign-on check, the **From** column of the audit log and the sign-in throttle. The proxy must set that header itself; see [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path), and [Two proxies in a row](#two-proxies-in-a-row) when another proxy sits in front of it. |
 | `TIMEVAULT_BASE_PATH` | empty | The path prefix the site is served under behind a reverse proxy, such as `/tv` for `http://host/tv/`. Empty means the site is at the root of its address. `tv`, `/tv` and `/tv/` all mean `/tv`; letters, digits and `- _ . ~` only, and it must not start with a path of the application itself (`api`, `static`, `login`, `explorer`, `history`, `versions`, `backups`, `jobs`, `restore`, `audit`, `status`, `settings`, `lang`, `logout`, `auth`, `healthz`). Every address the pages, the redirects and the cookies give out carries it; a request with or without it is accepted. See [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path). |
-| `TIMEVAULT_AVATAR_URL` | `/api/static/hr/{id}.webp` | Where the picture of an account is: a path on the host that serves the site (it is not put under `TIMEVAULT_BASE_PATH`), starting with `/`, with `{id}` once where the employee ID goes. `off` or `none` (an empty value means the default) turns the pictures off. See [Pictures of the accounts](#pictures-of-the-accounts). |
+| `TIMEVAULT_AVATAR_URL` | `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp` | Where the browser reads the picture of an account from, with `{id}` once where the employee ID goes: an `http(s)` address (no user name or password), or a path starting with `/` on the host the site is opened from. Not set: the pictures of the other company applications on the server named in `TIMEVAULT_SERVER_HOST`, and no pictures while that is not set. `off` or `none` turns the pictures off. See [Pictures of the accounts](#pictures-of-the-accounts). |
 | `TIMEVAULT_UPDATE_URL` | empty | Where the release manifest `timevault.json` is: an `http(s)` address, or the absolute path of the file, of its folder or of a share (`D:\TimeVault\release`, `\\server\share\tv-release`); an address that ends in a slash, and a path of a folder, name the folder. No user name, password, query or fragment. Empty means the service never updates itself. Needs `TIMEVAULT_AUTO_MIGRATE=true`. See [Releasing and automatic updates](#releasing-and-automatic-updates). |
 | `TIMEVAULT_UPDATE_INTERVAL` | `10m` | How often the manifest is read, `1m` to `24h`. The first look is about 10 seconds after the start; an administrator can ask for one at once (**Check now**). |
 | `TIMEVAULT_UPDATE_RESTART` | `supervise` | How the new program is started after an update: `supervise` (the process that was started stays as a small launcher and starts it) or `exit` (the process ends with the exit code 75 and a service manager starts it). |
@@ -373,7 +373,7 @@ cd <repository folder>
 
   ```json
   {
-      "latest_version":  "0.1.8",
+      "latest_version":  "0.1.10",
       "sha256":  "<64 hexadecimal characters>",
       "package_url":  "timevault.exe",
       "size":  23352320
@@ -386,19 +386,19 @@ cd <repository folder>
 **Where the servers read it.** `TIMEVAULT_UPDATE_URL` is one of:
 
 - a folder or a share, `D:\TimeVault\release` or `\\server\share\tv-release` (the account that runs the service needs read access to it; a share that cannot be reached when the service starts is found as soon as it can be); or
-- an `http(s)` address of the manifest or of its folder, `https://tools.example.local/tv-release/`, served by any web server that serves the two files as they are, for example nginx: `location /tv-release/ { alias D:/TimeVault/release/; }`. Redirects are followed (at most five). An answer other than `200` (a `202` or a `404`, say) is an error.
+- an `http(s)` address of the manifest or of its folder, served by any web server that serves the two files as they are. **The static files of the other company applications are the place for it:** the manifest is `http://<server.example.local>/api/static/cd/timevault.json`, and its `package_url` of `timevault.exe` (a file name, no address) leads to `http://<server.example.local>/api/static/cd/timevault.exe`. Copy `timevault.exe`, then `timevault.json`, into the `static\cd` folder of that application (make the folder once); the address is written into the `.env` as it is, it is **not** derived from `TIMEVAULT_SERVER_HOST`. That application answers `202` and a picture for a file that is not there, so until the files are copied the Settings page says **Problem** with `… answered 202 Accepted`. Each look (every 10 minutes by default) is one request to that application, which writes it to its web log. Any other web server works the same, for example nginx: `location /tv-release/ { alias D:/TimeVault/release/; }`. Redirects are followed (at most five). An answer other than `200` (a `202` or a `404`, say) is an error.
 
 **Turn it on at a server (once).**
 
 1. Copy `timevault.exe` of version 0.1.8 or later to the server, next to the `.env`. This is the last manual copy: older versions cannot update themselves.
-2. Put into the `.env`: `TIMEVAULT_AUTO_MIGRATE=true` (a service with an update address refuses to start without it, because nobody runs `migrate` when the service updates itself), `TIMEVAULT_UPDATE_URL=<the release folder>` and, if you want, `TIMEVAULT_UPDATE_INTERVAL=5m`.
+2. Put into the `.env`: `TIMEVAULT_AUTO_MIGRATE=true` (a service with an update address refuses to start without it, because nobody runs `migrate` when the service updates itself), `TIMEVAULT_UPDATE_URL=<the address of the manifest, for example http://<server.example.local>/api/static/cd/timevault.json>` and, if you want, `TIMEVAULT_UPDATE_INTERVAL=5m`.
 3. The account that runs the service needs **Modify** on the folder of `timevault.exe` (it writes `timevault.new.exe`, `timevault.old-<version>.exe` and `timevault.exe.update.json` there) and **Read** on the release folder.
 4. Start the service. The start-up log says `automatic updates are on` with the address and the interval, and warns when the folder of the program cannot take a new file. The **Settings** page has a card **Program updates**: the state, the released version, when the manifest was last read, and, for administrators, the address of the release, the last problem and **Check now**.
 
 **What happens when a release is published.**
 
 1. At the next look (within the interval, at once when an administrator presses **Check now** or calls `POST /api/v1/update/check`, and 10 seconds after the start) the service finds a version that is not the running one. It downloads the program to `timevault.new.exe`, checks its size and sha256, and runs it with `version` (it must print the version of the manifest) and `check-config` (it must accept the settings of this service).
-2. It stops taking jobs: the Settings page says **Waiting for the running jobs** with their number, and every signed-in account sees a notice under the header (_Version 0.1.8 will be installed as soon as the running jobs have finished. New jobs wait until then._). The jobs that run finish; new ones, also those of the scheduler, wait in the queue. There is no time limit.
+2. It stops taking jobs: the Settings page says **Waiting for the running jobs** with their number, and every signed-in account sees a notice under the header (_Version 0.1.10 will be installed as soon as the running jobs have finished. New jobs wait until then._). The jobs that run finish; new ones, also those of the scheduler, wait in the queue. There is no time limit.
 3. With no job running, it renames the running `timevault.exe` to `timevault.old-<version>.exe`, puts the new file at the name `timevault.exe`, writes the note, stops the scheduler, the web server and the job runner, and starts the new program. The queued jobs run then.
 4. The new program logs `automatic update: this program has taken over` and writes the audit event; the **Audit** page lists the **Program update** events of the actor `updater` (`staged`, `restart`, `done`, and `cancelled` or `failed`), with no path and no error text in the details (the log of the service has them).
 
@@ -425,12 +425,13 @@ If the release goes back to the version that runs, the waiting ends and the jobs
 
 ## Pictures of the accounts
 
-The header, the audit log, the job page and the job lists, the summary of who has access to a folder and the people lists of the permission editor show the picture of an account next to its name. The picture is read from `TIMEVAULT_AVATAR_URL`, by default `/api/static/hr/{id}.webp` (the pictures of the employees that the other company applications keep; `{id}` is the employee ID).
+The header, the audit log, the job page and the job lists, the summary of who has access to a folder and the people lists of the permission editor show the picture of an account next to its name. The browser reads each picture from `TIMEVAULT_AVATAR_URL`. Not set, that is `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp`: the pictures of the employees that the other company applications keep, on the server named in `TIMEVAULT_SERVER_HOST` (`{id}` is the employee ID). While `TIMEVAULT_SERVER_HOST` is not set there are no pictures, unless the address is written down.
 
-- The address is a path on the host that serves the site and is not put under `TIMEVAULT_BASE_PATH`: behind the company's nginx `/api/` and `/tv/` are on the same host name, so the browser finds `/api/static/hr/E1001.webp` next to `/tv/`. `off` turns the pictures off.
-- The browser asks for each picture itself, once for as long as the page lives and only for the pictures that are about to be seen (the people list of the permission editor is long). A person without a picture (the application answers `202` with a placeholder instead of `404`), a failed request and an answer that is not an image leave the default picture, and a missing picture is remembered for the browser session.
-- No picture is asked for the local administrator, for the names that the service uses itself (`scheduler`, `updater`, `system`) or for a name that cannot be an employee ID. TimeVault stores nothing and the content security policy is unchanged (the picture is shown from the data the request returned).
-- When the service is opened directly on its own port there is no `/api/static/hr/`, so everybody has the default picture.
+- **The setting.** `off` (or `none`) turns the pictures off. A full `http(s)` address reads them from another host. A path such as `/api/static/hr/{id}.webp` reads them from the host the site is opened from (it is not put under `TIMEVAULT_BASE_PATH`), which suits a site whose proxy serves that application under every name; opened directly on its own port, the service has no such path and everybody has the default picture. `{id}` must be there once, and the address must not carry a user name or a password.
+- **The browser reads them, not the service.** The service never fetches or serves a picture and stores nothing. The site and the pictures may be on different hosts, so the content security policy of every page lists the host of the picture address for images, and for nothing else (`img-src 'self' data: http://<host>`). A host name with an underscore, such as `prod_eng.co.example.local`, cannot be written in a policy (the browser ignores that whole entry), so the domain around it is listed instead: `http://*.co.example.local`. When no domain of two labels is left (`prod_eng`, `prod_eng.local`), the pictures only show when the site is opened by that same address, and the start-up log says "cannot be named in the content security policy". A site served over `https` needs an `https` address: a browser does not show pictures from `http` in an `https` page.
+- **A person without a picture.** The other application sends the pictures as `text/plain`, which an image does not mind, and answers `202` with a placeholder picture of 480×320 pixels instead of `404`. A picture of exactly that size, a failed request and a host that does not answer all leave the default picture. This was the reason the pictures did not show in 0.1.8, which only accepted `image/*`.
+- **How often.** The browser asks for each picture once for as long as the page lives, and only for the pictures that are about to be seen (the people list of the permission editor is long). A missing picture is remembered for ten minutes of the browser session, so that a list does not ask again and again and a host that was down is tried again soon.
+- No picture is asked for the local administrator, for the names that the service uses itself (`scheduler`, `updater`, `system`) or for a name that cannot be an employee ID.
 
 ## Operating
 
@@ -506,7 +507,7 @@ The header, the audit log, the job page and the job lists, the summary of who ha
 | After an update the console window or the scheduled task shows the program as ended, with the exit code 75 | `TIMEVAULT_UPDATE_RESTART=exit` and nothing starts the program again. Use `supervise` (the default), or make the service manager restart the program when it ends (NSSM: `AppExit 75 Restart`). |
 | After an update the old program file `timevault.old-<version>.exe` cannot be deleted | With `supervise` the launcher still runs from it (see [Releasing and automatic updates](#releasing-and-automatic-updates)). It is deleted at a later update when the launcher has ended; it can be deleted by hand after the service has been stopped and started again. |
 | The service updated itself back to the newer version after a manual way back | The release folder still has the newer manifest. Put the older release there (or empty `TIMEVAULT_UPDATE_URL`) before you go back. |
-| The pictures of the accounts are not shown | Check `TIMEVAULT_AVATAR_URL` (the start-up log has `avatar_url`; `off` means no pictures), and open `/api/static/hr/<employee ID>.webp` on the same host name in the browser: it must answer `200` with an image. A `202` (the placeholder for a person without a picture) and a `404` leave the default picture on purpose. Reaching the service directly on its own port (`http://host:8660/`) has no such address. |
+| The pictures of the accounts are not shown | The start-up log has `avatar_url`: empty means no pictures, because `TIMEVAULT_AVATAR_URL` is `off`, or it is not set and `TIMEVAULT_SERVER_HOST` is not either. Open one picture in the browser (`http://<server host>/api/static/hr/<employee ID>.webp`): it must show the picture. A picture of 480×320 pixels (the placeholder, answered with `202`) and a `404` leave the default picture on purpose. If the picture opens but TimeVault does not show it: the start-up log says "cannot be named in the content security policy" (a host name with an underscore and no domain of two labels around it: open the site by that same name, or write the IP address of the server in the picture address), or the site is served over `https` and the address is `http`. Opening the site by another name than the host of the pictures is fine, because the policy lists the host of the address. |
 
 ---
 
@@ -514,7 +515,7 @@ The header, the audit log, the job page and the job lists, the summary of who ha
 
 ## 概述
 
-介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.8 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
+介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.10 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
 
 ## 前置条件
 
@@ -617,7 +618,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 | `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `true` | 单点登录服务看到的地址必须与请求登录的浏览器的地址一致。只有在无法得知浏览器的地址时才关闭它（更好的做法是 `TIMEVAULT_TRUSTED_PROXIES`）。 |
 | `TIMEVAULT_TRUSTED_PROXIES` | 空 | 反向代理，写成用逗号分隔的地址或 CIDR 范围（`127.0.0.1,::1,10.0.0.0/24`），它们的 `X-Forwarded-For` 头会被信任。此后客户端地址取自该头；它用于单点登录检查、审计日志的**来源**列和登录限流。代理必须自己设置这个头；见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)；它前面还有另一层代理时，见[两层代理](#两层代理)。 |
 | `TIMEVAULT_BASE_PATH` | 空 | 站点放在反向代理之后时所处的路径前缀，例如 `http://host/tv/` 对应 `/tv`。为空表示站点位于其地址的根路径。`tv`、`/tv` 和 `/tv/` 都表示 `/tv`；只能包含字母、数字和 `- _ . ~`，并且不能以应用自己的路径开头（`api`、`static`、`login`、`explorer`、`history`、`versions`、`backups`、`jobs`、`restore`、`audit`、`status`、`settings`、`lang`、`logout`、`auth`、`healthz`）。页面、重定向和 Cookie 给出的每个地址都带有它；带或不带它的请求都会被接受。见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)。 |
-| `TIMEVAULT_AVATAR_URL` | `/api/static/hr/{id}.webp` | 账号头像的地址：站点所在主机上的一个路径（不会放到 `TIMEVAULT_BASE_PATH` 之下），以 `/` 开头，其中 `{id}` 恰好出现一次，用来放工号。`off` 或 `none` 表示关闭头像（空值表示使用默认值）。见[账号头像](#账号头像)。 |
+| `TIMEVAULT_AVATAR_URL` | `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp` | 浏览器读取账号头像的地址，其中 `{id}` 恰好出现一次，用来放工号：可以是 `http(s)` 地址（不能包含用户名或密码），也可以是以 `/` 开头的路径，表示站点被打开时所用的那个主机上的路径。未设置时：使用 `TIMEVAULT_SERVER_HOST` 所指服务器上其他公司应用的头像；该设置也没有设置时，没有头像。`off` 或 `none` 表示关闭头像。见[账号头像](#账号头像)。 |
 | `TIMEVAULT_UPDATE_URL` | 空 | 发布清单 `timevault.json` 所在的位置：`http(s)` 地址，或文件、其所在文件夹、共享的绝对路径（`D:\TimeVault\release`、`\\server\share\tv-release`）；以斜杠结尾的地址和文件夹路径都表示该文件夹。不能包含用户名、密码、查询串或片段。为空表示服务从不更新自己。需要 `TIMEVAULT_AUTO_MIGRATE=true`。见[发布与自动更新](#发布与自动更新)。 |
 | `TIMEVAULT_UPDATE_INTERVAL` | `10m` | 读取清单的频率，范围 `1m` 到 `24h`。第一次查看在启动后约 10 秒；管理员可以立即要求查看一次（**立即检查**）。 |
 | `TIMEVAULT_UPDATE_RESTART` | `supervise` | 更新之后怎样启动新程序：`supervise`（被启动的那个进程作为小型启动器保留，由它启动新程序）或 `exit`（进程以退出码 75 结束，由服务管理器启动）。 |
@@ -885,7 +886,7 @@ cd <repository folder>
 
   ```json
   {
-      "latest_version":  "0.1.8",
+      "latest_version":  "0.1.10",
       "sha256":  "<64 hexadecimal characters>",
       "package_url":  "timevault.exe",
       "size":  23352320
@@ -898,19 +899,19 @@ cd <repository folder>
 **服务器从哪里读取。** `TIMEVAULT_UPDATE_URL` 可以是：
 
 - 文件夹或共享，`D:\TimeVault\release` 或 `\\server\share\tv-release`（运行服务的账号需要有读取权限；服务启动时无法访问的共享，在能访问之后就会被找到）；或者
-- 清单或其所在文件夹的 `http(s)` 地址，`https://tools.example.local/tv-release/`，由任何能原样提供这两个文件的 Web 服务器提供，例如 nginx：`location /tv-release/ { alias D:/TimeVault/release/; }`。会跟随重定向（至多五次）。`200` 以外的应答（例如 `202` 或 `404`）都是错误。
+- 清单或其所在文件夹的 `http(s)` 地址，由任何能原样提供这两个文件的 Web 服务器提供。**其他公司应用的静态文件就是放置它的地方：** 清单是 `http://<server.example.local>/api/static/cd/timevault.json`，其中 `package_url` 为 `timevault.exe`（只是一个文件名，不是地址）时指向 `http://<server.example.local>/api/static/cd/timevault.exe`。把 `timevault.exe`，再把 `timevault.json`，复制到该应用的 `static\cd` 文件夹（文件夹只需创建一次）；地址原样写入 `.env`，**不会**从 `TIMEVAULT_SERVER_HOST` 推导。对于不存在的文件，该应用会回答 `202` 和一张图片，所以在文件复制过去之前，设置页会显示**出现问题**以及 `… answered 202 Accepted`。每次查看（默认每 10 分钟一次）都是对该应用的一次请求，它会把这次请求写入自己的 Web 日志。其他任何 Web 服务器的用法相同，例如 nginx：`location /tv-release/ { alias D:/TimeVault/release/; }`。会跟随重定向（至多五次）。`200` 以外的应答（例如 `202` 或 `404`）都是错误。
 
 **在服务器上启用（只需一次）。**
 
 1. 把 0.1.8 或更新版本的 `timevault.exe` 复制到服务器上，放在 `.env` 旁边。这是最后一次手工复制：更早的版本不能自己更新。
-2. 在 `.env` 中写入：`TIMEVAULT_AUTO_MIGRATE=true`（有更新地址的服务没有它会拒绝启动，因为服务自己更新时没有人会运行 `migrate`）、`TIMEVAULT_UPDATE_URL=<发布文件夹>`，如果需要，再加 `TIMEVAULT_UPDATE_INTERVAL=5m`。
+2. 在 `.env` 中写入：`TIMEVAULT_AUTO_MIGRATE=true`（有更新地址的服务没有它会拒绝启动，因为服务自己更新时没有人会运行 `migrate`）、`TIMEVAULT_UPDATE_URL=<清单的地址，例如 http://<server.example.local>/api/static/cd/timevault.json>`，如果需要，再加 `TIMEVAULT_UPDATE_INTERVAL=5m`。
 3. 运行服务的账号需要对 `timevault.exe` 所在的文件夹有**修改**权限（`timevault.new.exe`、`timevault.old-<版本>.exe` 和 `timevault.exe.update.json` 都写在那里），并对发布文件夹有**读取**权限。
 4. 启动服务。启动日志会写出 `automatic updates are on` 以及地址和间隔，并在程序所在的文件夹不能写入新文件时发出警告。**设置**页有一张**程序更新**卡片：状态、已发布的版本、清单最近一次读取的时间，以及（仅管理员能看到的）发布地址、最近的问题和**立即检查**。
 
 **发布了新版本之后会发生什么。**
 
 1. 在下一次查看时（在间隔之内；管理员点击**立即检查**或调用 `POST /api/v1/update/check` 时立即查看；启动后 10 秒也会查看），服务发现一个不是正在运行的版本。它把程序下载到 `timevault.new.exe`，检查大小和 sha256，并用 `version`（必须输出清单中的版本）和 `check-config`（必须接受本服务的设置）运行它。
-2. 它停止取用任务：设置页显示**等待正在运行的任务**及其数量，每个已登录的账号都会在页眉下面看到提示（_版本 0.1.8 将在正在运行的任务结束后安装。新任务会等到那时再开始。_）。正在运行的任务继续运行到结束；新的任务（包括调度器的）在队列中等待。没有时间上限。
+2. 它停止取用任务：设置页显示**等待正在运行的任务**及其数量，每个已登录的账号都会在页眉下面看到提示（_版本 0.1.10 将在正在运行的任务结束后安装。新任务会等到那时再开始。_）。正在运行的任务继续运行到结束；新的任务（包括调度器的）在队列中等待。没有时间上限。
 3. 没有任务运行时，它把正在运行的 `timevault.exe` 重命名为 `timevault.old-<版本>.exe`，把新文件放到 `timevault.exe` 这个名字上，写下说明文件，停止调度器、Web 服务器和任务运行器，然后启动新程序。之后排队的任务开始运行。
 4. 新程序在日志中写出 `automatic update: this program has taken over`，并写入审计事件；**审计**页会列出操作者为 `updater` 的**程序更新**事件（`staged`、`restart`、`done`，以及 `cancelled` 或 `failed`），详情中没有路径，也没有错误文本（它们在服务的日志中）。
 
@@ -937,12 +938,13 @@ cd <repository folder>
 
 ## 账号头像
 
-页眉、审计日志、任务页和任务列表、文件夹访问权限的摘要，以及权限编辑器中的人员列表，都会在账号名称旁边显示该账号的头像。头像从 `TIMEVAULT_AVATAR_URL` 读取，默认是 `/api/static/hr/{id}.webp`（公司其他应用保存的员工照片；`{id}` 是工号）。
+页眉、审计日志、任务页和任务列表、文件夹访问权限的摘要，以及权限编辑器中的人员列表，都会在账号名称旁边显示该账号的头像。浏览器从 `TIMEVAULT_AVATAR_URL` 读取每张头像。未设置时，它就是 `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp`：即 `TIMEVAULT_SERVER_HOST` 所指服务器上，公司其他应用保存的员工照片（`{id}` 是工号）。`TIMEVAULT_SERVER_HOST` 没有设置时没有头像，除非直接写明地址。
 
-- 该地址是站点所在主机上的一个路径，不会放到 `TIMEVAULT_BASE_PATH` 之下：在公司的 nginx 之后，`/api/` 和 `/tv/` 在同一个主机名上，所以浏览器可以在 `/tv/` 旁边找到 `/api/static/hr/E1001.webp`。`off` 表示关闭头像。
-- 浏览器自己去请求每张头像，页面存活期间每张只请求一次，并且只请求即将被看到的头像（权限编辑器的人员列表很长）。没有头像的人（该应用对此回答 `202` 并附带一张占位图，而不是 `404`）、失败的请求和不是图片的应答，都会保留默认头像；缺失的头像在浏览器会话期间会被记住。
-- 本地管理员、服务自己使用的名称（`scheduler`、`updater`、`system`）以及不可能是工号的名称，都不会去请求头像。TimeVault 不存储任何东西，内容安全策略也没有改变（头像是用请求返回的数据显示的）。
-- 直接通过服务自己的端口打开时，没有 `/api/static/hr/`，所以每个人显示的都是默认头像。
+- **设置。** `off`（或 `none`）表示关闭头像。完整的 `http(s)` 地址表示从另一个主机读取。像 `/api/static/hr/{id}.webp` 这样的路径表示从站点被打开时所用的主机读取（不会放到 `TIMEVAULT_BASE_PATH` 之下），适合代理在所有名称下都提供那个应用的站点；直接通过服务自己的端口打开时没有这样的路径，每个人显示的都是默认头像。`{id}` 必须恰好出现一次，地址中不能带用户名或密码。
+- **由浏览器读取，而不是服务。** 服务从不获取或提供头像，也不存储任何东西。站点和头像可能在不同的主机上，所以每个页面的内容安全策略都会把头像地址的主机列入图片来源，并且只用于图片，不用于其他任何东西（`img-src 'self' data: http://<host>`）。带下划线的主机名，例如 `prod_eng.co.example.local`，无法写进策略（浏览器会忽略整条），所以改为列出它外面的域：`http://*.co.example.local`。如果没有剩下两个标签的域（`prod_eng`、`prod_eng.local`），头像只有在用同一个地址打开站点时才会显示，启动日志会写出"cannot be named in the content security policy"。通过 `https` 提供的站点需要 `https` 地址：浏览器不会在 `https` 页面中显示来自 `http` 的图片。
+- **没有头像的人。** 另一个应用把头像以 `text/plain` 发送，图片并不在意这一点；对于没有头像的人，它回答 `202` 并附带一张 480×320 像素的占位图，而不是 `404`。恰好是这个尺寸的图片、失败的请求以及没有应答的主机，都会保留默认头像。0.1.8 中头像不显示的原因就在这里：它只接受 `image/*`。
+- **请求频率。** 页面存活期间，浏览器对每张头像只请求一次，并且只请求即将被看到的头像（权限编辑器的人员列表很长）。缺失的头像在浏览器会话中会被记住十分钟，这样列表不会一遍又一遍地请求，而曾经不可用的主机也会很快被再次尝试。
+- 本地管理员、服务自己使用的名称（`scheduler`、`updater`、`system`）以及不可能是工号的名称，都不会去请求头像。
 
 ## 运维
 
@@ -1018,4 +1020,4 @@ cd <repository folder>
 | 更新之后，控制台窗口或计划任务显示程序已结束，退出码为 75 | `TIMEVAULT_UPDATE_RESTART=exit`，而没有任何东西再次启动程序。请使用 `supervise`（默认值），或者让服务管理器在程序结束时重新启动它（NSSM：`AppExit 75 Restart`）。 |
 | 更新之后，旧程序文件 `timevault.old-<版本>.exe` 无法删除 | 使用 `supervise` 时，启动器仍在从它运行（见[发布与自动更新](#发布与自动更新)）。启动器结束之后，它会在以后的某次更新中被删除；在服务停止并重新启动之后，也可以手工删除。 |
 | 手工回退之后，服务又自己更新回了较新的版本 | 发布文件夹里仍然是较新的清单。回退之前请先把较旧的发布放到那里（或者清空 `TIMEVAULT_UPDATE_URL`）。 |
-| 账号头像没有显示 | 检查 `TIMEVAULT_AVATAR_URL`（启动日志里有 `avatar_url`；`off` 表示没有头像），并在浏览器中打开同一主机名下的 `/api/static/hr/<工号>.webp`：它必须返回 `200` 和一张图片。`202`（没有头像的人的占位图）和 `404` 会有意保留默认头像。直接通过服务自己的端口（`http://host:8660/`）访问时没有这样的地址。 |
+| 账号头像没有显示 | 启动日志里有 `avatar_url`：为空表示没有头像，原因是 `TIMEVAULT_AVATAR_URL` 为 `off`，或者它没有设置而 `TIMEVAULT_SERVER_HOST` 也没有设置。在浏览器中打开一张头像（`http://<服务器主机>/api/static/hr/<工号>.webp`）：它必须显示这张图片。480×320 像素的图片（占位图，以 `202` 回答）和 `404` 会有意保留默认头像。如果图片能打开但 TimeVault 不显示：启动日志写着"cannot be named in the content security policy"（主机名带下划线，而且外面没有两个标签的域：请用同一个名称打开站点，或者在头像地址中写服务器的 IP 地址），或者站点通过 `https` 提供而地址是 `http`。用与头像所在主机不同的名称打开站点没有问题，因为策略列出的是地址中的主机。 |

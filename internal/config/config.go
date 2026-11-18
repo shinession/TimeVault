@@ -75,8 +75,10 @@ type Config struct {
 	// BasePath is the path prefix the site is served under behind a reverse proxy, such as /tv
 	// (TIMEVAULT_BASE_PATH). Empty means the site is at the root of its address.
 	BasePath string
-	// AvatarURL is where the picture of an account is, as a path on the host that serves the site, with {id} where
-	// the account name goes (TIMEVAULT_AVATAR_URL). Empty means there are no pictures.
+	// AvatarURL is where the picture of an account is, with {id} where the account name goes
+	// (TIMEVAULT_AVATAR_URL): an http(s) address that the browser reads the picture from, or a path on the host the
+	// site is opened from. By default http://<server host>/api/static/hr/{id}.webp. Empty means there are no
+	// pictures.
 	AvatarURL string
 
 	// UpdateURL is where the release manifest (timevault.json) is: an http(s) address, or the absolute path of the
@@ -165,7 +167,7 @@ func Load(lookup Lookup) (Config, error) {
 	if c.BasePath, err = ParseBasePath(l.str("TIMEVAULT_BASE_PATH", "")); err != nil {
 		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_BASE_PATH %w", err))
 	}
-	if c.AvatarURL, err = parseAvatarURL(l.str("TIMEVAULT_AVATAR_URL", DefaultAvatarURL)); err != nil {
+	if c.AvatarURL, err = parseAvatarURL(l.str("TIMEVAULT_AVATAR_URL", ""), c.ServerHost); err != nil {
 		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_AVATAR_URL %w", err))
 	}
 	if c.UpdateURL, err = parseUpdateURL(l.str("TIMEVAULT_UPDATE_URL", "")); err != nil {
@@ -551,21 +553,32 @@ func parseSSOHost(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-// DefaultAvatarURL is where the pictures of the company accounts are: the application that serves the static files of
-// the other company applications, reached through the same host as this site.
-const DefaultAvatarURL = "/api/static/hr/{id}.webp"
+// DefaultAvatarPath is where the pictures of the company accounts are on the server that keeps them: the application
+// that serves the static files of the other company applications. With TIMEVAULT_AVATAR_URL not set, the address of
+// a picture is http:// plus TIMEVAULT_SERVER_HOST plus this path.
+const DefaultAvatarPath = "/api/static/hr/{id}.webp"
 
-// parseAvatarURL checks the address of the picture of an account: a path on the host that serves the site, with {id}
-// where the account name goes. "off" (or "none") means there are no pictures and gives "". The error text starts with
-// a verb, so a caller can put a setting name in front of it.
-func parseAvatarURL(raw string) (string, error) {
+// parseAvatarURL works out where the picture of an account is, from TIMEVAULT_AVATAR_URL and the server host, with
+// {id} where the account name goes. Not set: the pictures of the company applications, http://<server host> plus
+// DefaultAvatarPath, and none when the server host is not set. "off" (or "none"): no pictures, "". A path such as
+// /api/static/hr/{id}.webp: on the host the site is opened from. An http(s) address: that address; the browser reads
+// the picture from it. The error text starts with a verb, so a caller can put a setting name in front of it.
+func parseAvatarURL(raw, serverHost string) (string, error) {
 	raw = strings.TrimSpace(raw)
-	if strings.EqualFold(raw, "off") || strings.EqualFold(raw, "none") {
-		return "", nil
-	}
 	switch {
-	case !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, `\`):
-		return "", errors.New("must be a path on the host of this site, such as /api/static/hr/{id}.webp, or off")
+	case strings.EqualFold(raw, "off") || strings.EqualFold(raw, "none"):
+		return "", nil
+	case raw == "":
+		if pathutil.ValidateHost(serverHost) != nil {
+			return "", nil
+		}
+		return "http://" + serverHost + DefaultAvatarPath, nil
+	}
+	l := strings.ToLower(raw)
+	absolute := strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://")
+	switch {
+	case !absolute && (!strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, `\`)):
+		return "", errors.New("must be off, a path on the host of this site such as /api/static/hr/{id}.webp, or an http(s) address such as http://<server>/api/static/hr/{id}.webp")
 	case strings.Count(raw, "{id}") != 1:
 		return "", errors.New("must contain {id} once, where the account name goes")
 	case len(raw) > 256:
@@ -576,8 +589,16 @@ func parseAvatarURL(raw string) (string, error) {
 			return "", errors.New("must not contain spaces, quotes, # or other characters that cannot be part of an address")
 		}
 	}
-	if u, err := url.Parse(raw); err != nil || u.Scheme != "" || u.Host != "" {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return "", errors.New("is not a valid address")
+	case !absolute && (u.Scheme != "" || u.Host != ""):
 		return "", errors.New("is not a valid path")
+	case absolute && u.User != nil:
+		return "", errors.New("must not contain a user name or password")
+	case absolute && pathutil.ValidateHost(u.Hostname()) != nil:
+		return "", errors.New("must name the host with letters, digits, - _ and . only, such as http://<server>/api/static/hr/{id}.webp")
 	}
 	return raw, nil
 }

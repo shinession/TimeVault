@@ -2,7 +2,7 @@
 
 ## Architecture decision records
 
-Decisions that shape TimeVault, with their alternatives and consequences. Each file is bilingual (English first, then Simplified Chinese). plan.md P0 asks for ADRs on snapshot semantics, the data model, the content object format and the service privilege boundary; the table says where each is covered. 0005 and 0006 were added for version 0.1.1, 0007 and 0008 for version 0.1.3, 0009, 0010 and 0011 for version 0.1.4, 0012 for version 0.1.5, 0013 for version 0.1.7, 0014 for version 0.1.8; 0009 was updated for version 0.1.6.
+Decisions that shape TimeVault, with their alternatives and consequences. Each file is bilingual (English first, then Simplified Chinese). plan.md P0 asks for ADRs on snapshot semantics, the data model, the content object format and the service privilege boundary; the table says where each is covered. 0005 and 0006 were added for version 0.1.1, 0007 and 0008 for version 0.1.3, 0009, 0010 and 0011 for version 0.1.4, 0012 for version 0.1.5, 0013 for version 0.1.7, 0014 for version 0.1.8, 0015 for version 0.1.9; 0009 was updated for version 0.1.6.
 
 | ADR | Decision | Covers (plan.md P0) |
 |---|---|---|
@@ -20,6 +20,7 @@ Decisions that shape TimeVault, with their alternatives and consequences. Each f
 | [0012](./0012-base-path-behind-a-reverse-proxy.md) | The site can be served under a path prefix such as `/tv` behind a reverse proxy: the prefix is taken off a request and put on the redirects, links, assets, script requests and cookies, and the proxy may keep or remove it | Web layer, deployment |
 | [0013](./0013-per-folder-access-levels.md) | What an account may do is decided for each monitored folder: Browse, Back up (with the full re-read) and Full, granted to guests, to everybody who is signed in or to single employee IDs; a folder without a level is invisible; administrators have Full everywhere; new folders are seen by administrators only until they are given access | Role model (per-source permissions) |
 | [0014](./0014-self-update-from-a-release-manifest.md) | The service updates itself from a release folder (`timevault.exe` and `timevault.json`, written by `scripts/release.ps1`): when `latest_version` is not the running version it downloads and checks the program, stops taking jobs, waits for the running ones, swaps the file by renaming it, and restarts through a small launcher (or exit code 75); no signature, no automatic way back | Deployment, continuous delivery |
+| [0015](./0015-account-pictures-are-read-by-the-browser-from-their-host.md) | The browser reads the pictures of the accounts from the host that keeps them (by default `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp`): an image element decides what is a picture (the host sends `text/plain` and answers a missing one with `202` and a 480×320 placeholder), the content security policy lists that host for images only (the wildcard of the domain for a host name with an underscore), and the service fetches and serves nothing; the update address stays an explicit setting | Web layer, deployment |
 
 Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, chunking and packs.
 
@@ -29,7 +30,7 @@ Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, ch
 
 ## 架构决策记录
 
-塑造 TimeVault 的各项决定，包括备选方案和影响。每个文件都是双语的（先英文，后简体中文）。plan.md P0 要求为快照语义、数据模型、内容对象格式和服务权限边界编写 ADR；下表说明各项分别在哪里覆盖。0005 和 0006 是为 0.1.1 版本新增的，0007 和 0008 是为 0.1.3 版本新增的，0009、0010 和 0011 是为 0.1.4 版本新增的，0012 是为 0.1.5 版本新增的，0013 是为 0.1.7 版本新增的，0014 是为 0.1.8 版本新增的；0009 在 0.1.6 版本中有更新。
+塑造 TimeVault 的各项决定，包括备选方案和影响。每个文件都是双语的（先英文，后简体中文）。plan.md P0 要求为快照语义、数据模型、内容对象格式和服务权限边界编写 ADR；下表说明各项分别在哪里覆盖。0005 和 0006 是为 0.1.1 版本新增的，0007 和 0008 是为 0.1.3 版本新增的，0009、0010 和 0011 是为 0.1.4 版本新增的，0012 是为 0.1.5 版本新增的，0013 是为 0.1.7 版本新增的，0014 是为 0.1.8 版本新增的，0015 是为 0.1.9 版本新增的；0009 在 0.1.6 版本中有更新。
 
 | ADR | 决定 | 覆盖的内容（plan.md P0） |
 |---|---|---|
@@ -47,5 +48,6 @@ Not decided yet, because the spikes were not run: VSS usage, USN checkpoints, ch
 | [0012](./0012-base-path-behind-a-reverse-proxy.md) | 站点可以放在反向代理之后的路径前缀（如 `/tv`）下提供：请求上的前缀会被去掉，重定向、链接、静态资源、脚本请求和 Cookie 会加上前缀，代理可以保留也可以去掉它 | Web 层、部署 |
 | [0013](./0013-per-folder-access-levels.md) | 账号能做什么按监控文件夹分别决定：浏览、备份（含完整重读）和完全，可以授予访客、所有已登录的人或单个工号；没有任何级别的文件夹是不可见的；管理员对所有文件夹拥有完全控制权；新文件夹在被授予访问权之前只有管理员能看到 | 角色模型（按备份源的权限） |
 | [0014](./0014-self-update-from-a-release-manifest.md) | 服务从发布文件夹（由 `scripts/release.ps1` 生成的 `timevault.exe` 和 `timevault.json`）更新自己：当 `latest_version` 不是正在运行的版本时，下载并检查程序，停止取用任务，等正在运行的任务结束，通过重命名交换文件，再通过一个小型启动器（或退出码 75）重启；没有签名，没有自动回退 | 部署、持续交付 |
+| [0015](./0015-account-pictures-are-read-by-the-browser-from-their-host.md) | 由浏览器从存放头像的主机读取账号头像（默认 `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/{id}.webp`）：由图片元素决定什么是头像（该主机以 `text/plain` 发送，对缺失的头像回答 `202` 和一张 480×320 的占位图），内容安全策略只为图片列出该主机（主机名带下划线时用其所在域的通配符），服务不获取也不提供任何东西；更新地址仍然是显式设置 | Web 层、部署 |
 
 尚未决定的内容（因为没有做验证）：VSS 的使用、USN 检查点、分块与 Pack。

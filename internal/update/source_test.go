@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -239,6 +241,118 @@ func TestFileSourceFindsAFolderThatAppearsAfterTheStart(t *testing.T) {
 		t.Fatalf("Open once the folder is there: %v", err)
 	}
 	_ = rc.Close()
+}
+
+// dashStatic stands for the static files of the company application, which is where the release is published: it
+// answers 200 for a file that exists, 202 and a picture for anything else, and text/plain for the types it does not
+// know. It records what was asked for.
+func dashStatic(t *testing.T, files map[string][]byte) (*httptest.Server, func() []string) {
+	t.Helper()
+	var mu sync.Mutex
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		asked = append(asked, r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		body, ok := files[r.URL.Path]
+		if !ok {
+			w.WriteHeader(http.StatusAccepted)
+			_, _ = w.Write(bytes.Repeat([]byte{0xFF, 0xD8}, 5000)) // the "file not found" picture
+			return
+		}
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), asked...)
+	}
+}
+
+// A package_url that is not an address of its own is looked for next to the manifest: with the manifest at
+// /api/static/cd/timevault.json, timevault.exe is /api/static/cd/timevault.exe.
+func TestARelativePackageURLIsLookedForNextToTheManifest(t *testing.T) {
+	program := []byte("the program")
+	files := map[string][]byte{
+		"/api/static/cd/timevault.exe":        program,
+		"/api/static/cd/sub/pkg.exe":          program,
+		"/api/static/elsewhere/timevault.exe": program,
+	}
+	m := manifestJSON("0.1.9", sum(program), "timevault.exe", int64(len(program)))
+	files["/api/static/cd/timevault.json"] = []byte(m)
+	srv, asked := dashStatic(t, files)
+	ctx := context.Background()
+
+	// The address of the manifest, or of the folder that holds it.
+	for _, address := range []string{srv.URL + "/api/static/cd/timevault.json", srv.URL + "/api/static/cd/"} {
+		src, err := NewSource(address, nil)
+		if err != nil {
+			t.Fatalf("NewSource(%q): %v", address, err)
+		}
+		got, err := src.Manifest(ctx)
+		if err != nil || got.LatestVersion != "0.1.9" || got.PackageURL != "timevault.exe" {
+			t.Fatalf("Manifest(%q) = %+v, %v", address, got, err)
+		}
+		for packageURL, wantPath := range map[string]string{
+			"timevault.exe":                          "/api/static/cd/timevault.exe",
+			"./timevault.exe":                        "/api/static/cd/timevault.exe",
+			"sub/pkg.exe":                            "/api/static/cd/sub/pkg.exe",
+			"../elsewhere/timevault.exe":             "/api/static/elsewhere/timevault.exe",
+			"/api/static/cd/timevault.exe":           "/api/static/cd/timevault.exe",
+			srv.URL + "/api/static/cd/timevault.exe": "/api/static/cd/timevault.exe",
+		} {
+			got.PackageURL = packageURL
+			before := len(asked())
+			rc, size, err := src.Open(ctx, got)
+			if err != nil {
+				t.Fatalf("Open(package_url %q): %v", packageURL, err)
+			}
+			data, _ := io.ReadAll(rc)
+			_ = rc.Close()
+			if !bytes.Equal(data, program) || size != int64(len(program)) {
+				t.Errorf("Open(package_url %q) gave %q (%d announced)", packageURL, data, size)
+			}
+			if now := asked(); len(now) != before+1 || now[before] != wantPath {
+				t.Errorf("package_url %q asked for %v, want %s", packageURL, now[before:], wantPath)
+			}
+		}
+	}
+
+	// The whole path of an update: the program arrives in the staged file with the size and the hash of the manifest.
+	src, _ := NewSource(srv.URL+"/api/static/cd/timevault.json", nil)
+	manifest, _ := src.Manifest(ctx)
+	dest := filepath.Join(t.TempDir(), "timevault.new.exe")
+	if err := Download(ctx, src, manifest, dest); err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if got := readFile(t, dest); got != string(program) {
+		t.Errorf("the staged program is %q", got)
+	}
+}
+
+// What the static files answer for a file that is not there must never be taken for the manifest or for the program.
+func TestAMissingReleaseFileOfTheStaticServerIsAnErrorNotAProgram(t *testing.T) {
+	program := []byte("the program")
+	srv, _ := dashStatic(t, map[string][]byte{"/api/static/cd/timevault.exe": program})
+	ctx := context.Background()
+
+	src, _ := NewSource(srv.URL+"/api/static/cd/timevault.json", nil) // nothing is published yet
+	if _, err := src.Manifest(ctx); err == nil || !strings.Contains(err.Error(), "202") {
+		t.Errorf("a manifest that is not there: %v, want the 202 to be said", err)
+	}
+
+	m := Manifest{LatestVersion: "0.1.9", SHA256: sum(program), PackageURL: "gone.exe", Size: int64(len(program))}
+	if rc, _, err := src.Open(ctx, m); err == nil {
+		_ = rc.Close()
+		t.Error("the answer for a program that is not there was opened as the program")
+	}
+	dest := filepath.Join(t.TempDir(), "timevault.new.exe")
+	if err := Download(ctx, src, m, dest); err == nil || exists(dest) || exists(dest+".part") {
+		t.Errorf("Download of a program that is not there: %v", err)
+	}
 }
 
 func TestFileSourceMayPointAtAnHTTPProgram(t *testing.T) {

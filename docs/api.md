@@ -2,7 +2,7 @@
 
 ## Overview
 
-TimeVault (version 0.1.8) serves a JSON API below `/api/v1` and server-rendered pages. Both are implemented by the same service layer, so they behave identically. This document describes what exists now; it differs from the illustrative API in plan.md §6 in the ways listed in [Differences from plan.md](#differences-from-planmd).
+TimeVault (version 0.1.10) serves a JSON API below `/api/v1` and server-rendered pages. Both are implemented by the same service layer, so they behave identically. This document describes what exists now; it differs from the illustrative API in plan.md §6 in the ways listed in [Differences from plan.md](#differences-from-planmd).
 
 ## Conventions
 
@@ -106,7 +106,7 @@ Invoke-RestMethod "$base/api/v1/backups" -Method Post -WebSession $session `
 
 ## 概述
 
-TimeVault（0.1.8 版）在 `/api/v1` 下提供 JSON API，同时提供服务端渲染的页面。两者由同一个服务层实现，行为一致。本文档描述当前已有的内容；与 plan.md §6 中示意性 API 的差异见[与 plan.md 的差异](#与-planmd-的差异)。
+TimeVault（0.1.10 版）在 `/api/v1` 下提供 JSON API，同时提供服务端渲染的页面。两者由同一个服务层实现，行为一致。本文档描述当前已有的内容；与 plan.md §6 中示意性 API 的差异见[与 plan.md 的差异](#与-planmd-的差异)。
 
 ## 约定
 
