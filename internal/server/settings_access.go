@@ -134,12 +134,18 @@ func buildPicker(spec access.Spec, accounts []auth.Account, listed bool) accessP
 	return picker
 }
 
+// summaryPerson is one account in the summary of who has access: its employee ID (for the picture), and how it is
+// written, "Name (ID)" or just the ID.
+type summaryPerson struct {
+	ID, Label string
+}
+
 // accessRow is who has one level of a folder, for the summary on the settings page.
 type accessRow struct {
 	Level           access.Level
 	Guest, Everyone bool
-	// People are the accounts, "Name (ID)" or just the ID, at most summaryLimit of them; More counts the rest.
-	People []string
+	// People are the accounts, at most summaryLimit of them; More counts the rest.
+	People []summaryPerson
 	More   int
 }
 
@@ -171,10 +177,11 @@ func summarize(list access.List, accounts []auth.Account) []accessRow {
 				row.More = len(ids) - summaryLimit
 				break
 			}
+			label := id
 			if name := names[id]; name != "" {
-				id = name + " (" + id + ")"
+				label = name + " (" + id + ")"
 			}
-			row.People = append(row.People, id)
+			row.People = append(row.People, summaryPerson{ID: id, Label: label})
 		}
 		if row.Guest || row.Everyone || len(row.People) > 0 {
 			rows = append(rows, row)

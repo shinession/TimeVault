@@ -4,6 +4,7 @@
 //	timevault-server migrate        apply database migrations and exit
 //	timevault-server hash-password  create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
 //	timevault-server check-redis-users  check that the user accounts in Redis can be read
+//	timevault-server check-config   check that the settings are valid for the service and exit
 //	timevault-server version
 package main
 
@@ -19,6 +20,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,13 +40,14 @@ import (
 	"timevault/internal/search"
 	"timevault/internal/server"
 	"timevault/internal/service"
+	"timevault/internal/update"
 	"timevault/migrations"
 	"timevault/web"
 )
 
 // version is the one place the program version is written. The build command in docs/runbook.md does not
 // set it: -ldflags "-X main.version=..." would replace it, and an old copy of that command stamps an old number.
-var version = "0.1.7"
+var version = "0.1.8"
 
 func main() {
 	cmd := "serve"
@@ -54,13 +57,15 @@ func main() {
 	var err error
 	switch cmd {
 	case "serve":
-		err = runServe()
+		err = serveAndRestart()
 	case "migrate":
 		err = runMigrate()
 	case "hash-password":
 		err = runHashPassword()
 	case "check-redis-users":
 		err = runCheckRedisUsers()
+	case "check-config":
+		err = runCheckConfig()
 	case "version", "-v", "--version":
 		fmt.Println("timevault-server", version)
 	case "help", "-h", "--help":
@@ -82,6 +87,7 @@ commands:
   migrate             apply database migrations and exit
   hash-password       create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
   check-redis-users   check that the user accounts in Redis can be read (prints counts, never names or passwords)
+  check-config        check that the settings are valid for the service, without connecting to anything
   version             print the version
 
 Settings are read from TIMEVAULT_* environment variables and from a .env file: the one named by
@@ -195,7 +201,9 @@ func runCheckRedisUsers() error {
 	return nil
 }
 
-func runServe() error {
+// runCheckConfig says whether the settings are valid for the service. It connects to nothing: a running service uses it
+// to find out whether a new program would start with the settings it has, before it replaces itself with it.
+func runCheckConfig() error {
 	cfg, err := loadConfig()
 	if err != nil {
 		return err
@@ -203,8 +211,100 @@ func runServe() error {
 	if err := cfg.ValidateServe(); err != nil {
 		return err
 	}
+	fmt.Println("the settings are valid")
+	return nil
+}
+
+// restart says that the service stopped to be replaced by a new program; runServe fills it in.
+type restart struct {
+	update *update.Update
+	mode   string
+	log    *slog.Logger
+}
+
+// serveAndRestart runs the service. When it stopped because it put a newer program in its place, it starts that
+// program: it stays alive as a small launcher (the default, which works from a console window and from a scheduled
+// task), or it exits with the code a service manager restarts a program on.
+func serveAndRestart() error {
+	exe, err := os.Executable()
+	if err != nil {
+		exe = ""
+	}
+	var again restart
+	if err := runServe(exe, &again); err != nil || again.update == nil {
+		return err
+	}
+	if update.Decide(again.mode, update.Supervised()) == update.RestartExit {
+		again.log.Info("exiting so that the new program is started", "version", again.update.To, "exit_code", update.ExitRestart)
+		os.Exit(update.ExitRestart)
+	}
+	again.log.Info("starting the new program", "version", again.update.To)
+	os.Exit(update.Supervise(exe, os.Args[1:], nil, again.log))
+	return nil
+}
+
+// auditUpdate writes what the updater does to the audit log. The detail holds no path and no error text: the audit log
+// is shown to everybody who signs in, and the details are in the log of the service and on the Settings page.
+func auditUpdate(logger *audit.Logger) func(context.Context, update.Event) {
+	return func(ctx context.Context, e update.Event) {
+		result := audit.ResultOK
+		if !e.OK {
+			result = audit.ResultFailed
+		}
+		detail := map[string]any{"stage": e.Stage, "from": e.From, "to": e.To}
+		for k, v := range e.Detail {
+			detail[k] = v
+		}
+		_ = logger.Record(ctx, audit.Event{
+			Actor: audit.ActorUpdater, Action: audit.ActionAppUpdate, TargetType: "app", TargetID: e.To, Result: result, Detail: detail,
+		})
+	}
+}
+
+// noteUpdateDone tells that this program has taken over from the one an update replaced. The marker is left by the
+// service that did the update.
+func noteUpdateDone(ctx context.Context, log *slog.Logger, logger *audit.Logger, m update.Marker) {
+	if !update.SameVersion(m.To, version) {
+		log.Warn("automatic update: the note left by the update names another version than the one that runs, so the program was changed since",
+			"noted", m.To, "running", version)
+		return
+	}
+	log.Info("automatic update: this program has taken over", "from", m.From, "to", version, "waited_seconds", m.WaitedSeconds)
+	_ = logger.Record(ctx, audit.Event{
+		Actor: audit.ActorUpdater, Action: audit.ActionAppUpdate, TargetType: "app", TargetID: version,
+		Detail: map[string]any{"stage": "done", "from": m.From, "to": version, "sha256": m.SHA256},
+	})
+}
+
+// warnIfNotWritable says so when the folder of the program cannot take a new file, which an update needs.
+func warnIfNotWritable(log *slog.Logger, exe string) {
+	f, err := os.CreateTemp(filepath.Dir(exe), ".timevault-write-test-*")
+	if err != nil {
+		log.Warn("automatic updates are on, but the folder of the program cannot take a new file, so an update will fail: give the account of the service the right to write there",
+			"folder", filepath.Dir(exe), "error", err)
+		return
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+}
+
+func runServe(exe string, again *restart) error {
+	cfg, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	if err := cfg.ValidateServe(); err != nil {
+		return err
+	}
+	if cfg.UpdateURL != "" && exe == "" {
+		return errors.New("TIMEVAULT_UPDATE_URL is set, but the location of the program is not known, so it could not be replaced")
+	}
 	log := newLogger(cfg)
 	log.Info("starting TimeVault", append([]any{"version", version}, cfg.LogAttrs()...)...)
+	if update.Supervised() {
+		log.Info("started by the launcher of an earlier program, which starts the next one after an update", "launcher_pid", os.Getenv(update.EnvSupervised))
+	}
 	if prio, err := platform.ParsePriority(cfg.ProcessPriority); err == nil && prio != platform.PriorityNormal {
 		if err := platform.SetPriority(prio); err != nil {
 			log.Warn("could not lower the priority of the service; it keeps running at normal priority", "priority", string(prio), "error", err)
@@ -221,8 +321,13 @@ func runServe() error {
 			"cookie_secure", cfg.CookieSecure)
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if update.Supervised() {
+		go update.StopWithLauncher(os.Stdin, cancel, log)
+	}
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL, db.Options{MaxConns: poolSize(cfg.JobWorkers)})
 	if err != nil {
@@ -325,9 +430,32 @@ func runServe() error {
 	} else if n > 0 {
 		log.Warn("aborted unfinished recovery points and removed their partial history", "count", n)
 	}
+	auditLog := audit.New(pool, log)
+	if exe != "" {
+		if marker, ok := update.TakeMarker(exe); ok {
+			noteUpdateDone(ctx, log, auditLog, marker)
+		}
+	}
+	var updater *update.Updater
+	var updates server.Updater
+	if cfg.UpdateURL != "" {
+		source, err := update.NewSource(cfg.UpdateURL, nil)
+		if err != nil {
+			return err
+		}
+		if updater, err = update.New(update.Options{
+			Source: source, Drainer: runner, Current: version, ExePath: exe, Interval: cfg.UpdateInterval,
+			Log: log, Record: auditUpdate(auditLog),
+		}); err != nil {
+			return err
+		}
+		updates = updater
+		warnIfNotWritable(log, exe)
+		log.Info("automatic updates are on", "manifest", source.Address(), "interval", cfg.UpdateInterval.String(), "restart", cfg.UpdateRestart)
+	}
 	serviceConfig := service.Config{
 		Pool: pool, Catalog: cat, Repo: repo, Engine: engine, Restore: restoreMgr, Jobs: runner,
-		Audit: audit.New(pool, log), Search: provider, Logger: log,
+		Audit: auditLog, Search: provider, Logger: log,
 		ServerHost: cfg.ServerHost, RestoreDisplayRoot: cfg.RestoreDisplayRoot,
 		Scheduler: service.SchedulerOptions{
 			Parallel: cfg.SchedulerParallel, GapAuto: cfg.SchedulerGapAuto, Gap: cfg.SchedulerGap,
@@ -347,6 +475,7 @@ func runServe() error {
 	handler, err := server.New(svc, am, web.FS, server.Options{
 		Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure, Deployment: cfg.Describe(),
 		SSOHost: cfg.SSOHost, SSORequireSameIP: cfg.SSORequireSameIP, TrustedProxies: cfg.TrustedProxies, BasePath: cfg.BasePath,
+		AvatarURL: cfg.AvatarURL, Update: updates,
 	}, log)
 	if err != nil {
 		return err
@@ -382,6 +511,12 @@ func runServe() error {
 		}
 		close(serveErr)
 	}()
+	// updateDone stays nil, and so is never ready, when the service does not update itself.
+	var updateDone chan *update.Update
+	if updater != nil {
+		updateDone = make(chan *update.Update, 1)
+		go func() { updateDone <- updater.Run(ctx) }()
+	}
 
 	select {
 	case err := <-serveErr:
@@ -389,6 +524,14 @@ func runServe() error {
 		scheduler.Wait()
 		runner.Shutdown(context.Background())
 		return err
+	case up := <-updateDone:
+		// The new program is in place and no job runs; the rest is the usual way out. A nil update means the
+		// updater only ended because the service is being stopped.
+		if up != nil {
+			*again = restart{update: up, mode: cfg.UpdateRestart, log: log}
+			log.Info("shutting down to start the new version", "from", up.From, "to", up.To)
+			stop()
+		}
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")

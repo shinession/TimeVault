@@ -21,7 +21,7 @@
   <dl class="tv-facts">
     {{if .Source}}<div><dt>{{$.T "common.source"}}</dt><dd><a href="{{url "/explorer" "source" .Source.ID}}">{{.Source.Name}}</a></dd></div>{{end}}
     {{if .Point}}<div><dt>{{$.T "job.point"}}</dt><dd><a href="{{url "/history" "source" .Point.SourceID "point" .Point.ID}}">#{{.Point.Seq}} · {{$.Time .Point.CapturedAt}}</a></dd></div>{{end}}
-    <div><dt>{{$.T "jobs.by"}}</dt><dd>{{if $.SignedIn}}{{.View.Job.RequestedBy}}{{else}}-{{end}}</dd></div>
+    <div><dt>{{$.T "jobs.by"}}</dt><dd>{{if $.SignedIn}}{{template "person" (pair $ .View.Job.RequestedBy)}}{{.View.Job.RequestedBy}}{{else}}-{{end}}</dd></div>
     <div><dt>{{$.T "jobs.created"}}</dt><dd>{{$.TimeS .View.Job.CreatedAt}}</dd></div>
     <div><dt>{{$.T "jobs.duration"}}</dt><dd>{{if .View.Duration}}{{.View.Duration}}{{else}}-{{end}}</dd></div>
     <div><dt>{{$.T "job.phase"}}</dt><dd data-job-field="phase">{{$.PhaseLabel .View.Phase}}</dd></div>

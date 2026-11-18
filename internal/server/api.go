@@ -36,6 +36,7 @@ func (s *Server) apiRoutes() {
 	// one folder is checked by the handler.
 	m.HandleFunc("GET /api/v1/health", s.need(auth.PermAudit, s.apiHealth))
 	m.HandleFunc("GET /api/v1/settings", s.need(auth.PermAudit, s.apiSettings))
+	m.HandleFunc("POST /api/v1/update/check", s.need(auth.PermManage, s.apiUpdateCheck))
 	m.HandleFunc("GET /api/v1/audit", s.need(auth.PermAudit, s.apiAudit))
 	m.HandleFunc("POST /api/v1/backups", s.need(auth.PermAccount, s.apiStartBackup))
 	m.HandleFunc("POST /api/v1/restores/preview", s.need(auth.PermAccount, s.apiRestorePreview))
@@ -281,7 +282,39 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, sess auth.S
 	if sess.Can(auth.PermManage) {
 		out["repository"], out["restore_root"], out["env_file"] = d.RepositoryPath, d.RestoreRoot, d.EnvFile
 	}
+	out["update"] = s.apiUpdate(sess)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// apiUpdate describes the automatic update. The address of the release and the last error may quote paths on the
+// server, so they are for administrators.
+func (s *Server) apiUpdate(sess auth.Session) map[string]any {
+	v := s.updateView(sess)
+	out := map[string]any{"enabled": v.Enabled}
+	if !v.Enabled {
+		return out
+	}
+	out["state"], out["latest_version"], out["check_interval"], out["waiting_jobs"] = v.State, v.Latest, v.Interval.String(), v.Waiting
+	if !v.CheckedAt.IsZero() {
+		out["checked_at"] = v.CheckedAt
+	}
+	if sess.Can(auth.PermManage) {
+		out["manifest"] = v.Address
+		if v.Error != "" {
+			out["error"] = v.Error
+		}
+	}
+	return out
+}
+
+// apiUpdateCheck asks the updater to look at the release now and answers at once; the result shows in the settings.
+func (s *Server) apiUpdateCheck(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	if s.opts.Update == nil {
+		writeJSONError(w, http.StatusConflict, "updates_off", "automatic updates are not configured")
+		return
+	}
+	s.opts.Update.CheckNow()
+	writeJSON(w, http.StatusAccepted, map[string]any{"requested": true})
 }
 
 func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request, sess auth.Session) {

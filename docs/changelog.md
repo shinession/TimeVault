@@ -4,6 +4,45 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 0.1.8
+
+Pictures of the accounts, and a program that updates itself. A build now writes a **release folder** (`timevault.exe` and `timevault.json`); a service that is told where that folder is reads it, downloads a new version, waits for its running jobs to finish and restarts itself. The decisions and the alternatives are in [ADR 0014](./adr/0014-self-update-from-a-release-manifest.md).
+
+### Added
+
+- **Pictures of the accounts.** The header, the audit log (the actor), the job page and the lists of jobs (who asked), the summary of who has access to a folder and the people lists of the permission editor show the picture of an account next to its name. The picture is read from `/api/static/hr/<employee ID>.webp` on the same host (the pictures of the employees that the other company applications keep), set by `TIMEVAULT_AVATAR_URL`, where `{id}` is the employee ID and `off` turns the pictures off. Whoever has no picture, or whose picture cannot be read, keeps the default picture. The host of the pictures answers `202` with a placeholder for a missing one, so only a `200` with an image counts; the browser asks for each picture once, only when it is about to be seen, and remembers a missing one for the session. The local administrator and the names the service uses itself (`scheduler`, `updater`, `system`) have none. The content security policy is unchanged.
+- **`scripts\release.ps1`** writes the release folder (default `<repository>\release`, git-ignored): `timevault.exe`, and last `timevault.json` with `latest_version`, `sha256`, `package_url` and `size`. It runs `go vet`, builds without `-X`, takes the version from the program itself, and warns when the version is the one of the release that is already there. `-BaseUrl` writes a full `package_url`; `-OutDir`, `-ExeName` and `-SkipChecks` are the other parameters.
+- **Automatic update.** With `TIMEVAULT_UPDATE_URL` (an `http(s)` address, or a path of a folder or a share; empty means off), `TIMEVAULT_UPDATE_INTERVAL` (default `10m`, `1m` to `24h`) and `TIMEVAULT_UPDATE_RESTART` (`supervise` by default, or `exit`) the service reads the manifest about 10 seconds after its start and at every interval. When `latest_version` is not the running version it downloads the program next to itself (size and sha256 must match), runs it with `version` and with the new command `check-config`, stops taking jobs, waits until the running jobs are through (no time limit), swaps the file by renaming (the old program stays as `timevault.old-<version>.exe`, the newest three are kept), stops, and starts the new program. With `supervise` the process that was started stays as a small launcher that runs the new program as its child (a console window and a scheduled task keep seeing one program; Ctrl+C stops both; when the launcher is killed, for example by ending the task, the program stops too); with `exit` the process ends with the code 75 for a service manager that restarts it. The new program notes that it took over (log and audit).
+- **`timevault-server check-config`** checks the settings (the environment and the `.env` file) as `serve` does and connects to nothing; exit code 1 and the reasons when they are not valid.
+- **The Settings page has a card, "Program updates":** the state (up to date, checking, downloading, waiting for the running jobs, installing, problem), the version that runs, the released version, when the manifest was last read and how often. Administrators also see the address of the release and the last problem, and a **Check now** button (`POST /settings/update/check`, `POST /api/v1/update/check`).
+- **A notice under the header** tells every signed-in account, while the service waits to restart, that a version will be installed as soon as the running jobs have finished and that new jobs wait until then; the script keeps it right while people move between pages.
+- **Audit:** the action **Program update** (`app.update`, actor `updater`) with the stage (`staged`, `restart`, `done`, `cancelled`, `failed`) in the detail, with no path and no error text.
+- **API:** `update` in `GET /api/v1/settings` (`enabled`, `state`, `latest_version`, `check_interval`, `waiting_jobs`, `checked_at`; for administrators also `manifest` and `error`), `POST /api/v1/update/check`, and the `X-TV-Notice` header on partial pages.
+- **Job runner:** `Drain`, `Resume` and `Running`. While the runner is drained, queued jobs stay queued.
+
+### Changed
+
+- **A service with `TIMEVAULT_UPDATE_URL` must have `TIMEVAULT_AUTO_MIGRATE=true`** and refuses to start otherwise, because a new version may change the database and nobody runs `migrate` when the service updates itself.
+- The summary of who has access on the Settings page and the people lists of the permission editor name accounts through the same partials as the other pages, so they show the pictures.
+- The version number is 0.1.8; `go build` is unchanged.
+
+### Upgrade notes
+
+1. **Nothing has to be done** to keep the way a service runs: without `TIMEVAULT_UPDATE_URL` it never updates itself, and without a reachable picture host everybody has the default picture. No migration, no new required setting.
+2. **To turn automatic updates on at a server** (once, by hand: older versions cannot update themselves): copy `timevault.exe` of 0.1.8 next to the `.env`, add `TIMEVAULT_AUTO_MIGRATE=true` and `TIMEVAULT_UPDATE_URL=<release folder>`, give the account of the service **Modify** on the folder of the program and **Read** on the release folder, start it. From then on a release is made with `scripts\release.ps1` and copied (program first, manifest last) to the release folder. See [Releasing and automatic updates](./runbook.md#releasing-and-automatic-updates).
+3. **If a service has to go back,** put the older release in the release folder first (or empty `TIMEVAULT_UPDATE_URL`), or it updates itself to the newer one again. The previous program is `timevault.old-<version>.exe`.
+4. **Pictures:** behind the company's nginx `/api/static/hr/<employee ID>.webp` is on the same host as `/tv/`, so they appear without any setting. Reaching the service directly on its own port gives the default picture. Set `TIMEVAULT_AVATAR_URL=off` to turn them off.
+5. The `.env` template (`configs/timevault.example.env`) has the new settings.
+
+### Known limits
+
+- **No signature.** Whoever can write the release folder decides what runs on the server; the size and the sha256 only protect against a damaged or half-copied file ([security.md](./security.md)). Use a folder that only administrators can write, and `https` for an address.
+- **No automatic way back.** If a new program passes the checks and then fails (a migration, a folder that is gone), the service stays down and the log says why. Going back is by hand, and a migration that was applied stays.
+- **The wait for running jobs has no limit,** and while it lasts nothing starts, the scheduler's backups included.
+- **The launcher of `supervise` mode keeps the code it was started with** and the old program file stays locked while it lives; a change to the launcher needs a restart of the launcher.
+- Versions are compared for equality only, so a manifest with an older version is a downgrade.
+- Checked with automated tests and with compiled programs against a scratch database (see [mvp-status.md](./mvp-status.md)); not on the production server, not through the company's nginx, and not with the real picture host.
+
 ## 0.1.7
 
 What an account may do is now decided for each monitored folder: **Browse**, **Back up** (back up now, including the full re-read) and **Full control**, given to guests, to everybody who is signed in, or to single employee IDs, and set on the Settings page together with the folder. Administrators have full control of every folder. A folder that a visitor may not browse is not there for them at all. The decisions and the alternatives are in [ADR 0013](./adr/0013-per-folder-access-levels.md).
@@ -271,6 +310,45 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 0.1.8
+
+账号头像，以及会自己更新的程序。现在每次构建都会生成一个**发布文件夹**（`timevault.exe` 和 `timevault.json`）；被告知该文件夹位置的服务会读取它，下载新版本，等正在运行的任务结束后自己重启。决定和备选方案见 [ADR 0014](./adr/0014-self-update-from-a-release-manifest.md)。
+
+### 新增
+
+- **账号头像。** 页眉、审计日志（操作者）、任务页和任务列表（谁发起的）、文件夹访问权限的摘要，以及权限编辑器的人员列表，都会在账号名称旁边显示该账号的头像。头像从同一主机上的 `/api/static/hr/<工号>.webp` 读取（公司其他应用保存的员工照片），由 `TIMEVAULT_AVATAR_URL` 设置，其中 `{id}` 是工号，`off` 表示关闭头像。没有头像、或者头像读不到的账号保留默认头像。存放头像的主机对缺失的头像回答带占位图的 `202`，所以只有 `200` 且是图片的应答才算数；浏览器对每张头像只请求一次，并且只在它即将被看到时才请求，缺失的头像在会话期间会被记住。本地管理员和服务自己使用的名称（`scheduler`、`updater`、`system`）没有头像。内容安全策略不变。
+- **`scripts\release.ps1`** 生成发布文件夹（默认是 `<repository>\release`，已被 git 忽略）：`timevault.exe`，最后是带有 `latest_version`、`sha256`、`package_url` 和 `size` 的 `timevault.json`。它运行 `go vet`，不带 `-X` 地构建，从程序本身取得版本号，并在版本号与那里已有的发布相同时发出警告。`-BaseUrl` 写出完整的 `package_url`；其他参数是 `-OutDir`、`-ExeName` 和 `-SkipChecks`。
+- **自动更新。** 设置 `TIMEVAULT_UPDATE_URL`（`http(s)` 地址，或文件夹/共享的路径；为空表示关闭）、`TIMEVAULT_UPDATE_INTERVAL`（默认 `10m`，范围 `1m` 到 `24h`）和 `TIMEVAULT_UPDATE_RESTART`（默认 `supervise`，或 `exit`）之后，服务在启动后约 10 秒以及每个间隔读取清单。当 `latest_version` 不是正在运行的版本时，它会把程序下载到自己旁边（大小和 sha256 必须一致），用 `version` 和新增的 `check-config` 命令运行它，停止取用任务，等正在运行的任务全部结束（没有时间上限），通过重命名交换文件（旧程序保留为 `timevault.old-<版本>.exe`，保留最新的三个），停止，然后启动新程序。使用 `supervise` 时，被启动的进程作为一个小型启动器保留，并把新程序作为子进程运行（控制台窗口和计划任务看到的始终是一个程序；Ctrl+C 会同时停止两者；启动器被强制终止时，例如结束任务，程序也会随之停止）；使用 `exit` 时，进程以退出码 75 结束，由服务管理器重新启动它。新程序会说明它已接手（日志和审计）。
+- **`timevault-server check-config`** 像 `serve` 一样检查设置（环境变量和 `.env` 文件），不连接任何东西；设置无效时退出码为 1 并给出原因。
+- **设置页新增一张"程序更新"卡片：** 状态（已是最新、正在检查、正在下载、等待正在运行的任务、正在安装、出现问题）、正在运行的版本、已发布的版本、清单最近一次读取的时间以及读取的频率。管理员还能看到发布地址和最近的问题，以及**立即检查**按钮（`POST /settings/update/check`、`POST /api/v1/update/check`）。
+- **页眉下面的提示：** 服务等待重启期间，每个已登录的账号都会被告知：有一个版本将在正在运行的任务结束后安装，新任务要等到那时再开始；人们在页面之间切换时，脚本会让它保持正确。
+- **审计：** 动作**程序更新**（`app.update`，操作者 `updater`），详情中有阶段（`staged`、`restart`、`done`、`cancelled`、`failed`），没有路径，也没有错误文本。
+- **API：** `GET /api/v1/settings` 中的 `update`（`enabled`、`state`、`latest_version`、`check_interval`、`waiting_jobs`、`checked_at`；管理员还有 `manifest` 和 `error`）、`POST /api/v1/update/check`，以及局部页面上的 `X-TV-Notice` 响应头。
+- **任务运行器：** `Drain`、`Resume` 和 `Running`。运行器处于排空状态时，排队的任务保持排队。
+
+### 变更
+
+- **设置了 `TIMEVAULT_UPDATE_URL` 的服务必须同时设置 `TIMEVAULT_AUTO_MIGRATE=true`**，否则拒绝启动，因为新版本可能修改数据库，而服务自己更新时没有人会运行 `migrate`。
+- 设置页的访问权限摘要和权限编辑器的人员列表，现在与其他页面使用同样的局部模板来显示账号，所以也会显示头像。
+- 版本号为 0.1.8；`go build` 的命令不变。
+
+### 升级说明
+
+1. **不需要做任何事**就能保持服务原来的运行方式：没有 `TIMEVAULT_UPDATE_URL` 时它从不更新自己，访问不到头像主机时每个人显示的都是默认头像。没有迁移，也没有新的必填设置。
+2. **在服务器上启用自动更新**（只需手工做一次：更早的版本不能自己更新）：把 0.1.8 的 `timevault.exe` 复制到 `.env` 旁边，加入 `TIMEVAULT_AUTO_MIGRATE=true` 和 `TIMEVAULT_UPDATE_URL=<发布文件夹>`，给运行服务的账号对程序所在文件夹的**修改**权限和对发布文件夹的**读取**权限，然后启动。此后用 `scripts\release.ps1` 制作发布，并（先程序、后清单）复制到发布文件夹。见[发布与自动更新](./runbook.md#发布与自动更新)。
+3. **如果服务需要回退，** 请先把较旧的发布放进发布文件夹（或者清空 `TIMEVAULT_UPDATE_URL`），否则它会再次更新到较新的版本。上一个程序是 `timevault.old-<版本>.exe`。
+4. **头像：** 在公司的 nginx 之后，`/api/static/hr/<工号>.webp` 与 `/tv/` 在同一个主机上，所以不需要任何设置头像就会出现。直接通过服务自己的端口访问时显示默认头像。设置 `TIMEVAULT_AVATAR_URL=off` 可以关闭头像。
+5. `.env` 模板（`configs/timevault.example.env`）包含新的设置。
+
+### 已知限制
+
+- **没有签名。** 谁能写入发布文件夹，谁就决定了服务器上运行什么；大小和 sha256 只能防止文件损坏或只复制了一半（[security.md](./security.md)）。请使用只有管理员能写入的文件夹，地址使用 `https`。
+- **没有自动回退。** 如果新程序通过了检查之后又失败（迁移失败、文件夹不见了），服务会一直停止，原因在日志中。回退要手工完成，已经应用的迁移会保留。
+- **等待正在运行的任务没有时间上限，** 等待期间任何任务都不会开始，包括调度器的备份。
+- **`supervise` 模式的启动器保留它被启动时的代码，** 并且在它活着的时候旧程序文件会一直被锁定；要改动启动器，需要重启启动器。
+- 版本只比较是否相等，所以带有较旧版本的清单就是降级。
+- 已用自动化测试和编译后的程序对着临时数据库检查过（见 [mvp-status.md](./mvp-status.md)）；没有在正式服务器上检查，没有经过公司的 nginx，也没有使用真实的头像主机。
 
 ## 0.1.7
 

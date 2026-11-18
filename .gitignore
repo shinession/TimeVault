@@ -53,6 +53,8 @@ uv.lock
 *.test
 *.out
 /bin/
+# The release folder scripts/release.ps1 writes (the program and timevault.json).
+/release/
 coverage.*
 # The service's own settings file; it holds secrets (see configs/timevault.example.env).
 /.env

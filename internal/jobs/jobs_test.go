@@ -108,6 +108,76 @@ func TestJobRunsAndRecordsPhaseProgressAndLog(t *testing.T) {
 	}
 }
 
+// Drain is for a restart that waits until the service is idle: the jobs that run go on, none is taken any more (not
+// even one that is enqueued later) and Running says when the last one is through. Resume takes the queued ones again.
+func TestDrainLetsRunningJobsFinishAndTakesNoMoreUntilResumed(t *testing.T) {
+	r, pool := setup(t, 2)
+	ctx := context.Background()
+	slow, other := addSource(t, pool, "slow"), addSource(t, pool, "other")
+	started, release := make(chan struct{}), make(chan struct{})
+	r.Handle(jobs.KindBackup, func(ctx context.Context, j jobs.Job, rep *jobs.Reporter) error {
+		if *j.SourceID == slow {
+			close(started)
+			<-release
+		}
+		return nil
+	})
+	start(t, r)
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	running, _, err := r.Enqueue(ctx, jobs.NewJob{Kind: jobs.KindBackup, SourceID: &slow, RequestedBy: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the job did not start")
+	}
+	if got := r.Running(); got != 1 {
+		t.Fatalf("Running = %d with one job running, want 1", got)
+	}
+
+	r.Drain()
+	queued, _, err := r.Enqueue(ctx, jobs.NewJob{Kind: jobs.KindBackup, SourceID: &other, RequestedBy: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A worker is free and was woken by the new job; while draining it does not take it.
+	time.Sleep(700 * time.Millisecond)
+	if j, _ := jobs.Get(ctx, pool, queued.ID); j.State != jobs.StateQueued {
+		t.Fatalf("a job that was enqueued while draining is %s, want queued", j.State)
+	}
+	if got := r.Running(); got != 1 {
+		t.Fatalf("Running = %d while draining, want the 1 job that was running", got)
+	}
+
+	close(release)
+	wait(t, pool, running.ID, finished)
+	deadline := time.Now().Add(5 * time.Second)
+	for r.Running() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := r.Running(); got != 0 {
+		t.Fatalf("Running = %d after the last job ended, want 0", got)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if j, _ := jobs.Get(ctx, pool, queued.ID); j.State != jobs.StateQueued {
+		t.Fatalf("the queued job is %s although the runner is idle and draining, want queued", j.State)
+	}
+
+	r.Resume()
+	if j := wait(t, pool, queued.ID, finished); j.State != jobs.StateSucceeded {
+		t.Fatalf("the queued job after Resume = %+v", j)
+	}
+}
+
 func TestFailuresAndPanicsAreRecordedNotPropagated(t *testing.T) {
 	r, pool := setup(t, 2)
 	r.Handle(jobs.KindVerify, func(context.Context, jobs.Job, *jobs.Reporter) error { return errors.New("disk on fire") })

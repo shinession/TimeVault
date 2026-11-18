@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
@@ -74,6 +75,18 @@ type Config struct {
 	// BasePath is the path prefix the site is served under behind a reverse proxy, such as /tv
 	// (TIMEVAULT_BASE_PATH). Empty means the site is at the root of its address.
 	BasePath string
+	// AvatarURL is where the picture of an account is, as a path on the host that serves the site, with {id} where
+	// the account name goes (TIMEVAULT_AVATAR_URL). Empty means there are no pictures.
+	AvatarURL string
+
+	// UpdateURL is where the release manifest (timevault.json) is: an http(s) address, or the absolute path of the
+	// file or of its folder (TIMEVAULT_UPDATE_URL). Empty means the service does not update itself.
+	UpdateURL string
+	// UpdateInterval is the time between two looks at the manifest (TIMEVAULT_UPDATE_INTERVAL).
+	UpdateInterval time.Duration
+	// UpdateRestart is how the service starts the new program: "supervise" keeps the process as a launcher, "exit"
+	// ends it with the code 75 for a service manager (TIMEVAULT_UPDATE_RESTART).
+	UpdateRestart string
 
 	// SchedulerParallel is how many automatic backups may run at the same time.
 	SchedulerParallel int
@@ -140,6 +153,7 @@ func Load(lookup Lookup) (Config, error) {
 		SchedulerParallel:        l.integer("TIMEVAULT_SCHEDULER_PARALLEL", 1, 1, 4),
 		SchedulerEverythingProbe: l.boolean("TIMEVAULT_SCHEDULER_EVERYTHING_PROBE", false),
 		SchedulerFullScanEvery:   l.duration("TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY", 24*time.Hour),
+		UpdateInterval:           l.duration("TIMEVAULT_UPDATE_INTERVAL", 10*time.Minute),
 	}
 	var err error
 	if c.SSOHost, err = parseSSOHost(l.str("TIMEVAULT_SSO_HOST", "")); err != nil {
@@ -150,6 +164,21 @@ func Load(lookup Lookup) (Config, error) {
 	}
 	if c.BasePath, err = ParseBasePath(l.str("TIMEVAULT_BASE_PATH", "")); err != nil {
 		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_BASE_PATH %w", err))
+	}
+	if c.AvatarURL, err = parseAvatarURL(l.str("TIMEVAULT_AVATAR_URL", DefaultAvatarURL)); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_AVATAR_URL %w", err))
+	}
+	if c.UpdateURL, err = parseUpdateURL(l.str("TIMEVAULT_UPDATE_URL", "")); err != nil {
+		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_UPDATE_URL %w", err))
+	}
+	switch m := strings.ToLower(l.str("TIMEVAULT_UPDATE_RESTART", "supervise")); m {
+	case "supervise", "exit":
+		c.UpdateRestart = m
+	default:
+		l.errs = append(l.errs, errors.New("TIMEVAULT_UPDATE_RESTART must be supervise or exit"))
+	}
+	if c.UpdateInterval < time.Minute || c.UpdateInterval > 24*time.Hour {
+		l.errs = append(l.errs, errors.New("TIMEVAULT_UPDATE_INTERVAL must be between 1m and 24h"))
 	}
 	if c.SchedulerGap, c.SchedulerGapAuto, err = autoOrDuration(l.str("TIMEVAULT_SCHEDULER_GAP", "auto")); err != nil {
 		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_SCHEDULER_GAP %w", err))
@@ -228,6 +257,9 @@ func (c Config) ValidateServe() error {
 	}
 	if !c.AuthDisabled && c.AdminPasswordHash == "" && c.RedisURL == "" {
 		errs = append(errs, errors.New("no way to sign in: set TIMEVAULT_REDIS_URL (company accounts) and/or TIMEVAULT_ADMIN_PASSWORD_HASH (local administrator, create one with: timevault-server hash-password)"))
+	}
+	if c.UpdateURL != "" && !c.AutoMigrate {
+		errs = append(errs, errors.New("TIMEVAULT_UPDATE_URL needs TIMEVAULT_AUTO_MIGRATE=true: a new version may change the database, and nobody runs the migrate command when the service updates itself"))
 	}
 	if c.RepositoryPath != "" && c.RestoreRoot != "" {
 		if err := checkApart(c.RepositoryPath, c.RestoreRoot); err != nil {
@@ -336,6 +368,10 @@ func (c Config) LogAttrs() []any {
 		"sso_require_same_ip", c.SSORequireSameIP,
 		"trusted_proxies", len(c.TrustedProxies),
 		"base_path", c.BasePath,
+		"avatar_url", c.AvatarURL,
+		"update_url", c.UpdateURL,
+		"update_interval", c.UpdateInterval.String(),
+		"update_restart", c.UpdateRestart,
 		"scheduler_parallel", c.SchedulerParallel,
 		"scheduler_gap", autoText(c.SchedulerGapAuto, c.SchedulerGap),
 		"scheduler_rest", autoText(c.SchedulerRestAuto, c.SchedulerRest),
@@ -364,6 +400,10 @@ type Deployment struct {
 	SearchHost         string // host:port of the Everything server, empty when search is off
 	SSOHost            string // address of the single sign-on service, empty when single sign-on is off
 	BasePath           string // path prefix the site is served under behind a reverse proxy, empty when there is none
+	AvatarURL          string // where the picture of an account is, {id} for the account name, empty when there are no pictures
+	UpdateURL          string // address of the release manifest, empty when the service does not update itself
+	UpdateInterval     time.Duration
+	UpdateRestart      string // supervise or exit
 	LocalAdmin         string // name of the local administrator, empty when there is none
 	AuthDisabled       bool
 	SessionTTL         time.Duration
@@ -384,6 +424,10 @@ func (c Config) Describe() Deployment {
 		SSOHost:            c.SSOHost,
 		BasePath:           c.BasePath,
 		AuthDisabled:       c.AuthDisabled,
+		AvatarURL:          c.AvatarURL,
+		UpdateURL:          c.UpdateURL,
+		UpdateInterval:     c.UpdateInterval,
+		UpdateRestart:      c.UpdateRestart,
 		SessionTTL:         c.SessionTTL,
 		CookieSecure:       c.CookieSecure,
 	}
@@ -505,6 +549,63 @@ func parseSSOHost(raw string) (string, error) {
 		}
 	}
 	return u.Scheme + "://" + u.Host, nil
+}
+
+// DefaultAvatarURL is where the pictures of the company accounts are: the application that serves the static files of
+// the other company applications, reached through the same host as this site.
+const DefaultAvatarURL = "/api/static/hr/{id}.webp"
+
+// parseAvatarURL checks the address of the picture of an account: a path on the host that serves the site, with {id}
+// where the account name goes. "off" (or "none") means there are no pictures and gives "". The error text starts with
+// a verb, so a caller can put a setting name in front of it.
+func parseAvatarURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if strings.EqualFold(raw, "off") || strings.EqualFold(raw, "none") {
+		return "", nil
+	}
+	switch {
+	case !strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "//") || strings.Contains(raw, `\`):
+		return "", errors.New("must be a path on the host of this site, such as /api/static/hr/{id}.webp, or off")
+	case strings.Count(raw, "{id}") != 1:
+		return "", errors.New("must contain {id} once, where the account name goes")
+	case len(raw) > 256:
+		return "", errors.New("is too long (at most 256 characters)")
+	}
+	for _, r := range raw {
+		if r <= ' ' || r == 0x7f || r == '"' || r == '\'' || r == '<' || r == '>' || r == '#' {
+			return "", errors.New("must not contain spaces, quotes, # or other characters that cannot be part of an address")
+		}
+	}
+	if u, err := url.Parse(raw); err != nil || u.Scheme != "" || u.Host != "" {
+		return "", errors.New("is not a valid path")
+	}
+	return raw, nil
+}
+
+// parseUpdateURL checks the address of the release manifest: an http(s) address without a user name, a password, a
+// query or a fragment, or the absolute path of the manifest or of the folder it is in. Empty stays empty. The error
+// text starts with a verb, so a caller can put a setting name in front of it, and never repeats the value.
+func parseUpdateURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	if l := strings.ToLower(raw); strings.HasPrefix(l, "http://") || strings.HasPrefix(l, "https://") {
+		u, err := url.Parse(raw)
+		switch {
+		case err != nil || u.Hostname() == "":
+			return "", errors.New("is not a valid address; write it as https://host/path/")
+		case u.User != nil:
+			return "", errors.New("must not contain a user name or password")
+		case u.RawQuery != "" || u.ForceQuery || u.Fragment != "":
+			return "", errors.New("must not have a query or a fragment")
+		}
+		return raw, nil
+	}
+	if !filepath.IsAbs(raw) {
+		return "", errors.New(`must be an http(s) address or an absolute path, such as D:\TimeVault\release or \\server\share\release`)
+	}
+	return raw, nil
 }
 
 // reservedBasePaths are the first path segments of the pages and endpoints the application serves itself. A request is

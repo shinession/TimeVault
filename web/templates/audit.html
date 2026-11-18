@@ -19,7 +19,7 @@
         {{range .Events}}
         <tr>
           <td>{{$.TimeS .At}}</td>
-          <td>{{.Actor}}</td>
+          <td>{{template "person" (pair $ .Actor)}}{{.Actor}}</td>
           <td>{{$.AuditActionLabel .Action}}</td>
           <td>{{if .TargetType}}{{.TargetType}} {{.TargetID}}{{else}}-{{end}}</td>
           <td><span class="tv-chip tv-chip-audit-{{.Result}}">{{$.AuditResultLabel .Result}}</span></td>

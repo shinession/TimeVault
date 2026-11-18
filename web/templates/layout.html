@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <meta name="csrf-token" content="{{.CSRF}}">
   <meta name="tv-base" content="{{basePath}}">
+  {{if .AvatarURL}}<meta name="tv-avatar" content="{{.AvatarURL}}">{{end}}
   <title>{{if .Title}}{{.Title}} · {{end}}TimeVault</title>
   <link rel="icon" type="image/svg+xml" href="{{url "/static/img/logo.svg"}}">
   <script src="{{url "/static/js/theme-init.js"}}?v={{.AssetVer}}"></script>
@@ -41,7 +42,7 @@
         {{if and (not .Bare) .SignedIn}}
         <form class="tv-userbox" method="post" action="{{url "/logout"}}">
           {{template "csrf" .}}
-          <span class="tv-user" title="{{.Name}} ({{.User}})">{{template "icon" "user"}}<span>{{.Name}}</span></span>
+          <span class="tv-user" title="{{.Name}} ({{.User}})">{{template "avatar" (pair . .User)}}<span>{{.Name}}</span></span>
           {{if not .AuthDisabled}}<button class="tv-iconbtn" type="submit" title="{{.T "nav.logout"}}" aria-label="{{.T "nav.logout"}}">{{template "icon" "logout"}}</button>{{end}}
         </form>
         {{else if not .Bare}}
@@ -50,6 +51,8 @@
       </div>
     </div>
   </header>
+
+  {{if not .Bare}}<div class="tv-notice" data-tv-notice role="status"{{if not .Notice}} hidden{{end}}>{{.Notice}}</div>{{end}}
 
   <main id="tv-content" class="tv-main">
     {{template "content" .}}

@@ -29,7 +29,13 @@ const (
 	ActionJobCancel      = "job.cancel"
 	ActionAccessDenied   = "access.denied"
 	ActionRetentionPrune = "retention.prune"
+	// ActionAppUpdate is a step of the replacement of the program by a newer one; the detail names the stage
+	// (staged, restart, done, cancelled or failed).
+	ActionAppUpdate = "app.update"
 )
+
+// ActorUpdater is the actor of what the service does to itself: the replacement of its program by a newer one.
+const ActorUpdater = "updater"
 
 // Results.
 const (

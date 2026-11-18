@@ -141,6 +141,19 @@ func TestSessionKeyAndRedaction(t *testing.T) {
 	}
 }
 
+func TestDescribeReportsThatSignInIsSwitchedOff(t *testing.T) {
+	c, err := Load(lookupFrom(map[string]string{"TIMEVAULT_AUTH_DISABLED": "true"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Describe().AuthDisabled {
+		t.Error("Describe() does not say that sign-in is switched off")
+	}
+	if empty, _ := Load(lookupFrom(nil)); empty.Describe().AuthDisabled {
+		t.Error("sign-in must be on by default")
+	}
+}
+
 // URL.Redacted only hides the password in the user info; a password given as a
 // query setting, or in the key/value form pgx also accepts, must not reach the log either.
 func TestDatabasePasswordNeverReachesTheLog(t *testing.T) {

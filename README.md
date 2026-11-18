@@ -4,7 +4,7 @@
 
 **TimeVault — enterprise file backup, search and time travel** for Windows and NTFS. It keeps point-in-time recovery points of local folders, lets you browse the past state of any folder, search by name, and restore files into a safe folder below a restore root after a preview.
 
-**Status: version 0.1.7 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse the folders that let guests browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings, and what an account may do is decided for each monitored folder (Browse, Back up, Full control). It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles and the three levels per folder but no rights for a path inside a folder, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
+**Status: version 0.1.8 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse the folders that let guests browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings, and what an account may do is decided for each monitored folder (Browse, Back up, Full control). It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles and the three levels per folder but no rights for a path inside a folder, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
 
 ### What works today
 
@@ -17,6 +17,8 @@
 - **Permissions per folder**: each monitored folder says who may **Browse**, **Back up** (back up now, including the full re-read) and has **Full control** of it. A level can be given to guests (not signed in; Browse only), to everybody who is signed in, or to single employee IDs. Administrators have full control of every folder, and a folder that a visitor may not browse is not there for them at all.
 - **Settings**: administrators add and edit the monitored folders (display folder, folder on the server, exclusions, on or off, schedule, versions kept per file, and who may do what) on a page; an account with Full control of a folder edits it too, except for the folder on the server's disk. Deployment settings (database, Redis, backup and restore folders, the server's host name, the sign-on service, the path prefix behind a reverse proxy, the scheduler) live in the environment or the `.env` file.
 - **Display folders**: people see the network paths (`\\server\share\folder`) of the monitored folders and of the restore folder; only administrators see the real folders on the server's disk, and texts that quote them are rewritten for everybody else.
+- **Pictures of the accounts**: the header, the audit log, the job pages and the people lists show the picture of an account from `/api/static/hr/<employee ID>.webp` (the other company applications' employee pictures; `TIMEVAULT_AVATAR_URL`), with the default picture as the fallback.
+- **Releases and automatic updates**: `scripts\release.ps1` writes a release folder (`timevault.exe` and `timevault.json`); a service with `TIMEVAULT_UPDATE_URL` reads it, and when a different version is released it downloads and checks the program, waits for the running jobs to finish, swaps the file and restarts itself (see [Releasing and automatic updates](docs/runbook.md#releasing-and-automatic-updates)).
 - CSRF protection, sign-in limits, an append-only audit log (with the duration of every backup, verification and restore) and a status page.
 
 ### Quick start (development, Windows PowerShell)
@@ -69,7 +71,7 @@ Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests bro
 
 **TimeVault —— 企业文件备份、搜索与时间回溯**，面向 Windows 和 NTFS。它为本地文件夹保存时间点恢复点，可以浏览任意文件夹过去的状态、按名称搜索，并在预览之后把文件恢复到恢复根目录下的安全文件夹中。
 
-**状态：0.1.7 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览允许访客浏览的文件夹；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置，而账号能做什么是按每个监控文件夹分别决定的（浏览、备份、完全控制）。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），有两种角色和每个文件夹三个级别，但没有针对文件夹内某个路径的权限，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
+**状态：0.1.8 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览允许访客浏览的文件夹；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置，而账号能做什么是按每个监控文件夹分别决定的（浏览、备份、完全控制）。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），有两种角色和每个文件夹三个级别，但没有针对文件夹内某个路径的权限，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
 
 ### 目前可用的功能
 
@@ -82,6 +84,8 @@ Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests bro
 - **按文件夹的权限**：每个监控文件夹都会说明谁可以**浏览**、**备份**（立即备份，包括完整重读），以及谁拥有它的**完全控制**权。可以把一个级别授予访客（未登录；只能是"浏览"）、所有已登录的人或单个工号。管理员对每个文件夹拥有完全控制权，访问者无权浏览的文件夹，对他们来说根本不存在。
 - **设置**：管理员在页面上添加和编辑监控文件夹（显示文件夹、服务器上的文件夹、排除规则、开关、计划、每个文件保留的版本数，以及谁能做什么）；对某个文件夹拥有完全控制权的账号也可以编辑它，但服务器磁盘上的文件夹除外。部署相关的设置（数据库、Redis、备份和恢复文件夹、服务器的主机名、单点登录服务、反向代理之后的路径前缀、调度器）放在环境变量或 `.env` 文件中。
 - **显示文件夹**：人们看到的是监控文件夹和恢复文件夹的网络路径（`\\server\share\folder`）；只有管理员能看到服务器磁盘上的真实文件夹，引用它们的文本会为其他人改写。
+- **账号头像**：页眉、审计日志、任务页和人员列表会显示账号的头像，来自 `/api/static/hr/<工号>.webp`（公司其他应用保存的员工照片；`TIMEVAULT_AVATAR_URL`），读不到时回退到默认头像。
+- **发布与自动更新**：`scripts\release.ps1` 生成发布文件夹（`timevault.exe` 和 `timevault.json`）；设置了 `TIMEVAULT_UPDATE_URL` 的服务会读取它，发布了不同版本时，下载并检查程序，等正在运行的任务结束，交换文件并重启自己（见[发布与自动更新](docs/runbook.md#发布与自动更新)）。
 - CSRF 防护、登录限制、只追加的审计日志（含每次备份、校验和恢复的耗时）和状态页。
 
 ### 快速开始（开发环境，Windows PowerShell）

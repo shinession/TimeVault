@@ -121,6 +121,8 @@ type Runner struct {
 	mu       sync.Mutex
 	running  map[int64]context.CancelFunc
 	canceled map[int64]bool
+	// draining stops claim from taking another job; see Drain.
+	draining bool
 
 	wg   sync.WaitGroup
 	stop context.CancelFunc
@@ -300,6 +302,31 @@ func (r *Runner) worker(ctx context.Context) {
 	}
 }
 
+// Drain stops the runner from taking another job. The jobs that run go on until they end, and the queued ones wait in
+// the database (also the ones that are enqueued from now on), so they run after the service has restarted or after
+// Resume. It is for a restart that waits until the service is idle: once Drain has returned, Running can only go
+// down, because a claim that was under way has finished registering its job by then.
+func (r *Runner) Drain() {
+	r.mu.Lock()
+	r.draining = true
+	r.mu.Unlock()
+}
+
+// Resume undoes Drain: the queued jobs are taken again.
+func (r *Runner) Resume() {
+	r.mu.Lock()
+	r.draining = false
+	r.mu.Unlock()
+	r.notify()
+}
+
+// Running is the number of jobs this runner is working on at the moment. A job counts until its result is stored.
+func (r *Runner) Running() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.running)
+}
+
 // claim takes the next runnable job. Its cancel function is registered before
 // the lock is released, so Cancel can always stop a job the database already
 // reports as running.
@@ -312,6 +339,9 @@ func (r *Runner) worker(ctx context.Context) {
 func (r *Runner) claim(parent context.Context) (Job, context.Context, context.CancelFunc, bool, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.draining {
+		return Job{}, nil, nil, false, nil
+	}
 	j, err := scanJob(r.pool.QueryRow(parent,
 		`UPDATE jobs SET state = 'running', started_at = now()
 		 WHERE id = (

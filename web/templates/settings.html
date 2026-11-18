@@ -47,7 +47,7 @@
       <li><strong>{{$.LevelLabel .Level}}</strong>
         {{if .Guest}}<span class="tv-chip">{{$.T "access.guest"}}</span>{{end}}
         {{if .Everyone}}<span class="tv-chip">{{$.T "access.everyone"}}</span>{{end}}
-        {{range .People}}<span class="tv-chip">{{.}}</span>{{end}}
+        {{range .People}}<span class="tv-chip">{{template "person" (pair $ .ID)}}{{.Label}}</span>{{end}}
         {{if .More}}<span class="tv-muted tv-small">{{$.T "access.more" .More}}</span>{{end}}
       </li>
       {{end}}
@@ -177,6 +177,35 @@
     {{if $.ShowPhysical}}<div><dt>{{$.T "settings.env_file"}}</dt><dd>{{if .Deployment.EnvFile}}<code>{{.Deployment.EnvFile}}</code>{{else}}{{$.T "settings.none"}}{{end}}</dd></div>{{end}}
   </dl>
   {{if $.ShowPhysical}}<p class="tv-muted tv-small">{{$.T "settings.env_hint"}}</p>{{end}}
+</section>
+
+<section class="tv-card" id="updates">
+  <div class="tv-card-head"><h2>{{template "icon" "refresh"}} {{$.T "settings.updates"}}</h2>
+    {{if and .Update.Enabled $.CanManage}}
+    <form method="post" action="{{url "/settings/update/check"}}" class="tv-inline-form">
+      {{template "csrf" $}}
+      <button class="tv-btn tv-btn-small tv-btn-ghost" type="submit">{{template "icon" "refresh"}} {{$.T "settings.update_check"}}</button>
+    </form>
+    {{end}}
+  </div>
+  <dl class="tv-facts">
+    {{if not .Update.Enabled}}
+    <div><dt>{{$.T "settings.updates"}}</dt><dd>{{$.T "settings.not_configured"}}</dd></div>
+    {{else}}
+    <div><dt>{{$.T "settings.update_status"}}</dt>
+      <dd><span class="tv-chip tv-chip-update-{{.Update.State}}">{{$.UpdateStateLabel .Update.State}}</span>
+        {{if eq .Update.State "waiting"}} <span class="tv-muted tv-small tv-nowrap">{{$.T "update.waiting_jobs" .Update.Waiting}}</span>{{end}}</dd></div>
+    <div><dt>{{$.T "settings.version"}}</dt><dd>v{{.Update.Current}}</dd></div>
+    <div><dt>{{$.T "settings.update_released"}}</dt><dd>{{if .Update.Latest}}v{{.Update.Latest}}{{else}}-{{end}}</dd></div>
+    <div><dt>{{$.T "settings.update_checked"}}</dt><dd>{{$.TimeS .Update.CheckedAt}}</dd></div>
+    <div><dt>{{$.T "settings.update_interval"}}</dt><dd>{{.Update.Interval}}</dd></div>
+    {{if $.ShowPhysical}}
+    <div><dt>{{$.T "settings.update_manifest"}}</dt><dd><code>{{.Update.Address}}</code></dd></div>
+    {{if .Update.Error}}<div><dt>{{$.T "settings.update_error"}}</dt><dd>{{.Update.Error}}</dd></div>{{end}}
+    {{end}}
+    {{end}}
+  </dl>
+  <p class="tv-muted tv-small">{{$.T "settings.update_hint"}}</p>
 </section>
 {{end}}
 {{end}}

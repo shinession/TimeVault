@@ -47,10 +47,16 @@ type Page struct {
 	Location string
 	// LocationReal is the same place on the server's own disk; only administrators get it.
 	LocationReal string
+	// Notice is a sentence for the whole site, shown under the header: the service is about to restart for a new
+	// version. Empty when there is none, and for visitors who are not signed in.
+	Notice string
+	// AvatarURL is where the pictures of the accounts are (see Options.AvatarURL); empty when there are none.
+	AvatarURL string
 
-	loc  *Locale
-	tz   *time.Location
-	sess auth.Session
+	loc    *Locale
+	tz     *time.Location
+	sess   auth.Session
+	avatar func(name string) string
 }
 
 // SignedIn reports whether the visitor has signed in. The Can* methods tell
@@ -192,6 +198,7 @@ func (p *Page) PolicyLabel(v string) string         { return p.label("policy.", 
 func (p *Page) ActionLabel(v string) string         { return p.label("action.", v) }
 func (p *Page) ItemStatusLabel(v string) string     { return p.label("item.", v) }
 func (p *Page) AuditActionLabel(v string) string    { return p.label("auditaction.", v) }
+func (p *Page) UpdateStateLabel(v string) string    { return p.label("update.state.", v) }
 func (p *Page) AuditResultLabel(v string) string    { return p.label("auditresult.", v) }
 func (p *Page) ComponentLabel(v string) string      { return p.label("component.", v) }
 func (p *Page) ComponentStateLabel(v string) string { return p.label("cstate.", v) }
@@ -362,6 +369,7 @@ func (s *Server) newPage(r *http.Request, sess auth.Session, titleKey, nav strin
 	p := &Page{
 		Nav: nav, Lang: loc.lang, User: sess.User, Name: sess.Name, CSRF: sess.CSRF, Version: s.opts.Version, AssetVer: s.assetVer,
 		AuthDisabled: sess.AuthDisabled, RequestURI: returnURI(r), loc: loc, tz: s.opts.Location, sess: sess,
+		Notice: s.updateNotice(sess, loc), AvatarURL: s.opts.AvatarURL, avatar: s.avatarID,
 	}
 	if p.Name == "" {
 		p.Name = p.User
@@ -416,6 +424,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, sta
 	if partial {
 		h.Set("X-TV-Title", url.PathEscape(p.Title))
 		h.Set("X-TV-Nav", p.Nav)
+		h.Set("X-TV-Notice", url.PathEscape(p.Notice))
 	}
 	if p.Flash != nil {
 		s.clearFlash(w)

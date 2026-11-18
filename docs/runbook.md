@@ -2,7 +2,7 @@
 
 ## Overview
 
-How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.7). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
+How to set up, configure, run, operate and troubleshoot TimeVault (version 0.1.8). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application. There is no installer and no Windows service wrapper yet.
 
 ## Prerequisites
 
@@ -36,6 +36,7 @@ The scripts keep their data under the git-ignored `data\` folder and **all setti
 | `timevault-server hash-password` | Read a password (hidden when typed in a terminal, or one line from standard input) and print the value for `TIMEVAULT_ADMIN_PASSWORD_HASH` (the optional local administrator). |
 | `timevault-server check-redis-users` | Connect to the Redis user directory (`TIMEVAULT_REDIS_URL`) and print how much of it can be used: the number of keys, readable and unreadable records, activated accounts, types `admin` and `user`, accounts without a password, employee IDs that appear on more than one key, and per field how many values could be decoded. It prints no name, e-mail address, key or password. Exit code 1 when Redis does not answer or no record is readable. Run it from the folder that holds `.env`, or set `TIMEVAULT_ENV_FILE`. |
 | `timevault-server version` | Print the version. |
+| `timevault-server check-config` | Check that the settings (the environment and the `.env` file) are valid for the service, print `the settings are valid` or the reasons they are not (exit code 1). It connects to nothing. A service that updates itself runs it with the new program before it replaces itself (see [Releasing and automatic updates](#releasing-and-automatic-updates)). |
 
 ## Building the executable
 
@@ -56,6 +57,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 - `vendor\` is not part of the repository, so a clone of the repository does not have it. Copy it with the sources, or build on the computer that has it.
 - `-mod=vendor` without a `vendor\` folder fails with `go: inconsistent vendoring ... is explicitly required in go.mod, but not marked as explicit in vendor/modules.txt`. The same message appears when `vendor\` is older than `go.mod` or `go.sum`. Run `go mod vendor` again (do it after every change of the dependencies), or build from the module cache with `-mod=readonly`, which ignores `vendor\`.
 - The simplest way to deploy to a server without internet access is to build `timevault-server.exe` on the development computer and copy that file, with the `.env`, to the server.
+- A server that updates itself does not need that copy more than once: `scripts\release.ps1` builds the release folder that such servers read (see [Releasing and automatic updates](#releasing-and-automatic-updates)).
 
 ## Where settings live
 
@@ -70,7 +72,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 - **A `TIMEVAULT_*` variable in the process environment wins over the same key in the file**, and nothing tells you unless you look: a variable left in a terminal makes the service ignore what you wrote in `.env` (typically a port that does not change). The service therefore names every setting that the environment overrides in a warning when it starts (`check-redis-users` prints them too), and the dev scripts remove such variables from the terminal. If the warning keeps coming back, the variable is set in your Windows user or system environment.
 - Syntax: one `KEY=VALUE` per line. Blank lines and lines that start with `#` are ignored, a leading `export ` is allowed, and a UTF-8 byte order mark and Windows line ends are accepted. The value is taken literally up to the end of the line, so a path with `\` or a password with `#` needs no escaping (and a trailing ` # comment` would become part of the value); one pair of matching single or double quotes around the value is removed; the last assignment of a key wins. An error names the line number and never shows the line.
 - The file holds secrets (the database and Redis passwords, the session key). `/.env` is in `.gitignore`; keep the file readable only by the account that runs the service, and never commit a filled-in copy. [configs/timevault.example.env](../configs/timevault.example.env) is the template.
-- The **Settings** page (any signed-in account may open it) shows the monitored folders the visitor may browse, each with what the visitor may do with it, the backup storage and the restore folder with the free space of the repository, and the running configuration: version, this server's host name, listen address, database and Redis as `host:port/name`, the single sign-on service, the local administrator's name, the search server. Secrets are never shown. The form that adds a monitored folder is for administrators; the form that changes one is for administrators and for whoever has Full on that folder (without the folder on the server's disk, which only administrators see and change). Only administrators see the folders on the server's disk (the real folder of each monitored folder, the backup folder, the real restore folder and the settings file); everybody else sees the display folders.
+- The **Settings** page (any signed-in account may open it) shows the monitored folders the visitor may browse, each with what the visitor may do with it, the backup storage and the restore folder with the free space of the repository, and the running configuration: version, this server's host name, listen address, database and Redis as `host:port/name`, the single sign-on service, the local administrator's name, the search server, and the state of the automatic update (see [Releasing and automatic updates](#releasing-and-automatic-updates): the address of the release and the last problem are only for administrators, who can also press **Check now**). Secrets are never shown. The form that adds a monitored folder is for administrators; the form that changes one is for administrators and for whoever has Full on that folder (without the folder on the server's disk, which only administrators see and change). Only administrators see the folders on the server's disk (the real folder of each monitored folder, the backup folder, the real restore folder and the settings file); everybody else sees the display folders.
 - **Backup folder and restore folder.** They are two different places. The backup folder (`TIMEVAULT_REPOSITORY_PATH`, the repository) is where TimeVault keeps the contents of everything it backed up. The restore folder (`TIMEVAULT_RESTORE_ROOT`) is where restored files are put: a restore never overwrites the original files and never writes into a monitored folder, so it writes the restored copies into a new folder below the restore folder (named on the restore form, by default `restore-<date>-<time>`), and you copy back what you need from there. Neither may lie inside a monitored folder.
 - **Display folders.** People reach the monitored folders and the restore folder over the network, not as `D:\TimeVault\monitor`. Every monitored folder therefore has a **display folder**, the network path people open it with (for `D:\TimeVault\monitor` shared as `TimeVault`: `\\sgmeslt595.co.murata.local\TimeVault\monitor`), and the restore folder has `TIMEVAULT_RESTORE_DISPLAY_ROOT` (`\\sgmeslt595.co.murata.local\TimeVault\restore`). Set `TIMEVAULT_SERVER_HOST` to the name of this server (`sgmeslt595.co.murata.local`): then the Settings page and the API refuse a monitored folder without a display folder, and one whose display folder is on another server (its search, backup and restore only work with this server's own folders). Without `TIMEVAULT_SERVER_HOST` a display folder is optional and is not compared with a host. Administrators fill the field on the Settings page, which also marks a monitored folder that has none ("No display folder yet"; after setting the host name every folder that was added before needs one before it can be edited again). The service checks the host, not that the share really leads to the monitored folder: share the folder first, then write the path you open it with. Where a display folder is shown, the Explorer, the Time Machine and the page of a file's versions have a **Location** line with a **Copy** button.
 - **Who sees which folder.** Administrators see both the display folder and the real folder. Everybody else, signed in or not, sees only the display folder, and texts that quote a real folder (job errors and logs, restore messages, audit details, status details, the reasons a file was not captured) show the display folder, `[<name of the monitored folder>]`, `[backup folder]` or `[restore folder]` instead. See [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md).
@@ -103,6 +105,10 @@ Every setting is an environment variable or a line of the `.env` file (see [Wher
 | `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `true` | The address that the sign-on service saw must be the address of the browser that asked for the sign-in. Turn it off only when the address of the browser cannot be known (`TIMEVAULT_TRUSTED_PROXIES` is the better way). |
 | `TIMEVAULT_TRUSTED_PROXIES` | empty | Reverse proxies, as addresses or CIDR ranges separated by commas (`127.0.0.1,::1,10.0.0.0/24`), whose `X-Forwarded-For` header is believed. The client address then comes from that header; it is used by the single sign-on check, the **From** column of the audit log and the sign-in throttle. The proxy must set that header itself; see [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path), and [Two proxies in a row](#two-proxies-in-a-row) when another proxy sits in front of it. |
 | `TIMEVAULT_BASE_PATH` | empty | The path prefix the site is served under behind a reverse proxy, such as `/tv` for `http://host/tv/`. Empty means the site is at the root of its address. `tv`, `/tv` and `/tv/` all mean `/tv`; letters, digits and `- _ . ~` only, and it must not start with a path of the application itself (`api`, `static`, `login`, `explorer`, `history`, `versions`, `backups`, `jobs`, `restore`, `audit`, `status`, `settings`, `lang`, `logout`, `auth`, `healthz`). Every address the pages, the redirects and the cookies give out carries it; a request with or without it is accepted. See [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path). |
+| `TIMEVAULT_AVATAR_URL` | `/api/static/hr/{id}.webp` | Where the picture of an account is: a path on the host that serves the site (it is not put under `TIMEVAULT_BASE_PATH`), starting with `/`, with `{id}` once where the employee ID goes. `off` or `none` (an empty value means the default) turns the pictures off. See [Pictures of the accounts](#pictures-of-the-accounts). |
+| `TIMEVAULT_UPDATE_URL` | empty | Where the release manifest `timevault.json` is: an `http(s)` address, or the absolute path of the file, of its folder or of a share (`D:\TimeVault\release`, `\\server\share\tv-release`); an address that ends in a slash, and a path of a folder, name the folder. No user name, password, query or fragment. Empty means the service never updates itself. Needs `TIMEVAULT_AUTO_MIGRATE=true`. See [Releasing and automatic updates](#releasing-and-automatic-updates). |
+| `TIMEVAULT_UPDATE_INTERVAL` | `10m` | How often the manifest is read, `1m` to `24h`. The first look is about 10 seconds after the start; an administrator can ask for one at once (**Check now**). |
+| `TIMEVAULT_UPDATE_RESTART` | `supervise` | How the new program is started after an update: `supervise` (the process that was started stays as a small launcher and starts it) or `exit` (the process ends with the exit code 75 and a service manager starts it). |
 | `TIMEVAULT_EVERYTHING_URL` | empty | Base URL of the Everything HTTP server, for example `http://127.0.0.1:<port>/`. Empty disables search. |
 | `TIMEVAULT_EVERYTHING_USERNAME`, `TIMEVAULT_EVERYTHING_PASSWORD` | empty | Optional HTTP Basic credentials for Everything. The password is a secret. |
 | `TIMEVAULT_EVERYTHING_TIMEOUT` | `5s` | Per-search timeout, `100ms` to `30s`. |
@@ -133,7 +139,7 @@ Build `timevault-server.exe` first (see [Building the executable](#building-the-
 2. Copy [configs/timevault.example.env](../configs/timevault.example.env) to `.env` next to `timevault-server.exe`, replace every `<placeholder>` and delete the lines you do not need. Signing in needs `TIMEVAULT_REDIS_URL` (company accounts; check it with `timevault-server check-redis-users`) and/or a local administrator: `timevault-server hash-password` creates the value for `TIMEVAULT_ADMIN_PASSWORD_HASH`.
 3. Run `timevault-server migrate` (or set `TIMEVAULT_AUTO_MIGRATE=true`) and `timevault-server serve`. Open `http://127.0.0.1:8660/`; an administrator adds the monitored folders on the **Settings** page.
 4. To let other computers use it, put an HTTPS reverse proxy in front, listen on loopback, and set `TIMEVAULT_COOKIE_SECURE=true`. Listening on a non-loopback address directly needs `TIMEVAULT_ALLOW_NON_LOOPBACK=true` and still has no TLS. Anyone who can reach the address can browse the file names, sizes and history of every monitored folder without an account, and company passwords are typed into the site, so HTTPS is not optional. The sign-in limits count the address that connects, so behind a reverse proxy they count the proxy's address unless `TIMEVAULT_TRUSTED_PROXIES` lists the proxy (see [Single sign-on](#single-sign-on) and [security.md](./security.md)). When the proxy serves TimeVault under a path of a host name that other applications share, such as `/tv/`, see [Behind a reverse proxy under a path](#behind-a-reverse-proxy-under-a-path).
-5. The service has no Windows service wrapper. Start it with a method you trust (for example a scheduled task or a service manager); this was not tested. It stops cleanly on Ctrl+C or SIGTERM, waiting up to 30 seconds for the HTTP server and running jobs.
+5. The service has no Windows service wrapper. Start it with a method you trust (for example a scheduled task or a service manager). A scheduled task of a user account (no administrator rights) was tried with 0.1.8: it starts the service, which keeps running, also through an automatic update (see [Releasing and automatic updates](#releasing-and-automatic-updates)); a Windows service wrapper such as NSSM was not tried. Switch off the task setting **Stop the task if it runs longer than** (the Task Scheduler sets it to 3 days for a new task), or the service is stopped when the time is up. It stops cleanly on Ctrl+C or SIGTERM, waiting up to 30 seconds for the HTTP server and running jobs.
 
 At start the service marks jobs that were running when the previous process ended as failed ("interrupted by a service restart"), removes the partial history of unfinished recovery points, and then resumes queued jobs.
 
@@ -350,6 +356,82 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 - **Everything probe.** `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE=true` makes the scheduler ask Everything first and skip the scan of a folder that did not change. It needs `TIMEVAULT_EVERYTHING_URL`, an Everything that monitors the volume of the folder (an NTFS volume, through its change journal) with **Tools → Options → Indexes → Index recently changed date** on, and the folder inside that index. A folder is scanned anyway when Everything does not answer within 3 seconds or does not know the folder, when the number of entries below it is not the number at the last complete scan (this is how a deletion shows), when anything below it was created, modified, renamed, moved or had its attributes changed since 5 minutes before that scan, when the last recovery point has items that were not captured, when the exclude patterns of the folder were changed since that scan, and at least every `TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY` (24 hours). A tick asks Everything at most 25 times, and an Everything that does not answer is left alone for a minute, so a stopped Everything costs one timeout and not one for every due folder. With `TIMEVAULT_LOG_LEVEL=debug` the log says "scheduled scan skipped: the search engine sees no change" for every skip. A skipped folder leaves nothing in the lists, like any run that finds nothing changed, and its interval starts again.
 - The pace is kept in memory: after a restart the first automatic backup may start at once.
 
+## Releasing and automatic updates
+
+A server whose `.env` has `TIMEVAULT_UPDATE_URL` replaces its own program when a newer release is published: it waits for the jobs that run, swaps the file and restarts, without anybody at the server. The decisions and the alternatives are in [ADR 0014](./adr/0014-self-update-from-a-release-manifest.md).
+
+**Make a release (on the build computer).**
+
+```powershell
+cd <repository folder>
+.\scripts\release.ps1
+.\scripts\release.ps1 -OutDir D:\TimeVault\release -BaseUrl https://tools.example.local/tv-release/
+```
+
+- Raise `var version` in `cmd\timevault-server\main.go` first. A service updates when the version in the manifest is **not** the version it runs, so a program with the version of the one before it is no update (the script warns when it sees that).
+- The script runs `go vet ./...` (skip it with `-SkipChecks`), builds the program (`-trimpath -ldflags "-s -w"`, no `-X`) into a temporary name, asks it for its version, measures and hashes it, puts it in the release folder (default `<repository>\release`, git-ignored) as `timevault.exe`, and writes `timevault.json` **last**, atomically, as UTF-8 without a byte order mark:
+
+  ```json
+  {
+      "latest_version":  "0.1.8",
+      "sha256":  "<64 hexadecimal characters>",
+      "package_url":  "timevault.exe",
+      "size":  23352320
+  }
+  ```
+
+  `package_url` is the file name, which a service looks up next to the manifest it read (right for a folder, a share, or a web folder that holds both files), or, with `-BaseUrl`, the full address of the program. A hand-written manifest works too: a leading `v` in the version and unknown fields are accepted.
+- Copy `timevault.exe`, then `timevault.json`, into the **release folder** that the servers read. A service that reads the folder while it is being copied sees a size or a hash that does not match and tries again at the next look; it never installs a half-copied file.
+
+**Where the servers read it.** `TIMEVAULT_UPDATE_URL` is one of:
+
+- a folder or a share, `D:\TimeVault\release` or `\\server\share\tv-release` (the account that runs the service needs read access to it; a share that cannot be reached when the service starts is found as soon as it can be); or
+- an `http(s)` address of the manifest or of its folder, `https://tools.example.local/tv-release/`, served by any web server that serves the two files as they are, for example nginx: `location /tv-release/ { alias D:/TimeVault/release/; }`. Redirects are followed (at most five). An answer other than `200` (a `202` or a `404`, say) is an error.
+
+**Turn it on at a server (once).**
+
+1. Copy `timevault.exe` of version 0.1.8 or later to the server, next to the `.env`. This is the last manual copy: older versions cannot update themselves.
+2. Put into the `.env`: `TIMEVAULT_AUTO_MIGRATE=true` (a service with an update address refuses to start without it, because nobody runs `migrate` when the service updates itself), `TIMEVAULT_UPDATE_URL=<the release folder>` and, if you want, `TIMEVAULT_UPDATE_INTERVAL=5m`.
+3. The account that runs the service needs **Modify** on the folder of `timevault.exe` (it writes `timevault.new.exe`, `timevault.old-<version>.exe` and `timevault.exe.update.json` there) and **Read** on the release folder.
+4. Start the service. The start-up log says `automatic updates are on` with the address and the interval, and warns when the folder of the program cannot take a new file. The **Settings** page has a card **Program updates**: the state, the released version, when the manifest was last read, and, for administrators, the address of the release, the last problem and **Check now**.
+
+**What happens when a release is published.**
+
+1. At the next look (within the interval, at once when an administrator presses **Check now** or calls `POST /api/v1/update/check`, and 10 seconds after the start) the service finds a version that is not the running one. It downloads the program to `timevault.new.exe`, checks its size and sha256, and runs it with `version` (it must print the version of the manifest) and `check-config` (it must accept the settings of this service).
+2. It stops taking jobs: the Settings page says **Waiting for the running jobs** with their number, and every signed-in account sees a notice under the header (_Version 0.1.8 will be installed as soon as the running jobs have finished. New jobs wait until then._). The jobs that run finish; new ones, also those of the scheduler, wait in the queue. There is no time limit.
+3. With no job running, it renames the running `timevault.exe` to `timevault.old-<version>.exe`, puts the new file at the name `timevault.exe`, writes the note, stops the scheduler, the web server and the job runner, and starts the new program. The queued jobs run then.
+4. The new program logs `automatic update: this program has taken over` and writes the audit event; the **Audit** page lists the **Program update** events of the actor `updater` (`staged`, `restart`, `done`, and `cancelled` or `failed`), with no path and no error text in the details (the log of the service has them).
+
+If the release goes back to the version that runs, the waiting ends and the jobs are taken again. A problem (a manifest that cannot be read, a program with the wrong size, hash or version, settings that the new program refuses, a swap that fails) is shown on the Settings page (the text only to administrators), logged once, and tried again at the next look; the service goes on with the old program. A wrong size or hash is tried again too, because it is what a release that is still being copied looks like; a program whose version is not the one of the manifest is not tried again until the manifest changes. A download of an `http(s)` address that receives no data for two minutes is given up, and a program that was removed after the download (a virus scanner, say) is downloaded again, both at the next look.
+
+**How the program is started after an update (`TIMEVAULT_UPDATE_RESTART`).**
+
+- `supervise` (default): the process that was started stays alive as a small **launcher** and runs the new program as its child, with the same arguments, environment, folder and console. In a console window Ctrl+C stops both; as a scheduled task the task keeps one running process and needs no "restart on failure". When the launcher ends in any other way, for example when the task is ended (the scheduler kills the process at once), the program notices that the launcher is gone, shuts down in order and frees the port, so ending the task leaves nothing behind. The launcher is the first program that was started and keeps its code: an update replaces the file on disk, not the launcher, so a change in the launcher itself needs a restart of the launcher. While it lives, the file it was started from (`timevault.old-<version>.exe`) stays locked.
+- `exit`: the process ends with the exit code **75**, and whatever started it has to start it again. Use it when a service manager runs the program, for example NSSM with `AppExit 75 Restart` (not tried: NSSM was not available for the tests). With the Windows Task Scheduler, a task whose trigger repeats every minute with **Do not start a new instance** (`MultipleInstances IgnoreNew`) starts the new program at the next repetition, and a repetition while the program runs starts nothing: this was tried. The setting **If the task fails, restart every …** was tried too, and it did **not** start the program again after it ended with 75, so do not rely on it. A program that was started by a launcher always exits with 75, whatever the setting says, because the launcher waits for that code.
+
+**Going back.** The previous program is `timevault.old-<version>.exe` (the newest three are kept). **Put the older release in the release folder first, or empty `TIMEVAULT_UPDATE_URL`:** otherwise the service updates itself to the newer one again at the next look, because the version in the manifest is not the one that runs.
+
+- If the new program runs, publishing the older release is enough: the service goes back the same way (a version that differs is an update, in either direction).
+- If the new program does not start, stop what is left (the launcher), rename `timevault.exe`, copy `timevault.old-<version>.exe` to `timevault.exe` and start it.
+- A migration that the new version applied stays in the database. Read the upgrade notes of the version in [changelog.md](./changelog.md) (0.1.7 says that 0.1.6 must not be started against its database) and put the database from before the upgrade back when they say so.
+
+**Limits and trust.**
+
+- **The release folder decides what runs on the server.** There is no signature: the size and the sha256 only protect against a half-copied or damaged file, not against somebody who can write both files. Let only administrators write the folder (and its share), and use `https` for a web address. See [security.md](./security.md).
+- The update waits for the end of the running jobs without a limit. If a restart cannot wait, stop the service by hand.
+- Versions are compared for equality, not for order.
+- `check-config` checks the settings, not the world (it connects to nothing). A program that passes it can still fail later, for example in a migration: the launcher then ends with the exit code of the program, and the log says why; the old program is still there.
+- Left in the folder of the program: `timevault.new.exe` and `timevault.new.exe.part` (a download in progress; removed at the next start), `timevault.old-<version>.exe` (the newest three; one that is still in use is deleted later), `timevault.exe.update.json` (the note for the new program; deleted when it starts).
+
+## Pictures of the accounts
+
+The header, the audit log, the job page and the job lists, the summary of who has access to a folder and the people lists of the permission editor show the picture of an account next to its name. The picture is read from `TIMEVAULT_AVATAR_URL`, by default `/api/static/hr/{id}.webp` (the pictures of the employees that the other company applications keep; `{id}` is the employee ID).
+
+- The address is a path on the host that serves the site and is not put under `TIMEVAULT_BASE_PATH`: behind the company's nginx `/api/` and `/tv/` are on the same host name, so the browser finds `/api/static/hr/E1001.webp` next to `/tv/`. `off` turns the pictures off.
+- The browser asks for each picture itself, once for as long as the page lives and only for the pictures that are about to be seen (the people list of the permission editor is long). A person without a picture (the application answers `202` with a placeholder instead of `404`), a failed request and an answer that is not an image leave the default picture, and a missing picture is remembered for the browser session.
+- No picture is asked for the local administrator, for the names that the service uses itself (`scheduler`, `updater`, `system`) or for a name that cannot be an employee ID. TimeVault stores nothing and the content security policy is unchanged (the picture is shown from the data the request returned).
+- When the service is opened directly on its own port there is no `/api/static/hr/`, so everybody has the default picture.
+
 ## Operating
 
 - **Who may do what.** Anyone can browse (Explorer, Time Machine, file versions, the state of the Backups page and of backup jobs) the folders that let guests browse, without signing in; a folder that does not is not there for a visitor at all. Everything else needs an active account, and what an account may do with a folder is decided for each folder: **Browse** (also restoring, and the jobs and audit events of the folder), **Back up** (back up now, full re-read, verify, stop jobs) and **Full control** (change the folder's settings and who may do what with it); see [Folder permissions](#folder-permissions). The audit log (events of the folders the account may browse, and the sign-ins and other events that belong to no folder), the status page and the settings page are for every signed-in account. Only an `admin` account (Redis `Type` is `admin`, or the local administrator) adds monitored folders and has full control of all of them, and only an administrator sees the folders on the server's disk; everybody else sees display folders. See [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md), [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md), [ADR 0013](./adr/0013-per-folder-access-levels.md) and [api.md](./api.md#who-may-call-what).
@@ -365,7 +447,7 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
   2. Review the preview: counts, size, conflicts, blocked items (missing content, unsafe names, never captured) and the planned changes.
   3. Choose the destination folder name (a folder below `TIMEVAULT_RESTORE_ROOT`, created if it does not exist), the conflict policy (skip, rename, overwrite) and, if you accept restoring only part of the selection, the partial option. Overwriting needs an extra confirmation.
   4. **Start restore** within 15 minutes of the preview (the token expires and is bound to your user and the exact plan; any change needs a new preview). Follow the job page. Do not start another restore into the same folder until it has finished. Copy the result from the destination to its final place yourself: the preview and the job page name it by its display folder (`<TIMEVAULT_RESTORE_DISPLAY_ROOT>\<destination>`), which is where you find it over the network; administrators also see `<TIMEVAULT_RESTORE_ROOT>\<destination>`. Restores never write into a source.
-- **Audit.** The **Audit** page (accounts only) lists sign-ins and failed sign-ins (with the account name as it was typed, cut to 64 characters; a single sign-in shows its method and the Windows user), refused requests, changes to monitored folders (the old and new value of every field that changed, the access lists included), backups, verifies, restore previews and results, the deletion of old versions and cancellations. An administrator sees all of them; everybody else sees the events of the folders they may browse and the events that belong to no folder (sign-ins and the like). The **Duration** column shows how long a backup, a verification, a restore or a cleanup ran, and for a backup the speed of the data it copied: the first backup of a big folder tells how fast the disk and the repository are (a later backup copies little, so its speed says little). The application has no way to change or delete these records, and a database trigger rejects UPDATE and DELETE statements on them. Automatic runs that find nothing changed leave no record.
+- **Audit.** The **Audit** page (accounts only) lists sign-ins and failed sign-ins (with the account name as it was typed, cut to 64 characters; a single sign-in shows its method and the Windows user), refused requests, changes to monitored folders (the old and new value of every field that changed, the access lists included), backups, verifies, restore previews and results, the deletion of old versions, cancellations, and the steps of a program update (**Program update**, by the actor `updater`; see [Releasing and automatic updates](#releasing-and-automatic-updates)). An administrator sees all of them; everybody else sees the events of the folders they may browse and the events that belong to no folder (sign-ins and the like). The **Duration** column shows how long a backup, a verification, a restore or a cleanup ran, and for a backup the speed of the data it copied: the first backup of a big folder tells how fast the disk and the repository are (a later backup copies little, so its speed says little). The application has no way to change or delete these records, and a database trigger rejects UPDATE and DELETE statements on them. Automatic runs that find nothing changed leave no record.
 - **Backing up TimeVault itself.** Back up both the PostgreSQL database (for example with `pg_dump`) and the whole repository folder. The repository only grows, so an older database copy with a newer repository is consistent, but a newer database with an older repository reports missing objects (verify shows them and restores block). After restoring either, run a deep verify.
 
 ## Troubleshooting
@@ -414,7 +496,17 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 | A restore reports a missing or corrupt object | The repository lost or damaged a file. Run a deep verify, restore the repository from its backup, or choose another recovery point. Nothing is restored from a bad object. |
 | An interrupted restore left `.tvpart-*` files | Temporary files in the destination folder from a crashed restore. They can be deleted. |
 | Search says "not configured" or "unavailable" | See [Everything search](#everything-search). History and restore keep working. "Not configured" means `TIMEVAULT_EVERYTHING_URL` is empty; "unavailable" means the Everything it names does not answer (its HTTP server is switched off, or the port, user name or password differ). |
-| A job stays "failed: interrupted by a service restart" | The service was stopped while the job ran. Start the job again; unfinished recovery points were already cleaned up. |
+| A job stays "failed: interrupted by a service restart" | The service was stopped while the job ran. Start the job again; unfinished recovery points were already cleaned up. An update never does this: it waits for the running jobs. |
+| The Settings page says **Waiting for the running jobs**, and the notice under the header stays | A job is running (see the Backups page) and the update waits for it, without a limit. New jobs wait in the queue until the service has restarted. If the restart cannot wait, stop the service by hand; the job is then recovered as failed when the service starts again, and the update starts over at the first look after that start (10 seconds later). |
+| **Program updates** says **Problem**, and the administrator sees "read the manifest: …" | The service cannot read the manifest at `TIMEVAULT_UPDATE_URL`: the file is not there yet, the share or the web address is wrong or not reachable from the server, the account of the service cannot read it, or an `http(s)` address answers something other than `200` (a `404`, a redirect to a login page, a `202`). Open the address from the server. |
+| **Problem**: "the program is not the one the manifest describes" | The size or the sha256 of `timevault.exe` is not the one in `timevault.json`: the release is still being copied (it is tried again at every look and resolves itself), or the two files are from different builds, or `package_url` leads to another file. Copy both files again, the manifest last, or run `scripts\release.ps1` again. |
+| **Problem**: "the program of the release says it is version X, but the manifest says Y" | `latest_version` in the manifest is not the version that is in the program (a hand-edited manifest, or a build of sources whose `var version` was not raised). It is not tried again until the manifest changes. Run `scripts\release.ps1`, which takes the version from the program. |
+| **Problem**: "the new program does not accept the settings of this service: …" | `timevault.exe check-config` of the new version refuses the `.env` (a setting that the new version validates more strictly, or one that it requires). Read the reason, change the `.env`; the next look tries again. The service keeps running with the old program meanwhile. |
+| **Problem**: "the new program could not be put in place: … Access is denied" | The account that runs the service cannot rename or create files in the folder of the program, or an antivirus holds the file. Give the account **Modify** on that folder (the start-up log warns about this). The service keeps running with the old program and does not try this release again until the manifest changes or the service is restarted. |
+| After an update the console window or the scheduled task shows the program as ended, with the exit code 75 | `TIMEVAULT_UPDATE_RESTART=exit` and nothing starts the program again. Use `supervise` (the default), or make the service manager restart the program when it ends (NSSM: `AppExit 75 Restart`). |
+| After an update the old program file `timevault.old-<version>.exe` cannot be deleted | With `supervise` the launcher still runs from it (see [Releasing and automatic updates](#releasing-and-automatic-updates)). It is deleted at a later update when the launcher has ended; it can be deleted by hand after the service has been stopped and started again. |
+| The service updated itself back to the newer version after a manual way back | The release folder still has the newer manifest. Put the older release there (or empty `TIMEVAULT_UPDATE_URL`) before you go back. |
+| The pictures of the accounts are not shown | Check `TIMEVAULT_AVATAR_URL` (the start-up log has `avatar_url`; `off` means no pictures), and open `/api/static/hr/<employee ID>.webp` on the same host name in the browser: it must answer `200` with an image. A `202` (the placeholder for a person without a picture) and a `404` leave the default picture on purpose. Reaching the service directly on its own port (`http://host:8660/`) has no such address. |
 
 ---
 
@@ -422,7 +514,7 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 
 ## 概述
 
-介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.7 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
+介绍如何安装、配置、运行、运维和排查 TimeVault（0.1.8 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录。目前没有安装程序，也没有 Windows 服务封装。
 
 ## 前置条件
 
@@ -456,6 +548,7 @@ Automatic backups are set per folder on the **Settings** page ("Back up automati
 | `timevault-server hash-password` | 读取密码（在终端中输入时不回显，或从标准输入读取一行），并输出可用于 `TIMEVAULT_ADMIN_PASSWORD_HASH`（可选的本地管理员）的值。 |
 | `timevault-server check-redis-users` | 连接 Redis 用户目录（`TIMEVAULT_REDIS_URL`），并输出其中有多少可以使用：键的数量、可读和不可读的记录、已启用的账号、类型为 `admin` 和 `user` 的数量、没有密码的账号、出现在多个键上的工号，以及每个字段有多少值可以解码。它不输出任何姓名、邮箱、键或密码。Redis 没有应答或没有任何可读记录时退出码为 1。请在包含 `.env` 的文件夹中运行，或设置 `TIMEVAULT_ENV_FILE`。 |
 | `timevault-server version` | 输出版本号。 |
+| `timevault-server check-config` | 检查设置（环境变量和 `.env` 文件）对服务是否有效，输出 `the settings are valid`，或输出无效的原因（退出码为 1）。它不连接任何东西。会自己更新的服务在替换自己之前，会用新程序运行它（见[发布与自动更新](#发布与自动更新)）。 |
 
 ## 构建可执行文件
 
@@ -476,6 +569,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 - `vendor\` 不属于仓库，所以克隆仓库得不到它。请把它和源码一起复制，或者在有它的计算机上构建。
 - 没有 `vendor\` 文件夹时使用 `-mod=vendor` 会失败，提示 `go: inconsistent vendoring ... is explicitly required in go.mod, but not marked as explicit in vendor/modules.txt`。`vendor\` 比 `go.mod` 或 `go.sum` 旧时也会出现同样的提示。请重新运行 `go mod vendor`（每次更改依赖之后都要运行），或者用 `-mod=readonly` 从模块缓存构建，它会忽略 `vendor\`。
 - 部署到没有外网的服务器，最简单的做法是在开发电脑上构建 `timevault-server.exe`，然后把这个文件连同 `.env` 复制到服务器上。
+- 会自己更新的服务器只需要复制这一次：`scripts\release.ps1` 会生成这类服务器读取的发布文件夹（见[发布与自动更新](#发布与自动更新)）。
 
 ## 设置放在哪里
 
@@ -490,7 +584,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 - **进程环境变量中的 `TIMEVAULT_*` 变量优先于文件中的同名键**，而且除非你去查，否则没有任何提示：终端里遗留的某个变量会让服务无视你在 `.env` 里写的内容（典型表现是端口改不动）。因此服务在启动时会用一条警告点名所有被环境变量覆盖的设置（`check-redis-users` 也会打印它们），开发脚本则会从终端里移除这类变量。如果这条警告反复出现，说明该变量设在你的 Windows 用户或系统环境变量里。
 - 语法：每行一个 `KEY=VALUE`。空行和以 `#` 开头的行会被忽略，允许行首的 `export `，接受 UTF-8 字节顺序标记和 Windows 行尾。值按字面一直取到行尾，所以带 `\` 的路径或带 `#` 的密码无需转义（行尾的 ` # 注释` 会成为值的一部分）；值两侧成对的单引号或双引号会被去掉；同一个键以最后一次赋值为准。出错时只指出行号，绝不显示该行内容。
 - 该文件包含机密信息（数据库和 Redis 密码、会话密钥）。`/.env` 已在 `.gitignore` 中；请让它只能被运行服务的账户读取，并且绝不要提交填好的副本。[configs/timevault.example.env](../configs/timevault.example.env) 是模板。
-- **设置**页（任何已登录账号都可以打开）显示访问者可以浏览的监控文件夹（每个都标明访问者对它能做什么）、备份存储和恢复文件夹（含仓库的剩余空间），以及当前运行的配置：版本、本服务器的主机名、监听地址、数据库和 Redis（显示为 `host:port/name`）、单点登录服务、本地管理员的名称、搜索服务器。机密信息绝不显示。添加监控文件夹的表单只给管理员；修改文件夹的表单给管理员，以及对该文件夹拥有"完全"权限的人（其中没有服务器磁盘上的文件夹，那一项只有管理员能看到和修改）。只有管理员能看到服务器磁盘上的文件夹（每个监控文件夹的真实文件夹、备份文件夹、真实的恢复文件夹和设置文件）；其他人看到的是显示文件夹。
+- **设置**页（任何已登录账号都可以打开）显示访问者可以浏览的监控文件夹（每个都标明访问者对它能做什么）、备份存储和恢复文件夹（含仓库的剩余空间），以及当前运行的配置：版本、本服务器的主机名、监听地址、数据库和 Redis（显示为 `host:port/name`）、单点登录服务、本地管理员的名称、搜索服务器，以及自动更新的状态（见[发布与自动更新](#发布与自动更新)：发布地址和最近的问题只有管理员能看到，管理员还可以点击**立即检查**）。机密信息绝不显示。添加监控文件夹的表单只给管理员；修改文件夹的表单给管理员，以及对该文件夹拥有"完全"权限的人（其中没有服务器磁盘上的文件夹，那一项只有管理员能看到和修改）。只有管理员能看到服务器磁盘上的文件夹（每个监控文件夹的真实文件夹、备份文件夹、真实的恢复文件夹和设置文件）；其他人看到的是显示文件夹。
 - **备份文件夹和恢复文件夹。** 它们是两个不同的地方。备份文件夹（`TIMEVAULT_REPOSITORY_PATH`，即仓库）是 TimeVault 保存所有被备份内容的地方。恢复文件夹（`TIMEVAULT_RESTORE_ROOT`）是放恢复出来的文件的地方：恢复不会覆盖原文件，也绝不会写入监控文件夹，所以它把恢复出来的副本写入恢复文件夹下的一个新文件夹（名称在恢复表单中填写，默认是 `restore-<日期>-<时间>`），需要哪些再从那里复制回去。两者都不能位于监控文件夹之内。
 - **显示文件夹。** 人们通过网络访问监控文件夹和恢复文件夹，而不是 `D:\TimeVault\monitor` 这样的路径。因此每个监控文件夹都有一个**显示文件夹**，即人们打开它时使用的网络路径（`D:\TimeVault\monitor` 共享为 `TimeVault` 时是 `\\sgmeslt595.co.murata.local\TimeVault\monitor`），恢复文件夹则有 `TIMEVAULT_RESTORE_DISPLAY_ROOT`（`\\sgmeslt595.co.murata.local\TimeVault\restore`）。把 `TIMEVAULT_SERVER_HOST` 设为本服务器的名称（`sgmeslt595.co.murata.local`）：设置页和 API 就会拒绝没有显示文件夹的监控文件夹，也会拒绝显示文件夹位于另一台服务器上的监控文件夹（它的搜索、备份和恢复只能处理本服务器自己的文件夹）。没有设置 `TIMEVAULT_SERVER_HOST` 时，显示文件夹是可选的，也不会与主机名比较。管理员在设置页填写该字段，设置页还会标出没有显示文件夹的监控文件夹（"还没有显示文件夹"；设置主机名之后，之前添加的每个文件夹都要先填上一个，才能再次编辑）。服务检查的是主机，而不是共享是否真的通向该监控文件夹：请先共享文件夹，再写下你打开它所用的路径。显示文件夹出现的地方，文件浏览、时间机器和文件版本页面都有一行带**复制**按钮的**位置**。
 - **谁能看到哪个文件夹。** 管理员同时看到显示文件夹和真实文件夹。其他人无论是否登录，都只看到显示文件夹；引用真实文件夹的文本（任务错误和日志、恢复消息、审计详情、状态详情、文件未能备份的原因）中，会显示显示文件夹、`[<监控文件夹名称>]`、`[backup folder]` 或 `[restore folder]`。见 [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md)。
@@ -523,6 +617,10 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 | `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `true` | 单点登录服务看到的地址必须与请求登录的浏览器的地址一致。只有在无法得知浏览器的地址时才关闭它（更好的做法是 `TIMEVAULT_TRUSTED_PROXIES`）。 |
 | `TIMEVAULT_TRUSTED_PROXIES` | 空 | 反向代理，写成用逗号分隔的地址或 CIDR 范围（`127.0.0.1,::1,10.0.0.0/24`），它们的 `X-Forwarded-For` 头会被信任。此后客户端地址取自该头；它用于单点登录检查、审计日志的**来源**列和登录限流。代理必须自己设置这个头；见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)；它前面还有另一层代理时，见[两层代理](#两层代理)。 |
 | `TIMEVAULT_BASE_PATH` | 空 | 站点放在反向代理之后时所处的路径前缀，例如 `http://host/tv/` 对应 `/tv`。为空表示站点位于其地址的根路径。`tv`、`/tv` 和 `/tv/` 都表示 `/tv`；只能包含字母、数字和 `- _ . ~`，并且不能以应用自己的路径开头（`api`、`static`、`login`、`explorer`、`history`、`versions`、`backups`、`jobs`、`restore`、`audit`、`status`、`settings`、`lang`、`logout`、`auth`、`healthz`）。页面、重定向和 Cookie 给出的每个地址都带有它；带或不带它的请求都会被接受。见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)。 |
+| `TIMEVAULT_AVATAR_URL` | `/api/static/hr/{id}.webp` | 账号头像的地址：站点所在主机上的一个路径（不会放到 `TIMEVAULT_BASE_PATH` 之下），以 `/` 开头，其中 `{id}` 恰好出现一次，用来放工号。`off` 或 `none` 表示关闭头像（空值表示使用默认值）。见[账号头像](#账号头像)。 |
+| `TIMEVAULT_UPDATE_URL` | 空 | 发布清单 `timevault.json` 所在的位置：`http(s)` 地址，或文件、其所在文件夹、共享的绝对路径（`D:\TimeVault\release`、`\\server\share\tv-release`）；以斜杠结尾的地址和文件夹路径都表示该文件夹。不能包含用户名、密码、查询串或片段。为空表示服务从不更新自己。需要 `TIMEVAULT_AUTO_MIGRATE=true`。见[发布与自动更新](#发布与自动更新)。 |
+| `TIMEVAULT_UPDATE_INTERVAL` | `10m` | 读取清单的频率，范围 `1m` 到 `24h`。第一次查看在启动后约 10 秒；管理员可以立即要求查看一次（**立即检查**）。 |
+| `TIMEVAULT_UPDATE_RESTART` | `supervise` | 更新之后怎样启动新程序：`supervise`（被启动的那个进程作为小型启动器保留，由它启动新程序）或 `exit`（进程以退出码 75 结束，由服务管理器启动）。 |
 | `TIMEVAULT_EVERYTHING_URL` | 空 | Everything HTTP 服务的基础 URL，例如 `http://127.0.0.1:<port>/`。为空表示禁用搜索。 |
 | `TIMEVAULT_EVERYTHING_USERNAME`、`TIMEVAULT_EVERYTHING_PASSWORD` | 空 | Everything 的可选 HTTP Basic 凭据。密码属于机密。 |
 | `TIMEVAULT_EVERYTHING_TIMEOUT` | `5s` | 单次搜索的超时，范围 `100ms` 到 `30s`。 |
@@ -553,7 +651,7 @@ go build -trimpath -ldflags "-s -w" -o timevault-server.exe ./cmd/timevault-serv
 2. 把 [configs/timevault.example.env](../configs/timevault.example.env) 复制为 `timevault-server.exe` 旁边的 `.env`，替换每个 `<placeholder>`，并删除不需要的行。登录需要 `TIMEVAULT_REDIS_URL`（公司账号；用 `timevault-server check-redis-users` 检查）和/或一个本地管理员：`timevault-server hash-password` 会生成 `TIMEVAULT_ADMIN_PASSWORD_HASH` 的值。
 3. 运行 `timevault-server migrate`（或设置 `TIMEVAULT_AUTO_MIGRATE=true`）和 `timevault-server serve`。打开 `http://127.0.0.1:8660/`；由管理员在**设置**页添加监控文件夹。
 4. 如需让其他计算机使用，请在前面放置 HTTPS 反向代理，让服务监听回环地址，并设置 `TIMEVAULT_COOKIE_SECURE=true`。直接监听非回环地址需要 `TIMEVAULT_ALLOW_NON_LOOPBACK=true`，并且依然没有 TLS。能访问该地址的任何人都可以不用账号浏览每个监控文件夹的文件名、大小和历史，公司密码也是在这个网站上输入的，所以 HTTPS 不是可选项。登录限流统计的是连接过来的地址，所以放在反向代理之后时统计的是代理的地址，除非 `TIMEVAULT_TRUSTED_PROXIES` 列出了该代理（见[单点登录](#单点登录)和 [security.md](./security.md)）。当代理把 TimeVault 放在多个应用共用的主机名的某个路径下（例如 `/tv/`）时，见[放在带路径前缀的反向代理之后](#放在带路径前缀的反向代理之后)。
-5. 服务没有 Windows 服务封装。请用你信任的方式启动它（例如计划任务或服务管理器）；这一点没有测试过。收到 Ctrl+C 或 SIGTERM 时它会正常退出，最多等待 30 秒让 HTTP 服务和正在运行的任务结束。
+5. 服务没有 Windows 服务封装。请用你信任的方式启动它（例如计划任务或服务管理器）。0.1.8 用普通用户账号（没有管理员权限）的计划任务试过：它能启动服务，服务会一直运行，自动更新期间也是如此（见[发布与自动更新](#发布与自动更新)）；NSSM 之类的 Windows 服务封装没有试过。请关闭任务设置**如果任务运行时间超过以下时间，停止任务**（任务计划程序对新任务默认设为 3 天），否则时间一到服务就会被停止。收到 Ctrl+C 或 SIGTERM 时它会正常退出，最多等待 30 秒让 HTTP 服务和正在运行的任务结束。
 
 启动时，服务会把上次进程结束时仍在运行的任务标记为失败（"interrupted by a service restart"），清除未完成恢复点的部分历史，然后继续处理排队的任务。
 
@@ -770,6 +868,82 @@ Invoke-Expression "$s -Action stop"
 - **Everything 探测。** `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE=true` 让调度器先问 Everything，并跳过没有变化的文件夹的扫描。它需要 `TIMEVAULT_EVERYTHING_URL`，需要一个监控着该文件夹所在卷（NTFS 卷，通过它的变更日志）并开启了 **工具 → 选项 → 索引 → 索引最近更改日期** 的 Everything，并且该文件夹在这个索引之内。在以下情况下文件夹仍然会被扫描：Everything 3 秒内没有响应或不认识该文件夹；其下的条目数量不等于上次完整扫描时的数量（删除就是这样被发现的）；自上次扫描前 5 分钟以来其下有任何内容被创建、修改、重命名、移动或更改了属性；最新的恢复点有未捕获的项目；自上次扫描以来更改过该文件夹的排除规则；以及至少每隔 `TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY`（24 小时）。一个周期最多询问 Everything 25 次，没有应答的 Everything 在一分钟内不会再被询问，所以已停止的 Everything 只造成一次超时，而不是每个到期文件夹各一次。设置 `TIMEVAULT_LOG_LEVEL=debug` 后，每次跳过都会在日志中写下"scheduled scan skipped: the search engine sees no change"。被跳过的文件夹不会在列表中留下任何内容，就像任何没有发现变化的运行一样，它的间隔会重新开始计算。
 - 间隔状态保存在内存中：重启后，第一个自动备份可能立即启动。
 
+## 发布与自动更新
+
+`.env` 中设置了 `TIMEVAULT_UPDATE_URL` 的服务器，会在发布了更新的版本时替换自己的程序：它等正在运行的任务结束，交换文件，然后重启，不需要任何人守在服务器旁。决定和备选方案见 [ADR 0014](./adr/0014-self-update-from-a-release-manifest.md)。
+
+**制作发布（在构建用的电脑上）。**
+
+```powershell
+cd <repository folder>
+.\scripts\release.ps1
+.\scripts\release.ps1 -OutDir D:\TimeVault\release -BaseUrl https://tools.example.local/tv-release/
+```
+
+- 先提高 `cmd\timevault-server\main.go` 中的 `var version`。服务在清单中的版本**不是**它正在运行的版本时才会更新，所以与上一个发布版本号相同的程序不算更新（脚本发现这种情况会发出警告）。
+- 脚本会运行 `go vet ./...`（用 `-SkipChecks` 跳过），用临时名称构建程序（`-trimpath -ldflags "-s -w"`，不带 `-X`），向它询问版本，测量大小并计算哈希，把它作为 `timevault.exe` 放入发布文件夹（默认是 `<repository>\release`，已被 git 忽略），并**最后**以不带字节顺序标记的 UTF-8 原子地写入 `timevault.json`：
+
+  ```json
+  {
+      "latest_version":  "0.1.8",
+      "sha256":  "<64 hexadecimal characters>",
+      "package_url":  "timevault.exe",
+      "size":  23352320
+  }
+  ```
+
+  `package_url` 是文件名，服务会在它读取的清单旁边查找（适用于文件夹、共享，或同时存放这两个文件的 Web 文件夹）；使用 `-BaseUrl` 时则是程序的完整地址。手写的清单也可以：版本前面的 `v` 和未知字段都会被接受。
+- 把 `timevault.exe`，再把 `timevault.json`，复制到服务器读取的**发布文件夹**。服务在复制过程中读取该文件夹时，会看到大小或哈希不一致，并在下次查看时再试；它绝不会安装只复制了一半的文件。
+
+**服务器从哪里读取。** `TIMEVAULT_UPDATE_URL` 可以是：
+
+- 文件夹或共享，`D:\TimeVault\release` 或 `\\server\share\tv-release`（运行服务的账号需要有读取权限；服务启动时无法访问的共享，在能访问之后就会被找到）；或者
+- 清单或其所在文件夹的 `http(s)` 地址，`https://tools.example.local/tv-release/`，由任何能原样提供这两个文件的 Web 服务器提供，例如 nginx：`location /tv-release/ { alias D:/TimeVault/release/; }`。会跟随重定向（至多五次）。`200` 以外的应答（例如 `202` 或 `404`）都是错误。
+
+**在服务器上启用（只需一次）。**
+
+1. 把 0.1.8 或更新版本的 `timevault.exe` 复制到服务器上，放在 `.env` 旁边。这是最后一次手工复制：更早的版本不能自己更新。
+2. 在 `.env` 中写入：`TIMEVAULT_AUTO_MIGRATE=true`（有更新地址的服务没有它会拒绝启动，因为服务自己更新时没有人会运行 `migrate`）、`TIMEVAULT_UPDATE_URL=<发布文件夹>`，如果需要，再加 `TIMEVAULT_UPDATE_INTERVAL=5m`。
+3. 运行服务的账号需要对 `timevault.exe` 所在的文件夹有**修改**权限（`timevault.new.exe`、`timevault.old-<版本>.exe` 和 `timevault.exe.update.json` 都写在那里），并对发布文件夹有**读取**权限。
+4. 启动服务。启动日志会写出 `automatic updates are on` 以及地址和间隔，并在程序所在的文件夹不能写入新文件时发出警告。**设置**页有一张**程序更新**卡片：状态、已发布的版本、清单最近一次读取的时间，以及（仅管理员能看到的）发布地址、最近的问题和**立即检查**。
+
+**发布了新版本之后会发生什么。**
+
+1. 在下一次查看时（在间隔之内；管理员点击**立即检查**或调用 `POST /api/v1/update/check` 时立即查看；启动后 10 秒也会查看），服务发现一个不是正在运行的版本。它把程序下载到 `timevault.new.exe`，检查大小和 sha256，并用 `version`（必须输出清单中的版本）和 `check-config`（必须接受本服务的设置）运行它。
+2. 它停止取用任务：设置页显示**等待正在运行的任务**及其数量，每个已登录的账号都会在页眉下面看到提示（_版本 0.1.8 将在正在运行的任务结束后安装。新任务会等到那时再开始。_）。正在运行的任务继续运行到结束；新的任务（包括调度器的）在队列中等待。没有时间上限。
+3. 没有任务运行时，它把正在运行的 `timevault.exe` 重命名为 `timevault.old-<版本>.exe`，把新文件放到 `timevault.exe` 这个名字上，写下说明文件，停止调度器、Web 服务器和任务运行器，然后启动新程序。之后排队的任务开始运行。
+4. 新程序在日志中写出 `automatic update: this program has taken over`，并写入审计事件；**审计**页会列出操作者为 `updater` 的**程序更新**事件（`staged`、`restart`、`done`，以及 `cancelled` 或 `failed`），详情中没有路径，也没有错误文本（它们在服务的日志中）。
+
+如果发布又回到了正在运行的版本，等待就会结束，任务会重新被取用。出现问题（读不到清单、程序的大小、哈希或版本不对、新程序拒绝这些设置、交换失败）时，会显示在设置页上（文本只给管理员看），在日志中只记录一次，并在下次查看时再试；服务继续使用旧程序运行。大小或哈希不对也会再试，因为还在复制中的发布就是这个样子；版本与清单不一致的程序在清单改变之前不会再试。对 `http(s)` 地址的下载如果两分钟内没有收到任何数据就会放弃；下载之后被移除的程序（例如被病毒扫描程序删除）会在下次查看时重新下载。
+
+**更新之后怎样启动程序（`TIMEVAULT_UPDATE_RESTART`）。**
+
+- `supervise`（默认）：被启动的那个进程作为一个小型**启动器**继续存在，并把新程序作为子进程运行，参数、环境变量、文件夹和控制台都与之前相同。在控制台窗口中 Ctrl+C 会同时停止两者；作为计划任务时，任务始终只有一个运行中的进程，也不需要"失败时重新启动"。启动器以其他任何方式结束时，例如任务被结束（任务计划程序会立即强制终止进程），程序会发现启动器已经不在，有序关闭并释放端口，所以结束任务不会留下任何东西。启动器是最先被启动的那个程序，它的代码保持不变：更新替换的是磁盘上的文件，而不是启动器，所以要改动启动器本身，需要重启启动器。它活着的时候，它所运行的那个文件（`timevault.old-<版本>.exe`）会一直被锁定。
+- `exit`：进程以退出码 **75** 结束，启动它的东西必须再次启动它。由服务管理器运行程序时使用它，例如设置了 `AppExit 75 Restart` 的 NSSM（没有试过：测试时没有 NSSM）。使用 Windows 任务计划程序时，触发器每分钟重复一次并选择**不要启动新实例**（`MultipleInstances IgnoreNew`）的任务，会在下一次重复时启动新程序，而程序运行期间的重复不会启动任何东西：这一点试过。"如果任务失败，每隔……重新启动"这个设置也试过，它在程序以 75 结束之后**没有**再次启动程序，所以不要依赖它。由启动器启动的程序无论设置如何，始终以 75 退出，因为启动器在等待这个退出码。
+
+**回退。** 上一个程序是 `timevault.old-<版本>.exe`（保留最新的三个）。**请先把较旧的发布放回发布文件夹，或者清空 `TIMEVAULT_UPDATE_URL`：** 否则服务会在下次查看时再次更新到较新的版本，因为清单中的版本不是正在运行的版本。
+
+- 如果新程序在运行，把较旧的发布放进去就够了：服务会以同样的方式退回去（版本不同就是更新，不分方向）。
+- 如果新程序无法启动，请停止剩下的进程（启动器），重命名 `timevault.exe`，把 `timevault.old-<版本>.exe` 复制为 `timevault.exe`，然后启动。
+- 新版本已经应用的迁移会保留在数据库中。请阅读 [changelog.md](./changelog.md) 中该版本的升级说明（0.1.7 说明不能让 0.1.6 对它的数据库启动），在说明要求时恢复升级之前的数据库。
+
+**限制与信任。**
+
+- **发布文件夹决定了服务器上运行什么。** 没有签名：大小和 sha256 只能防止文件只复制了一半或损坏，防不住能同时写入这两个文件的人。请只让管理员能写入该文件夹（及其共享），Web 地址请使用 `https`。见 [security.md](./security.md)。
+- 更新会无限期地等待正在运行的任务结束。如果重启不能等，请手工停止服务。
+- 版本只比较是否相等，不比较先后。
+- `check-config` 检查的是设置，而不是外部环境（它不连接任何东西）。通过它的程序之后仍可能失败，例如在迁移中：这时启动器以程序的退出码结束，原因在日志中；旧程序仍然保留着。
+- 程序所在文件夹中留下的文件：`timevault.new.exe` 和 `timevault.new.exe.part`（正在进行的下载；下次启动时删除）、`timevault.old-<版本>.exe`（最新的三个；仍在使用的那个会在之后删除）、`timevault.exe.update.json`（给新程序的说明文件；它启动时删除）。
+
+## 账号头像
+
+页眉、审计日志、任务页和任务列表、文件夹访问权限的摘要，以及权限编辑器中的人员列表，都会在账号名称旁边显示该账号的头像。头像从 `TIMEVAULT_AVATAR_URL` 读取，默认是 `/api/static/hr/{id}.webp`（公司其他应用保存的员工照片；`{id}` 是工号）。
+
+- 该地址是站点所在主机上的一个路径，不会放到 `TIMEVAULT_BASE_PATH` 之下：在公司的 nginx 之后，`/api/` 和 `/tv/` 在同一个主机名上，所以浏览器可以在 `/tv/` 旁边找到 `/api/static/hr/E1001.webp`。`off` 表示关闭头像。
+- 浏览器自己去请求每张头像，页面存活期间每张只请求一次，并且只请求即将被看到的头像（权限编辑器的人员列表很长）。没有头像的人（该应用对此回答 `202` 并附带一张占位图，而不是 `404`）、失败的请求和不是图片的应答，都会保留默认头像；缺失的头像在浏览器会话期间会被记住。
+- 本地管理员、服务自己使用的名称（`scheduler`、`updater`、`system`）以及不可能是工号的名称，都不会去请求头像。TimeVault 不存储任何东西，内容安全策略也没有改变（头像是用请求返回的数据显示的）。
+- 直接通过服务自己的端口打开时，没有 `/api/static/hr/`，所以每个人显示的都是默认头像。
+
 ## 运维
 
 - **谁可以做什么。** 任何人无需登录就可以浏览允许访客浏览的文件夹（文件浏览、时间机器、文件版本、备份页和备份任务的状态）；不允许的文件夹对访问者来说根本不存在。其他一切都需要已启用的账号，而账号能对某个文件夹做什么是按文件夹分别决定的：**浏览**（也包括恢复，以及该文件夹的任务和审计事件）、**备份**（立即备份、完整重读、校验、停止任务）和**完全控制**（修改文件夹的设置以及谁能对它做什么）；见[文件夹权限](#文件夹权限)。审计日志（账号可以浏览的文件夹的事件，以及登录等不属于任何文件夹的事件）、状态页和设置页对每个已登录的账号开放。只有 `admin` 账号（Redis 中 `Type` 为 `admin`，或本地管理员）才能添加监控文件夹，并对所有文件夹拥有完全控制权，也只有管理员能看到服务器磁盘上的文件夹；其他人看到的是显示文件夹。见 [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md)、[ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md)、[ADR 0013](./adr/0013-per-folder-access-levels.md) 和 [api.md](./api.md#谁可以调用什么)。
@@ -785,7 +959,7 @@ Invoke-Expression "$s -Action stop"
   2. 查看预览：数量、大小、冲突、受阻项目（内容缺失、不安全的名称、从未备份成功）以及计划的变更。
   3. 选择目标文件夹名称（`TIMEVAULT_RESTORE_ROOT` 之下的文件夹，不存在时会创建）、冲突策略（跳过、改名、覆盖），以及在接受只恢复所选内容的一部分时勾选的部分恢复选项。覆盖需要额外确认。
   4. 在预览后 15 分钟内点击**开始恢复**（令牌会过期，并与你的用户和精确的计划绑定；任何更改都需要重新预览）。在任务页面查看进度。在它结束之前，不要向同一个文件夹再启动另一个恢复。请自行把结果从目标位置复制到最终位置：预览和任务页面用显示文件夹（`<TIMEVAULT_RESTORE_DISPLAY_ROOT>\<destination>`）来称呼它，你可以通过网络在那里找到它；管理员还会看到 `<TIMEVAULT_RESTORE_ROOT>\<destination>`。恢复绝不会写入备份源。
-- **审计。** **审计**页（仅限账号）列出登录和登录失败（账号名按输入的内容记录，截断到 64 个字符；单点登录会显示登录方式和 Windows 用户）、被拒绝的请求、监控文件夹的变更（每个发生变化的字段的旧值和新值，包括权限列表）、备份、校验、恢复预览与结果、旧版本的删除以及取消操作。管理员能看到全部；其他人看到的是他们可以浏览的文件夹的事件，以及不属于任何文件夹的事件（登录等）。**耗时**列显示备份、校验、恢复或清理运行了多久，对备份还显示它所复制数据的速度：大文件夹的第一次备份能说明磁盘和仓库有多快（之后的备份复制得很少，所以它的速度说明不了什么）。应用程序没有修改或删除这些记录的途径，并且数据库触发器会拒绝对它们的 UPDATE 和 DELETE 语句。没有发现变化的自动运行不留下记录。
+- **审计。** **审计**页（仅限账号）列出登录和登录失败（账号名按输入的内容记录，截断到 64 个字符；单点登录会显示登录方式和 Windows 用户）、被拒绝的请求、监控文件夹的变更（每个发生变化的字段的旧值和新值，包括权限列表）、备份、校验、恢复预览与结果、旧版本的删除、取消操作，以及程序更新的各个步骤（**程序更新**，操作者为 `updater`；见[发布与自动更新](#发布与自动更新)）。管理员能看到全部；其他人看到的是他们可以浏览的文件夹的事件，以及不属于任何文件夹的事件（登录等）。**耗时**列显示备份、校验、恢复或清理运行了多久，对备份还显示它所复制数据的速度：大文件夹的第一次备份能说明磁盘和仓库有多快（之后的备份复制得很少，所以它的速度说明不了什么）。应用程序没有修改或删除这些记录的途径，并且数据库触发器会拒绝对它们的 UPDATE 和 DELETE 语句。没有发现变化的自动运行不留下记录。
 - **备份 TimeVault 自身。** 需要同时备份 PostgreSQL 数据库（例如用 `pg_dump`）和整个仓库文件夹。仓库只会增长，所以较旧的数据库副本配上较新的仓库是一致的，而较新的数据库配上较旧的仓库会报告对象缺失（校验会列出，恢复会被阻止）。无论恢复了哪一个，之后都请运行一次深度校验。
 
 ## 故障排查
@@ -834,4 +1008,14 @@ Invoke-Expression "$s -Action stop"
 | 恢复报告对象缺失或损坏 | 仓库丢失或损坏了文件。请运行深度校验，从备份恢复仓库，或选择其他恢复点。不会从损坏的对象恢复任何内容。 |
 | 中断的恢复留下了 `.tvpart-*` 文件 | 这是崩溃的恢复在目标文件夹中留下的临时文件，可以删除。 |
 | 搜索显示"未配置"或"不可用" | 见 [Everything 搜索](#everything-搜索)。历史和恢复仍可使用。"未配置"表示 `TIMEVAULT_EVERYTHING_URL` 为空；"不可用"表示它所指的 Everything 没有应答（它的 HTTP 服务被关闭，或端口、用户名、密码不一致）。 |
-| 任务一直显示"failed: interrupted by a service restart" | 任务运行时服务被停止。请重新启动该任务；未完成的恢复点已经被清理。 |
+| 任务一直显示"failed: interrupted by a service restart" | 任务运行时服务被停止。请重新启动该任务；未完成的恢复点已经被清理。更新从不会这样做：它会等正在运行的任务结束。 |
+| 设置页显示**等待正在运行的任务**，页眉下面的提示一直在 | 有任务正在运行（见备份页），更新在无限期地等它。新任务在队列中等待，直到服务重启。如果重启不能等，请手工停止服务；服务再次启动时，该任务会被恢复为失败，更新则在那次启动之后的第一次查看（10 秒后）重新开始。 |
+| **程序更新**显示**出现问题**，管理员看到"read the manifest: …" | 服务读不到 `TIMEVAULT_UPDATE_URL` 处的清单：文件还不在那里、共享或 Web 地址有误或服务器访问不到、运行服务的账号不能读它，或者 `http(s)` 地址返回了 `200` 以外的应答（`404`、跳转到登录页、`202`）。请在服务器上打开这个地址试试。 |
+| **出现问题**："the program is not the one the manifest describes" | `timevault.exe` 的大小或 sha256 与 `timevault.json` 中的不一致：发布还在复制中（每次查看都会重试，会自行恢复），或者这两个文件来自不同的构建，或者 `package_url` 指向了另一个文件。请重新复制这两个文件（清单最后复制），或再运行一次 `scripts\release.ps1`。 |
+| **出现问题**："the program of the release says it is version X, but the manifest says Y" | 清单中的 `latest_version` 与程序里的版本不一致（手工改过清单，或者构建所用源码中的 `var version` 没有提高）。在清单改变之前不会再试。请运行 `scripts\release.ps1`，它会从程序中取版本号。 |
+| **出现问题**："the new program does not accept the settings of this service: …" | 新版本的 `timevault.exe check-config` 拒绝了 `.env`（新版本对某个设置的检查更严格，或要求了某个设置）。请阅读原因并修改 `.env`；下次查看时会再试。这期间服务继续使用旧程序运行。 |
+| **出现问题**："the new program could not be put in place: … Access is denied" | 运行服务的账号不能在程序所在的文件夹中重命名或创建文件，或者杀毒软件占用了该文件。请给该账号对该文件夹的**修改**权限（启动日志会对此发出警告）。服务继续使用旧程序运行，在清单改变或服务重启之前不会再尝试这个发布。 |
+| 更新之后，控制台窗口或计划任务显示程序已结束，退出码为 75 | `TIMEVAULT_UPDATE_RESTART=exit`，而没有任何东西再次启动程序。请使用 `supervise`（默认值），或者让服务管理器在程序结束时重新启动它（NSSM：`AppExit 75 Restart`）。 |
+| 更新之后，旧程序文件 `timevault.old-<版本>.exe` 无法删除 | 使用 `supervise` 时，启动器仍在从它运行（见[发布与自动更新](#发布与自动更新)）。启动器结束之后，它会在以后的某次更新中被删除；在服务停止并重新启动之后，也可以手工删除。 |
+| 手工回退之后，服务又自己更新回了较新的版本 | 发布文件夹里仍然是较新的清单。回退之前请先把较旧的发布放到那里（或者清空 `TIMEVAULT_UPDATE_URL`）。 |
+| 账号头像没有显示 | 检查 `TIMEVAULT_AVATAR_URL`（启动日志里有 `avatar_url`；`off` 表示没有头像），并在浏览器中打开同一主机名下的 `/api/static/hr/<工号>.webp`：它必须返回 `200` 和一张图片。`202`（没有头像的人的占位图）和 `404` 会有意保留默认头像。直接通过服务自己的端口（`http://host:8660/`）访问时没有这样的地址。 |

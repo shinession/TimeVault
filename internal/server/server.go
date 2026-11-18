@@ -55,6 +55,12 @@ type Options struct {
 	// BasePath is the path prefix the site is served under behind a reverse proxy, such as /tv. Empty means the
 	// site is at the root of its address. See basepath.go.
 	BasePath string
+	// AvatarURL is where the picture of an account is, a path on the host that serves the site with {id} for the
+	// account name (config.Config.AvatarURL); empty means there are no pictures.
+	AvatarURL string
+	// Update tells about the automatic update and takes the request to look for a new version now; nil when the
+	// service does not update itself.
+	Update Updater
 	// Now is the clock of the single sign-on flows; nil means time.Now.
 	Now func() time.Time
 }
@@ -173,6 +179,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /status", s.need(auth.PermAudit, s.handleStatus))
 	m.HandleFunc("GET /settings", s.need(auth.PermAudit, s.handleSettings))
 	m.HandleFunc("POST /settings/sources", s.need(auth.PermManage, s.handleAddSource))
+	m.HandleFunc("POST /settings/update/check", s.need(auth.PermManage, s.handleUpdateCheck))
 	// Whoever has full control of a folder may change its settings; the handler checks that.
 	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermAccount, s.handleUpdateSource))
 

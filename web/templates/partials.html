@@ -22,7 +22,7 @@
       <div class="tv-access-people" role="group" aria-label="{{$p.LevelLabel .Level}}">
         {{range .People}}
         <label class="tv-check" data-person="{{lower .ID}} {{lower .Name}}"><input type="checkbox" name="{{$col.Field}}" value="{{.Token}}" data-access-person{{if .Checked}} checked{{end}}>
-          <span>{{if .Gone}}{{.ID}} <span class="tv-chip tv-chip-warn">{{$p.T "access.gone"}}</span>{{else}}{{.Name}} <span class="tv-muted">({{.ID}})</span>{{end}}</span></label>
+          <span>{{if .Gone}}{{template "person" (pair $p .ID)}}{{.ID}} <span class="tv-chip tv-chip-warn">{{$p.T "access.gone"}}</span>{{else}}{{template "person" (pair $p .ID)}}{{.Name}} <span class="tv-muted">({{.ID}})</span>{{end}}</span></label>
         {{else}}<p class="tv-muted tv-small">{{$p.T "access.no_people"}}</p>{{end}}
       </div>
     </div>
@@ -32,6 +32,14 @@
 {{end}}{{end}}
 
 {{define "icon"}}<svg class="icon" aria-hidden="true" focusable="false"><use href="{{url "/static/img/icons.svg"}}#{{.}}"></use></svg>{{end}}
+
+{{/* The picture of an account, or the default picture while it has none. Called as (pair $ employeeID); the script
+     looks the picture up (see initAvatars) when the page says where the pictures are. */}}
+{{define "avatar"}}{{$p := .Page}}<span class="tv-avatar"{{with $p.AvatarID .Value}} data-avatar="{{.}}"{{end}}>{{template "icon" "user"}}</span>{{end}}
+
+{{/* The same in a list, only for a name that can have a picture and only when pictures are on: the names of the
+     service itself (scheduler, updater) and the local administrator stand without one. */}}
+{{define "person"}}{{if .Page.AvatarID .Value}}{{template "avatar" .}}{{end}}{{end}}
 
 {{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
 

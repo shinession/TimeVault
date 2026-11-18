@@ -128,7 +128,7 @@
             {{if .Active}}<span class="tv-muted" data-job-field="phase">{{$.PhaseLabel .Phase}}</span>{{end}}</td>
           <td>{{$.TimeS .Job.CreatedAt}}</td>
           <td>{{if .Duration}}{{.Duration}}{{else}}-{{end}}</td>
-          <td>{{if $.SignedIn}}{{.Job.RequestedBy}}{{else}}-{{end}}</td>
+          <td>{{if $.SignedIn}}{{template "person" (pair $ .Job.RequestedBy)}}{{.Job.RequestedBy}}{{else}}-{{end}}</td>
         </tr>
         {{end}}
       </tbody>

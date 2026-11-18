@@ -48,9 +48,21 @@
     var title = res.headers.get('X-TV-Title');
     document.title = (title ? decodeURIComponent(title) + ' \u00b7 ' : '') + 'TimeVault';
     setNav(res.headers.get('X-TV-Nav') || '');
+    setNotice(res.headers.get('X-TV-Notice'));
     if (push) { history.pushState({ tv: 1 }, '', res.url); }
     syncReturnLinks(res.url);
     init(content);
+  }
+
+  // The sentence under the header (a new version is about to be installed) is part of the page, not of the content
+  // that is swapped, so every answer says what it should be now.
+  function setNotice(encoded) {
+    var el = document.querySelector('[data-tv-notice]');
+    if (!el) { return; }
+    var text = '';
+    try { text = encoded ? decodeURIComponent(encoded) : ''; } catch (e) { text = ''; }
+    el.textContent = text;
+    el.hidden = text === '';
   }
 
   function fetchPartial(url) {
@@ -320,6 +332,102 @@
     }).catch(function () { finish('error'); });
   }
 
+  /* ---------- pictures of the accounts ---------- */
+
+  // The pictures are files of another application on the same host; the page says where (the tv-avatar meta tag,
+  // with {id} for the employee ID). That application answers 202 with a placeholder picture for somebody without a
+  // picture, so only an answer of 200 that is an image counts. A picture is asked for once while the page lives and
+  // kept as a data: URL, which the content security policy allows; a missing one is remembered for the session, so
+  // that a list of people does not ask again and again. Only pictures that are about to be seen are asked for.
+  var avatarMeta = document.querySelector('meta[name="tv-avatar"]');
+  var AVATAR = avatarMeta ? (avatarMeta.getAttribute('content') || '') : '';
+  var AVATAR_MAX_BYTES = 512 * 1024;
+  var AVATAR_PARALLEL = 4;
+  var avatarCache = {};
+  var avatarQueue = [];
+  var avatarBusy = 0;
+  var avatarObserver = null;
+
+  function avatarMissed(id) {
+    try { return sessionStorage.getItem('tv-avatar-miss:' + id) !== null; } catch (e) { return false; }
+  }
+
+  function rememberAvatarMiss(id) {
+    try { sessionStorage.setItem('tv-avatar-miss:' + id, '1'); } catch (e) { /* ignore */ }
+  }
+
+  function readAvatar(id) {
+    return fetch(AVATAR.replace('{id}', encodeURIComponent(id)), { credentials: 'same-origin' }).then(function (res) {
+      if (res.status !== 200 || (res.headers.get('Content-Type') || '').indexOf('image/') !== 0) { return null; }
+      return res.blob().then(function (blob) {
+        if (blob.size === 0 || blob.size > AVATAR_MAX_BYTES) { return null; }
+        return new Promise(function (resolve) {
+          var reader = new FileReader();
+          reader.onload = function () { resolve(typeof reader.result === 'string' ? reader.result : null); };
+          reader.onerror = function () { resolve(null); };
+          reader.readAsDataURL(blob);
+        });
+      });
+    }).catch(function () { return null; });
+  }
+
+  function pumpAvatars() {
+    while (avatarBusy < AVATAR_PARALLEL && avatarQueue.length) {
+      avatarBusy++;
+      avatarQueue.shift()().then(function () { avatarBusy--; pumpAvatars(); });
+    }
+  }
+
+  function avatarFor(id) {
+    if (!avatarCache[id]) {
+      avatarCache[id] = avatarMissed(id) ? Promise.resolve(null) : new Promise(function (resolve) {
+        avatarQueue.push(function () {
+          return readAvatar(id).then(function (url) {
+            if (!url) { rememberAvatarMiss(id); }
+            resolve(url);
+          });
+        });
+        pumpAvatars();
+      });
+    }
+    return avatarCache[id];
+  }
+
+  function showAvatar(el, url) {
+    var img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    // A picture that cannot be shown leaves the default one, which stays in the element under it.
+    img.addEventListener('error', function () { img.remove(); el.classList.remove('has-photo'); });
+    img.src = url;
+    el.appendChild(img);
+    el.classList.add('has-photo');
+  }
+
+  function loadAvatar(el) {
+    avatarFor(el.getAttribute('data-avatar')).then(function (url) { if (url) { showAvatar(el, url); } });
+  }
+
+  function initAvatars(root) {
+    if (!AVATAR) { return; }
+    var pending = root.querySelectorAll('[data-avatar]:not([data-avatar-seen])');
+    if (!pending.length) { return; }
+    if (!('IntersectionObserver' in window)) {
+      pending.forEach(function (el) { el.setAttribute('data-avatar-seen', '1'); loadAvatar(el); });
+      return;
+    }
+    if (!avatarObserver) {
+      avatarObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) { return; }
+          avatarObserver.unobserve(entry.target);
+          loadAvatar(entry.target);
+        });
+      }, { rootMargin: '160px' });
+    }
+    pending.forEach(function (el) { el.setAttribute('data-avatar-seen', '1'); avatarObserver.observe(el); });
+  }
+
   /* ---------- access editor (folder settings) ---------- */
 
   // Each level of the editor lists who has it: "guest", "everyone" and people. A group already includes the people, so
@@ -382,6 +490,7 @@
     initTimeline(root);
     initJobs(root);
     initAccess(root);
+    initAvatars(root);
     initScrollTo(root);
     scheduleFab();
   }
@@ -431,5 +540,6 @@
   });
 
   init(content);
+  initAvatars(document.querySelector('.tv-header') || content);
   initFab();
 })();

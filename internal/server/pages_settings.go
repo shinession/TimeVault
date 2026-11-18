@@ -154,6 +154,8 @@ type settingsData struct {
 	// RepoFreePct is the free space of the backup folder in percent, -1 when unknown.
 	RepoFreePct    int
 	RestoreEnabled bool
+	// Update is the state of the automatic update (what it may say depends on who asks).
+	Update updateView
 }
 
 // settingsFailure carries a rejected form, or the form that was asked for, into the page.
@@ -178,6 +180,7 @@ func (s *Server) settingsData(r *http.Request, sess auth.Session, fail settingsF
 	}
 	d := &settingsData{
 		Deployment: s.opts.Deployment, Version: s.opts.Version, RestoreEnabled: s.svc.RestoreEnabled(), RepoFreePct: -1,
+		Update:  s.updateView(sess),
 		AddForm: settingsForm{Excludes: strings.Join(backup.DefaultExcludes, "\n"), Minutes: strconv.Itoa(defaultScheduleMinutes), MaxVersions: "0", AccessSet: true},
 	}
 	if fail.add != nil {
