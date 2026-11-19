@@ -65,8 +65,12 @@
     el.hidden = text === '';
   }
 
-  function fetchPartial(url) {
-    return fetch(url, { credentials: 'same-origin', headers: { 'X-TV-Partial': '1' } }).then(function (res) {
+  // An automatic request (the reload of a job page while the job runs) says so, so the service can tell it from a
+  // page that somebody opened.
+  function fetchPartial(url, auto) {
+    var headers = { 'X-TV-Partial': '1' };
+    if (auto) { headers['X-TV-Auto'] = '1'; }
+    return fetch(url, { credentials: 'same-origin', headers: headers }).then(function (res) {
       if (new URL(res.url).pathname === BASE + '/login') {
         window.location.assign(res.url);
         return null;
@@ -79,10 +83,10 @@
     });
   }
 
-  function navigate(url, push, keepScroll) {
+  function navigate(url, push, keepScroll, auto) {
     var token = ++inflight;
     document.body.classList.add('is-loading');
-    fetchPartial(url).then(function (r) {
+    fetchPartial(url, auto).then(function (r) {
       if (!r || token !== inflight) { return; }
       var y = window.scrollY;
       swap(r.html, r.res, push);
@@ -173,7 +177,7 @@
       })).then(function (results) {
         var finished = results.some(function (r) { return r && r.job && !r.job.active; });
         if (finished || reload) {
-          navigate(window.location.href, false, true);
+          navigate(window.location.href, false, true, true);
         } else {
           jobTimer = setTimeout(tick, 1500);
         }
@@ -189,8 +193,8 @@
   var fabBottom = fab && fab.querySelector('[data-fab-bottom]');
   var fabFrame = 0;
 
-  // The buttons only appear when the page is clearly longer than the window, and each one only when
-  // there is something to jump to.
+  // The arrows only appear when the page is clearly longer than the window, and each one only when there is
+  // something to jump to. The buttons under them (guide, documentation) are always there.
   function updateFab() {
     fabFrame = 0;
     if (!fab) { return; }
@@ -200,7 +204,6 @@
     var longPage = room > 600;
     fabTop.hidden = !(longPage && y > 300);
     fabBottom.hidden = !(longPage && y < room - 300);
-    fab.hidden = fabTop.hidden && fabBottom.hidden;
   }
 
   function scheduleFab() {

@@ -2,7 +2,7 @@
 {{template "flash" .}}
 {{with .Data}}
 <h1 class="tv-page-title">{{template "icon" "check"}} {{$.T "status.title"}}</h1>
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "status.table"}}>
   <p class="tv-muted">{{$.T "status.checked"}} {{$.TimeS .CheckedAt}}</p>
   <div class="tv-table-wrap">
     <table class="tv-table">
@@ -19,7 +19,7 @@
     </table>
   </div>
 </section>
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "status.note"}}>
   <p class="tv-muted">{{$.T "status.mvp_note"}}</p>
 </section>
 {{end}}

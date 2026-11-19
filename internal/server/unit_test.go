@@ -22,9 +22,52 @@ func TestTemplatesParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"login", "explorer", "history", "versions", "backups", "job", "restore_preview", "audit", "status", "settings", "error"} {
+	for _, name := range []string{"login", "explorer", "history", "versions", "backups", "job", "restore_preview", "audit", "status", "settings", "error", "help"} {
 		if pages[name] == nil {
 			t.Errorf("page template %q is missing", name)
+		}
+	}
+}
+
+var tourKey = regexp.MustCompile(`\.Tour "([a-zA-Z0-9_.]+)"`)
+
+// The guide of a page is written in the templates, which name the parts it explains (Page.Tour), and the words are in
+// i18n_tour.go. Every part that a template names needs its title and its text in both languages, and a text for a part
+// that no template names would only be dead weight.
+func TestEveryStepOfTheGuideIsTranslatedAndUsed(t *testing.T) {
+	files, err := fs.Glob(web.FS, "templates/*.html")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no templates found: %v", err)
+	}
+	used := map[string]bool{}
+	for _, f := range files {
+		body, err := fs.ReadFile(web.FS, f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range tourKey.FindAllStringSubmatch(string(body), -1) {
+			used[m[1]] = true
+			for _, lang := range []string{"en", "zh"} {
+				for _, part := range []string{"title", "text"} {
+					if _, ok := messages[lang]["tour."+m[1]+"."+part]; !ok {
+						t.Errorf("%s names the step %q, which has no %s in %q", f, m[1], part, lang)
+					}
+				}
+			}
+		}
+	}
+	if len(used) < 40 {
+		t.Errorf("only %d steps are named in the templates; the pages have lost their guide", len(used))
+	}
+	for key := range messages["en"] {
+		rest, ok := strings.CutPrefix(key, "tour.")
+		if !ok {
+			continue
+		}
+		for _, part := range []string{".title", ".text"} {
+			if step, ok := strings.CutSuffix(rest, part); ok && !used[step] {
+				t.Errorf("the message %q is for a step that no template names", key)
+			}
 		}
 	}
 }

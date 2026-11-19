@@ -278,6 +278,7 @@ func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, sess auth.S
 		"base_path":   d.BasePath,
 		"server_host": d.ServerHost, "restore_display_root": d.RestoreDisplayRoot, "search": d.SearchHost,
 		"local_admin": d.LocalAdmin != "", "sign_in_disabled": d.AuthDisabled, "session_ttl": d.SessionTTL.String(), "cookie_secure": d.CookieSecure,
+		"web_log": map[string]any{"enabled": d.WebLog, "key": d.WebLogKey, "host": d.WebLogHost},
 	}
 	if sess.Can(auth.PermManage) {
 		out["repository"], out["restore_root"], out["env_file"] = d.RepositoryPath, d.RestoreRoot, d.EnvFile

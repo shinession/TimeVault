@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"timevault/internal/catalog"
 	"timevault/internal/jobs"
 	"timevault/internal/search"
+	"timevault/internal/weblog"
 )
 
 const (
@@ -208,6 +210,7 @@ func (s *Service) queueDue(ctx context.Context, lastWarn map[int64]time.Time) {
 		}
 		lastWarn[sourceID] = time.Now()
 		s.log.Warn(msg, "source", sourceID, "error", err)
+		s.webLog(weblog.Scheduler("scheduler.error", sourceID, slog.LevelWarn))
 	}
 	due, err := s.cat.DueNow(ctx)
 	if err != nil {
@@ -242,9 +245,13 @@ func (s *Service) queueDue(ctx context.Context, lastWarn map[int64]time.Time) {
 		if !open {
 			continue
 		}
-		if _, _, err := s.StartScheduledBackup(ctx, d.ID); err != nil {
+		_, created, err := s.StartScheduledBackup(ctx, d.ID)
+		if err != nil {
 			warn(d.ID, "start a scheduled backup", err)
 			continue
+		}
+		if created {
+			s.webLog(weblog.Scheduler("scheduler.queued", d.ID, slog.LevelInfo))
 		}
 		s.pace.started(time.Now())
 		return
@@ -302,7 +309,15 @@ func (s *Service) probeUnchanged(ctx context.Context, d catalog.Due, now time.Ti
 	}
 	s.recordRun(ctx, d.ID, catalog.RunEnd{Duration: time.Since(started)})
 	s.log.Debug("scheduled scan skipped: the search engine sees no change", "source", d.ID, "items", res.Items)
+	s.webLog(weblog.Scheduler("scheduler.skipped", d.ID, slog.LevelDebug))
 	return true, true
+}
+
+// webLog sends a line to the web log, when there is one.
+func (s *Service) webLog(e weblog.Entry) {
+	if s.web != nil {
+		s.web.Write(e)
+	}
 }
 
 // probeBackedOff reports whether the search engine failed to answer lately and is left alone for now.

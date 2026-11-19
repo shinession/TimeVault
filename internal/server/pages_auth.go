@@ -92,6 +92,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogin, RemoteAddr: ip, Detail: map[string]any{"role": string(sess.Role), "method": "password"}})
+	noteUser(r.Context(), sess.User)
 	http.Redirect(w, r, next, http.StatusSeeOther)
 }
 

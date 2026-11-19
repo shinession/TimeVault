@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -30,12 +31,16 @@ import (
 	"timevault/internal/restore"
 	"timevault/internal/search"
 	"timevault/internal/service"
+	"timevault/internal/weblog"
 )
 
 const (
 	cookieLang   = "tv_lang"
 	maxFormBytes = 1 << 20
 	partialHdr   = "X-TV-Partial"
+	// autoHdr marks a request that the page script sent on its own, such as the reload of a job page while the job
+	// runs. A visitor did not ask for it, so the web log does not report it as a page.
+	autoHdr = "X-TV-Auto"
 )
 
 // Options configures the HTTP server.
@@ -62,6 +67,10 @@ type Options struct {
 	// Update tells about the automatic update and takes the request to look for a new version now; nil when the
 	// service does not update itself.
 	Update Updater
+	// WebLog takes the lines for the web log that the company applications share: the pages people open and the
+	// requests that failed. Nil means there is none. What people and the scheduler do reaches it through the audit
+	// trail (see weblog.Audit), not through here.
+	WebLog weblog.Sink
 	// Now is the clock of the single sign-on flows; nil means time.Now.
 	Now func() time.Time
 }
@@ -145,8 +154,9 @@ func assetVersion(assets fs.FS) (string, error) {
 func (s *Server) Handler() http.Handler {
 	var h http.Handler = s.mux
 	h = s.securityHeaders(h)
-	h = s.requestLog(h)
+	// The recoverer is inside the request log, so a request that panicked is logged like any other, as a 500.
 	h = s.recoverer(h)
+	h = s.requestLog(h)
 	h = http.MaxBytesHandler(h, maxFormBytes)
 	return s.withBase(h)
 }
@@ -164,6 +174,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /auth/sso/start", s.handleSSOStart)
 	m.HandleFunc("POST /auth/sso/poll", s.handleSSOPoll)
 	m.HandleFunc("POST /logout", s.need(auth.PermAccount, s.handleLogout))
+	// The user guide is the same for everybody and holds nothing that is not public, so it does not ask who is there.
+	m.HandleFunc("GET /help", s.open(s.handleHelp))
 
 	// Anyone may look at the folders that let guests browse; a folder that does not is not there for them. What a
 	// signed-in account may do with a folder is decided per folder (see access.go), by the handlers. These pages
@@ -208,14 +220,102 @@ func (w *statusWriter) WriteHeader(code int) {
 
 func (s *Server) requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(sw, r)
 		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
 			return
 		}
-		s.log.Info("request", "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", time.Since(start).Milliseconds())
+		start := time.Now()
+		// Only the cookie is read, so the log says who the request is for without asking the user directory.
+		sess, _ := s.auth.Session(r)
+		info := &requestInfo{user: sess.User}
+		r = r.WithContext(context.WithValue(r.Context(), requestInfoKey{}, info))
+		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(sw, r)
+		took := time.Since(start)
+		ip := s.clientIP(r)
+		s.log.Info("request", "ip", ip, "user", userName(info.user), "method", r.Method, "path", r.URL.Path, "status", sw.status, "ms", took.Milliseconds())
+		s.webLogRequest(r, info, ip, sw.status, took)
 	})
+}
+
+// requestInfo is what the handlers tell the request log about a request while it runs.
+type requestInfo struct {
+	// user is who the request is for: the account of its cookie, or the account it signed in as. Empty for a visitor.
+	user string
+	// ref is the reference of the error that the visitor was shown, which the log of the service holds with the details.
+	ref string
+}
+
+type requestInfoKey struct{}
+
+func requestInfoOf(ctx context.Context) *requestInfo {
+	info, _ := ctx.Value(requestInfoKey{}).(*requestInfo)
+	return info
+}
+
+// noteUser tells the request log that the request ended as user: a sign-in starts as a visitor and ends as an account.
+func noteUser(ctx context.Context, user string) {
+	if info := requestInfoOf(ctx); info != nil {
+		info.user = user
+	}
+}
+
+// noteRef tells the request log the reference of the error that the visitor is shown.
+func noteRef(ctx context.Context, ref string) {
+	if info := requestInfoOf(ctx); info != nil {
+		info.ref = ref
+	}
+}
+
+// userName is how the logs name the user of a request: the employee ID, or guest for a visitor who has not signed in.
+func userName(user string) string {
+	if user == "" {
+		return weblog.Guest
+	}
+	return user
+}
+
+// requestAttrs are the address and the user that the lines of the log about a request carry.
+func (s *Server) requestAttrs(r *http.Request) []any {
+	user := ""
+	if info := requestInfoOf(r.Context()); info != nil {
+		user = info.user
+	}
+	return []any{"ip", s.clientIP(r), "user", userName(user), "method", r.Method, "path", r.URL.Path}
+}
+
+// webLogRequest reports a request to the web log. What a visitor does with a form is in the audit trail, which the web
+// log mirrors, so only the pages somebody opened are reported here, and the requests that failed on the server. The
+// requests that the page script makes by itself (the polling of a job, the reload of a job page while it runs) are
+// debug lines: they are written only when the log level is debug.
+func (s *Server) webLogRequest(r *http.Request, info *requestInfo, ip string, status int, took time.Duration) {
+	if s.opts.WebLog == nil {
+		return
+	}
+	route := routeName(r, status)
+	switch {
+	case status >= http.StatusInternalServerError:
+		s.opts.WebLog.Write(weblog.Failure(ip, info.user, route, status, info.ref))
+	case r.Method != http.MethodGet:
+	case isAPI(r) || r.Header.Get(autoHdr) != "":
+		e := weblog.Page(ip, info.user, route, status, took)
+		e.Level = slog.LevelDebug
+		s.opts.WebLog.Write(e)
+	case status >= 300 && status < 400:
+		// A redirect is not a page; the page it leads to is reported when it is opened.
+	default:
+		s.opts.WebLog.Write(weblog.Page(ip, info.user, route, status, took))
+	}
+}
+
+// routeName is the route of a request as the logs show it: the pattern that matched, never the address as it was
+// typed. A path that matched nothing is "(not found)", and the start page, which matches "/{$}", is "/".
+func routeName(r *http.Request, status int) string {
+	route := routeOf(r)
+	if status == http.StatusNotFound && route == "/" {
+		return "(not found)"
+	}
+	return strings.TrimSuffix(route, "{$}")
 }
 
 func (s *Server) recoverer(next http.Handler) http.Handler {
@@ -226,7 +326,8 @@ func (s *Server) recoverer(next http.Handler) http.Handler {
 					panic(p)
 				}
 				id := newID()
-				s.log.Error("panic while handling a request", "id", id, "method", r.Method, "path", r.URL.Path, "panic", fmt.Sprint(p))
+				noteRef(r.Context(), id)
+				s.log.Error("panic while handling a request", append(s.requestAttrs(r), "id", id, "panic", fmt.Sprint(p))...)
 				s.fail(w, r, http.StatusInternalServerError, "errors.internal", id)
 			}
 		}()
@@ -503,7 +604,8 @@ func (s *Server) handleErr(w http.ResponseWriter, r *http.Request, err error) {
 	status, key := classify(err)
 	if status == http.StatusInternalServerError {
 		id := newID()
-		s.log.Error("request failed", "id", id, "method", r.Method, "path", r.URL.Path, "error", err)
+		noteRef(r.Context(), id)
+		s.log.Error("request failed", append(s.requestAttrs(r), "id", id, "error", err)...)
 		if isAPI(r) {
 			writeJSONError(w, status, "internal", "internal error, reference "+id)
 			return

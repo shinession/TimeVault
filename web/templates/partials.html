@@ -81,7 +81,7 @@
 
 {{/* Where the page's folder or file is on the network, with a button that copies it. Administrators also see the real folder. */}}
 {{define "location"}}{{if .Location}}
-<p class="tv-location">
+<p class="tv-location" {{.Tour "location"}}>
   <span class="tv-muted">{{.T "location.label"}}</span>
   <code>{{.Location}}</code>
   <button type="button" class="tv-btn tv-btn-small tv-btn-ghost tv-copy" data-copy="{{.Location}}" data-copied="{{.T "location.copied"}}" title="{{.T "location.copy"}}">{{template "icon" "copy"}}<span data-copy-label>{{.T "location.copy"}}</span></button>

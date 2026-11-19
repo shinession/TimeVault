@@ -190,6 +190,7 @@ var messages = map[string]map[string]string{
 		"settings.not_configured": "not configured", "settings.none": "none", "settings.yes": "yes", "settings.no": "no",
 		"settings.env_hint": "Everything in this card is read from the .env file when the service starts. A TIMEVAULT_* environment variable overrides the file, and the start-up log names the ones that do.",
 		"settings.add_open": "Add a folder",
+		"settings.web_log":  "Web log", "settings.web_log_host": "host name in the lines", "settings.off": "off",
 
 		"level.none": "No access", "level.browse": "Browse", "level.backup": "Back up", "level.full": "Full control",
 		"level.yours":       "What you may do with this folder",
@@ -444,6 +445,7 @@ var messages = map[string]map[string]string{
 		"settings.not_configured": "未配置", "settings.none": "无", "settings.yes": "是", "settings.no": "否",
 		"settings.env_hint": "此卡片中的内容都在服务启动时从 .env 文件读取。TIMEVAULT_* 环境变量会覆盖文件中的同名设置，启动日志会点名这样的变量。",
 		"settings.add_open": "添加文件夹",
+		"settings.web_log":  "Web 日志", "settings.web_log_host": "行中的主机名", "settings.off": "关闭",
 
 		"level.none": "无权限", "level.browse": "浏览", "level.backup": "备份", "level.full": "完全控制",
 		"level.yours":       "你对这个文件夹的权限",

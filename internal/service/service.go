@@ -26,6 +26,7 @@ import (
 	"timevault/internal/repository"
 	"timevault/internal/restore"
 	"timevault/internal/search"
+	"timevault/internal/weblog"
 )
 
 // ErrNotFound is returned for unknown sources, points, jobs and paths.
@@ -73,6 +74,9 @@ type Config struct {
 	// RestoreDisplayRoot is the network path users reach the restore folder by, normalised
 	// (TIMEVAULT_RESTORE_DISPLAY_ROOT); empty when there is none.
 	RestoreDisplayRoot string
+	// WebLog takes the lines the scheduler writes to the web log (a backup queued, a start that failed); nil means
+	// none. What a backup does when it finishes reaches the web log through the audit trail.
+	WebLog weblog.Sink
 }
 
 // Service is the application facade.
@@ -86,6 +90,7 @@ type Service struct {
 	audit              *audit.Logger
 	search             search.Provider
 	log                *slog.Logger
+	web                weblog.Sink
 	directory          DirectoryChecker
 	schedulerTick      time.Duration
 	sched              SchedulerOptions
@@ -107,7 +112,7 @@ type Service struct {
 func New(cfg Config) *Service {
 	s := &Service{
 		pool: cfg.Pool, cat: cfg.Catalog, repo: cfg.Repo, engine: cfg.Engine, restore: cfg.Restore,
-		jobs: cfg.Jobs, audit: cfg.Audit, search: cfg.Search, log: cfg.Logger,
+		jobs: cfg.Jobs, audit: cfg.Audit, search: cfg.Search, log: cfg.Logger, web: cfg.WebLog,
 		directory: cfg.Directory, schedulerTick: cfg.SchedulerTick, sched: cfg.Scheduler,
 		serverHost: cfg.ServerHost, restoreDisplayRoot: cfg.RestoreDisplayRoot,
 	}

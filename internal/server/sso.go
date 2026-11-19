@@ -267,6 +267,7 @@ func (s *Server) handleSSOPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	s.svc.Audit(r.Context(), audit.Event{Actor: sess.User, Action: audit.ActionLogin, RemoteAddr: ip,
 		Detail: map[string]any{"role": string(sess.Role), "method": "sso", "windows_user": truncate(res.WindowsUser, 64)}})
+	noteUser(r.Context(), sess.User)
 	reply("ok", "next", s.u(flow.next))
 }
 

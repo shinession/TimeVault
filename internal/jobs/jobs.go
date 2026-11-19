@@ -428,9 +428,9 @@ func (r *Runner) run(parent, ctx context.Context, cancel context.CancelFunc, job
 		r.log.Error("record job result", "job", job.ID, "error", err)
 	}
 	if runErr != nil {
-		r.log.Warn("job finished with an error", "job", job.ID, "kind", job.Kind, "state", state, "error", msg)
+		r.log.Warn("job finished with an error", "job", job.ID, "kind", job.Kind, "state", state, "by", job.RequestedBy, "error", msg)
 	} else {
-		r.log.Info("job finished", "job", job.ID, "kind", job.Kind)
+		r.log.Info("job finished", "job", job.ID, "kind", job.Kind, "by", job.RequestedBy)
 	}
 }
 

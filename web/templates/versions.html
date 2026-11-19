@@ -1,7 +1,7 @@
 {{define "content"}}
 {{template "flash" .}}
 {{with .Data}}
-<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}" {{$.Tour "crumbs"}}>
   <a class="tv-crumb" href="{{url "/explorer" "source" .Source.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
   {{range .Crumbs}}
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
@@ -11,14 +11,14 @@
 </nav>
 {{template "location" $}}
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "versions.card"}}>
   <div class="tv-card-head">
     <h1>{{template "icon" "file"}} {{.Hist.Name}}</h1>
-    <a class="tv-btn tv-btn-ghost" href="{{url .BackURL}}">{{$.T "common.back"}}</a>
+    <a class="tv-btn tv-btn-ghost" href="{{url .BackURL}}" {{$.Tour "versions.back"}}>{{$.T "common.back"}}</a>
   </div>
   <p class="tv-muted">{{$.T "versions.intro" (len .Hist.Versions)}}</p>
 
-  <div class="tv-table-wrap">
+  <div class="tv-table-wrap" {{$.Tour "versions.table"}}>
     <table class="tv-table">
       <thead>
         <tr>
@@ -27,7 +27,7 @@
         </tr>
       </thead>
       <tbody>
-        {{range .Hist.Versions}}
+        {{range $i, $v := .Hist.Versions}}
         <tr>
           <td><time datetime="{{iso .FirstAt}}">{{$.Time .FirstAt}}</time></td>
           <td>{{if .StillCurrent}}<span class="tv-chip tv-chip-same">{{$.T "versions.current"}}</span>{{else}}{{$.TimeP .LastAt}}{{end}}</td>
@@ -40,7 +40,7 @@
             {{else if not (index $.Data.Hist.Present (hex .SHA256))}}<span class="tv-chip tv-chip-failed">{{$.T "versions.content_missing"}}</span>
             {{else}}<span class="tv-chip tv-chip-validated tv-chip-available">{{$.T "versions.available"}}</span>{{end}}
           </td>
-          <td class="tv-actions">
+          <td class="tv-actions" {{if eq $i 0}}{{$.Tour "versions.restore"}}{{end}}>
             {{if and $.CanRestore $.Data.RestoreEnabled (eq .State "ok")}}
             <form method="post" action="{{url "/restore/preview"}}" class="tv-inline-form">
               {{template "csrf" $}}

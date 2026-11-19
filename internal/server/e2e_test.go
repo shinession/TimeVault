@@ -65,6 +65,8 @@ type harness struct {
 	// dir stands in for the company user accounts, clock for the time the sign-in manager sees.
 	dir   *fakeDirectory
 	clock *testClock
+	// logs is what the HTTP server logged.
+	logs *logBuffer
 }
 
 var visitorSeq atomic.Int32
@@ -114,6 +116,7 @@ func newHarnessOpts(t *testing.T, tune func(*service.Config, *config.Deployment)
 	t.Helper()
 	env := testenv.New(t)
 	log := slog.New(slog.DiscardHandler)
+	logs := &logBuffer{}
 	runner := jobs.NewRunner(env.Pool, log, 2)
 	provider := &swappable{p: search.NewDisabled()}
 	dir, clock := newFakeDirectory(), &testClock{now: time.Now()}
@@ -148,13 +151,13 @@ func newHarnessOpts(t *testing.T, tune func(*service.Config, *config.Deployment)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := server.New(svc, am, web.FS, opts, log)
+	s, err := server.New(svc, am, web.FS, opts, slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(forwarded(s.Handler()))
 	t.Cleanup(ts.Close)
-	h := &harness{t: t, env: env, srv: ts, search: provider, dir: dir, clock: clock}
+	h := &harness{t: t, env: env, srv: ts, search: provider, dir: dir, clock: clock, logs: logs}
 	h.client = h.newBrowser()
 	return h
 }

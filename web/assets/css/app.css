@@ -7,6 +7,7 @@
    7 File list           8 Tables 9 Chips          10 Timeline
    11 Job and restore pages       12 Login, empty and error states
    13 Utilities          14 Responsive            15 Reduced motion
+   16 Guide of a page    17 User guide
    ========================================================================== */
 
 /* 1 - Tokens and themes ---------------------------------------------------- */
@@ -938,7 +939,9 @@ a.tv-row:focus-visible { outline-offset: -2px; }
 .tv-selection summary { cursor: pointer; font-weight: 500; }
 .tv-selection-list { display: flex; flex-wrap: wrap; gap: .25rem .5rem; margin-top: .5rem; max-height: 14rem; overflow: auto; }
 
-/* Jump to the top or the bottom of a long page. */
+/* The round buttons at the bottom right. The arrows jump to the top or the bottom of a long page and are there only when
+   they are of use. The documentation and the guide of the page are always there. The column grows upward from the corner,
+   so those two stay where they are when an arrow comes or goes. */
 .tv-fab {
   position: fixed;
   right: max(1rem, env(safe-area-inset-right));
@@ -1383,4 +1386,87 @@ a.tv-row:focus-visible { outline-offset: -2px; }
   body.is-loading::before { background-position: 0 0; background-size: 100% 100%; opacity: .7; }
   /* Scroll-linked effects keep working; they are not motion in time. */
   .tv-header, .tv-timeline-track { animation-duration: auto !important; }
+}
+
+/* 16 - The guide of a page (tour.js) ---------------------------------------- */
+/* The page is dimmed by the shadow of the light that is put on one part; the shield catches the clicks, so nothing under
+   the guide reacts while it is open. */
+.tv-tour-shield { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 1000; }
+.tv-tour-spot {
+  position: fixed;
+  z-index: 1001;
+  box-sizing: border-box;
+  border-radius: var(--r-md);
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 100vmax rgba(8, 12, 16, .62);
+  pointer-events: none;
+}
+.tv-tour.is-placed .tv-tour-spot { transition: top .25s ease, left .25s ease, width .25s ease, height .25s ease; }
+.tv-tour-pop {
+  position: fixed;
+  z-index: 1002;
+  box-sizing: border-box;
+  width: min(23rem, calc(100vw - 1.5rem));
+  padding: 1rem 1.1rem .8rem;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 18px 48px -12px rgba(0, 0, 0, .5);
+}
+.tv-tour:not(.is-shown) .tv-tour-pop { visibility: hidden; }
+.tv-tour-pop.is-docked { top: auto; right: .5rem; bottom: .5rem; left: .5rem; width: auto; max-height: 45vh; overflow: auto; }
+.tv-tour-pop.is-docked.is-top { top: .5rem; bottom: auto; }
+.tv-tour-title { margin: 0 2rem .4rem 0; font-size: 1.0625rem; }
+.tv-tour-text { font-size: .9375rem; line-height: 1.55; white-space: pre-line; }
+.tv-tour-foot { display: flex; align-items: center; gap: .5rem; margin-top: .9rem; }
+.tv-tour-count { margin-right: auto; color: var(--faint); font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.tv-tour-close { position: absolute; top: .5rem; right: .5rem; width: 1.875rem; height: 1.875rem; font-size: 1.25rem; line-height: 1; }
+
+/* 17 - The user guide (help.html) ------------------------------------------- */
+.tv-doc { display: grid; grid-template-columns: minmax(0, 15rem) minmax(0, 1fr); gap: 1.5rem 2rem; align-items: start; }
+.tv-doc-toc {
+  position: sticky;
+  top: 4.75rem;
+  max-height: calc(100vh - 6rem);
+  overflow: auto;
+  padding: 1rem 1.1rem;
+  border-radius: var(--r-card);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: .9rem;
+}
+.tv-doc-toc h2 { margin-bottom: .5rem; color: var(--muted); font-size: .8125rem; letter-spacing: .04em; text-transform: uppercase; }
+.tv-doc-toc ol { display: grid; gap: .3rem; padding-left: 1.2rem; }
+.tv-doc-toc a { color: var(--text); }
+.tv-doc-toc a:hover { color: var(--accent-ink); text-decoration: underline; }
+.tv-doc-body { min-width: 0; max-width: 52rem; line-height: 1.6; }
+.tv-doc-body .tv-page-title { padding: 0 0 1rem; }
+.tv-doc-section { scroll-margin-top: 4.75rem; }
+.tv-doc-section + .tv-doc-section { margin-top: 1.75rem; padding-top: 1.75rem; border-top: 1px solid var(--line); }
+.tv-doc-body h2 { margin-bottom: .75rem; font-size: 1.3rem; }
+.tv-doc-body h3 { margin: 1.25rem 0 .5rem; font-size: 1.05rem; }
+.tv-doc-body p, .tv-doc-body ul, .tv-doc-body ol, .tv-doc-body .tv-table-wrap { margin-bottom: .85rem; }
+.tv-doc-body ul, .tv-doc-body ol { padding-left: 1.4rem; }
+.tv-doc-body li { margin-bottom: .3rem; }
+.tv-doc-body li > ul, .tv-doc-body li > ol { margin: .3rem 0 0; }
+.tv-doc-body a { text-decoration: underline; }
+.tv-doc-body .tv-chip { vertical-align: baseline; }
+.tv-doc-body .icon { vertical-align: -.2em; }
+.tv-doc-note {
+  padding: .7rem .9rem;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.tv-doc kbd {
+  padding: .05em .4em;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+  font-size: .85em;
+}
+@media (max-width: 900px) {
+  .tv-doc { grid-template-columns: minmax(0, 1fr); }
+  .tv-doc-toc { position: static; max-height: none; }
 }

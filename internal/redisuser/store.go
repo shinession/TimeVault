@@ -8,10 +8,12 @@
 // reader that never executes anything (see pickle.go), and returns a Record.
 //
 // Open does not touch the network, so a service can start while Redis is down.
-// Every failure to talk to Redis is reported as ErrUnavailable. The package
-// never writes to Redis, never uses KEYS, bounds every scan, treats user input
+// Every failure to talk to Redis is reported as ErrUnavailable. The Store never
+// writes to Redis, never uses KEYS, bounds every scan, treats user input
 // as data (it can never act as a glob pattern) and never lets the password of
 // the connection URL or of a user appear in an error, a log value or a report.
+// Connect hands the same kind of client to the one part of the program that does
+// write to that server, the web log (internal/weblog); nothing in this package uses it.
 package redisuser
 
 import (
@@ -107,6 +109,43 @@ func Open(o Options) (*Store, error) {
 		return nil, fmt.Errorf("redisuser: max scan must be between 1 and %d", maxScanLimit)
 	}
 
+	c := newConn(ro, secret, timeout, poolSize)
+	return &Store{
+		rdb:     c.Client,
+		prefix:  prefix,
+		glob:    escapeGlob(prefix),
+		maxScan: maxScan,
+		budget:  5 * timeout,
+		addr:    c.Addr,
+		secret:  secret,
+	}, nil
+}
+
+// Conn is a client for the Redis server of the user directory, for the parts of the program that use that server
+// for something else than reading accounts (the web log appends lines to a list there). It has the settings of the
+// user directory's own client and does not connect until it is used. This package itself never writes to Redis:
+// the Store does not use a Conn for anything but reading.
+type Conn struct {
+	Client *redis.Client
+	// Addr describes the server for display: "host:port/db", plus " (tls)". It never contains credentials.
+	Addr   string
+	secret string
+}
+
+// Connect prepares a client for the server in rawURL (redis://[user:password@]host:port/db, or rediss://). It does
+// not touch the network. No error it returns contains the URL or the password.
+func Connect(rawURL string, timeout time.Duration, pool int) (*Conn, error) {
+	ro, secret, err := parseURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
+	return newConn(ro, secret, timeout, pool), nil
+}
+
+func newConn(ro *redis.Options, secret string, timeout time.Duration, pool int) *Conn {
 	// These override whatever the URL query says. RESP2 and no CLIENT SETINFO
 	// suit the Redis 3.x and 5.x servers dash may run on: go-redis still sends
 	// HELLO 2 first, and falls back to AUTH when the server does not know it.
@@ -116,26 +155,30 @@ func Open(o Options) (*Store, error) {
 	ro.DisableIdentity = true
 	ro.MaxRetries = 1
 	ro.DialerRetries = 1
-	ro.PoolSize, ro.MaxActiveConns = poolSize, poolSize
+	ro.PoolSize, ro.MaxActiveConns = pool, pool
 	ro.MinIdleConns, ro.MaxIdleConns = 0, 0
 	ro.DialTimeout, ro.ReadTimeout, ro.WriteTimeout = timeout, timeout, timeout
 	ro.ContextTimeoutEnabled = true
 	silence.Do(func() { redis.SetLogger(quietLogger{}) })
 
-	s := &Store{
-		rdb:     redis.NewClient(ro),
-		prefix:  prefix,
-		glob:    escapeGlob(prefix),
-		maxScan: maxScan,
-		budget:  5 * timeout,
-		addr:    fmt.Sprintf("%s/%d", ro.Addr, ro.DB),
-		secret:  secret,
-	}
+	c := &Conn{Client: redis.NewClient(ro), Addr: fmt.Sprintf("%s/%d", ro.Addr, ro.DB), secret: secret}
 	if ro.TLSConfig != nil {
-		s.addr += " (tls)"
+		c.Addr += " (tls)"
 	}
-	return s, nil
+	return c
 }
+
+// Redact returns err with the password of the URL masked in its text, so that it can be logged; the chain of the
+// error stays intact.
+func (c *Conn) Redact(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redacted{err, c.secret}
+}
+
+// Close releases the connections.
+func (c *Conn) Close() error { return c.Client.Close() }
 
 // parseURL checks the URL and returns the client options and the password in
 // it. No error it returns contains the URL or the password.

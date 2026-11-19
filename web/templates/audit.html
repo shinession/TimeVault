@@ -3,7 +3,7 @@
 {{with .Data}}
 <h1 class="tv-page-title">{{template "icon" "audit"}} {{$.T "audit.title"}}</h1>
 <section class="tv-card">
-  <form method="get" action="{{url "/audit"}}" class="tv-toolbar" data-autosubmit>
+  <form method="get" action="{{url "/audit"}}" class="tv-toolbar" data-autosubmit {{$.Tour "audit.filter"}}>
     <label class="tv-sr-only" for="audit-action">{{$.T "audit.filter"}}</label>
     <select id="audit-action" name="action" class="tv-select">
       <option value="">{{$.T "audit.all_actions"}}</option>
@@ -12,7 +12,7 @@
     <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
   </form>
   {{if .Events}}
-  <div class="tv-table-wrap">
+  <div class="tv-table-wrap" {{$.Tour "audit.table"}}>
     <table class="tv-table">
       <thead><tr><th>{{$.T "audit.when"}}</th><th>{{$.T "audit.actor"}}</th><th>{{$.T "audit.action"}}</th><th>{{$.T "audit.target"}}</th><th>{{$.T "audit.result"}}</th><th>{{$.T "audit.duration"}}</th><th>{{$.T "audit.from"}}</th><th>{{$.T "audit.details"}}</th></tr></thead>
       <tbody>
@@ -31,7 +31,7 @@
       </tbody>
     </table>
   </div>
-  {{if .NextURL}}<a class="tv-btn tv-more" href="{{url .NextURL}}">{{$.T "common.load_more"}}</a>{{end}}
+  {{if .NextURL}}<a class="tv-btn tv-more" href="{{url .NextURL}}" {{$.Tour "audit.more"}}>{{$.T "common.load_more"}}</a>{{end}}
   {{else}}<p class="tv-empty-text">{{$.T "audit.empty"}}</p>{{end}}
 </section>
 {{end}}

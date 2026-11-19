@@ -41,13 +41,14 @@ import (
 	"timevault/internal/server"
 	"timevault/internal/service"
 	"timevault/internal/update"
+	"timevault/internal/weblog"
 	"timevault/migrations"
 	"timevault/web"
 )
 
 // version is the one place the program version is written. The build command in docs/runbook.md does not
 // set it: -ldflags "-X main.version=..." would replace it, and an old copy of that command stamps an old number.
-var version = "0.1.10"
+var version = "1.0.0"
 
 func main() {
 	cmd := "serve"
@@ -430,7 +431,41 @@ func runServe(exe string, again *restart) error {
 	} else if n > 0 {
 		log.Warn("aborted unfinished recovery points and removed their partial history", "count", n)
 	}
+	// webLog is the writer of the shared web log, nil when the web log is off; the sink is nil then too, so that nothing
+	// calls it. The audit trail feeds it with what people and the scheduler do, the server with the pages people open.
+	var webLog *weblog.Writer
+	var webSink weblog.Sink
+	started := false
+	if cfg.WebLog {
+		conn, err := redisuser.Connect(cfg.RedisURL, cfg.RedisTimeout, 2)
+		if err != nil {
+			return fmt.Errorf("web log: %w", err)
+		}
+		defer conn.Close()
+		minLevel := slog.LevelInfo
+		if cfg.LogLevel <= slog.LevelDebug {
+			minLevel = slog.LevelDebug
+		}
+		webLog = weblog.New(conn.Client, weblog.Options{
+			Key: cfg.WebLogKey, Host: cfg.WebLogHost, MinLevel: minLevel, Timeout: cfg.RedisTimeout, Log: log, Redact: conn.Redact,
+		})
+		webSink = webLog
+		log.Info("web log is on: lines are appended to a list in the Redis of the user directory", "key", cfg.WebLogKey, "host", webLog.Host(), "redis", conn.Addr)
+		defer func() {
+			if started {
+				webLog.Write(weblog.Stopped())
+			}
+			flush, cancelFlush := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancelFlush()
+			if err := webLog.Close(flush); err != nil {
+				log.Warn("web log: the last lines could not be written before the service stopped", "error", err)
+			}
+		}()
+	}
 	auditLog := audit.New(pool, log)
+	if webLog != nil {
+		auditLog.SetMirror(func(e audit.Event) { webLog.Write(weblog.Audit(e)) })
+	}
 	if exe != "" {
 		if marker, ok := update.TakeMarker(exe); ok {
 			noteUpdateDone(ctx, log, auditLog, marker)
@@ -455,7 +490,7 @@ func runServe(exe string, again *restart) error {
 	}
 	serviceConfig := service.Config{
 		Pool: pool, Catalog: cat, Repo: repo, Engine: engine, Restore: restoreMgr, Jobs: runner,
-		Audit: auditLog, Search: provider, Logger: log,
+		Audit: auditLog, Search: provider, Logger: log, WebLog: webSink,
 		ServerHost: cfg.ServerHost, RestoreDisplayRoot: cfg.RestoreDisplayRoot,
 		Scheduler: service.SchedulerOptions{
 			Parallel: cfg.SchedulerParallel, GapAuto: cfg.SchedulerGapAuto, Gap: cfg.SchedulerGap,
@@ -475,7 +510,7 @@ func runServe(exe string, again *restart) error {
 	handler, err := server.New(svc, am, web.FS, server.Options{
 		Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure, Deployment: cfg.Describe(),
 		SSOHost: cfg.SSOHost, SSORequireSameIP: cfg.SSORequireSameIP, TrustedProxies: cfg.TrustedProxies, BasePath: cfg.BasePath,
-		AvatarURL: cfg.AvatarURL, Update: updates,
+		AvatarURL: cfg.AvatarURL, Update: updates, WebLog: webSink,
 	}, log)
 	if err != nil {
 		return err
@@ -496,6 +531,10 @@ func runServe(exe string, again *restart) error {
 		MaxHeaderBytes: 64 << 10,
 	}
 
+	started = true
+	if webLog != nil {
+		webLog.Write(weblog.Started(version))
+	}
 	runner.Start(ctx)
 	var scheduler sync.WaitGroup
 	scheduler.Add(1)

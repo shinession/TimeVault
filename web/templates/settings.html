@@ -1,17 +1,18 @@
 {{define "content"}}
 {{template "flash" .}}
 {{with .Data}}
+{{$editTagged := false}}{{$accessTagged := false}}
 <h1 class="tv-page-title">{{template "icon" "settings"}} {{$.T "settings.title"}}</h1>
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "settings.intro"}}>
   <div class="tv-card-head"><h2>{{template "icon" "folder"}} {{$.T "settings.sources"}}</h2></div>
   <p class="tv-muted">{{$.T "settings.sources_intro"}}</p>
   {{if not $.CanManage}}<p class="tv-alert tv-alert-info" role="note">{{$.T "settings.admin_only"}}</p>{{end}}
   {{if not .Sources}}<p class="tv-empty-text">{{if $.CanManage}}{{$.T "backups.no_sources_title"}}{{else}}{{$.T "explorer.no_sources_title"}}{{end}}</p>{{end}}
 </section>
 
-{{range .Sources}}
-<section class="tv-card tv-source"{{if .Open}} data-scroll-into-view{{end}}>
+{{range $i, $src := .Sources}}
+<section class="tv-card tv-source"{{if .Open}} data-scroll-into-view{{end}}{{if eq $i 0}} {{$.Tour "settings.folder"}}{{end}}>
   <div class="tv-card-head">
     <div>
       <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "settings.disabled"}}</span>{{end}}{{if and (not .DisplayPath) $.CanManage}} <span class="tv-chip tv-chip-warn">{{$.T "settings.no_display"}}</span>{{end}} <span class="tv-chip tv-chip-level" title="{{$.T "level.yours"}}">{{$.LevelLabel .Level}}</span></h2>
@@ -21,7 +22,7 @@
       </p>{{end}}
     </div>
     {{if and .CanEdit (not .Open)}}
-    <div class="tv-actions"><a class="tv-btn tv-btn-small" href="{{url "/settings" "edit" .ID}}">{{template "icon" "settings"}} {{$.T "settings.edit"}}</a></div>
+    <div class="tv-actions"><a class="tv-btn tv-btn-small" href="{{url "/settings" "edit" .ID}}"{{if not $editTagged}} {{$.Tour "settings.edit"}}{{$editTagged = true}}{{end}}>{{template "icon" "settings"}} {{$.T "settings.edit"}}</a></div>
     {{end}}
   </div>
 
@@ -39,7 +40,7 @@
   </dl>
 
   {{if .CanEdit}}
-  <div class="tv-access-summary">
+  <div class="tv-access-summary"{{if not $accessTagged}} {{$.Tour "settings.access"}}{{$accessTagged = true}}{{end}}>
     <h3>{{$.T "access.title"}}</h3>
     {{if .Who}}
     <ul>
@@ -99,7 +100,7 @@
 {{end}}
 
 {{if $.CanManage}}
-<section class="tv-card"{{if .AddOpen}} data-scroll-into-view{{end}}>
+<section class="tv-card"{{if .AddOpen}} data-scroll-into-view{{end}} {{$.Tour "settings.add"}}>
   <div class="tv-card-head"><h2>{{template "icon" "plus"}} {{$.T "backups.add_title"}}</h2>
     {{if not .AddOpen}}<a class="tv-btn tv-btn-small" href="{{url "/settings" "add" 1}}">{{template "icon" "plus"}} {{$.T "settings.add_open"}}</a>{{end}}
   </div>
@@ -137,7 +138,7 @@
 </section>
 {{end}}
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "settings.storage"}}>
   <div class="tv-card-head"><h2>{{template "icon" "backup"}} {{$.T "settings.storage"}}</h2></div>
   <dl class="tv-facts">
     <div><dt>{{if $.ShowPhysical}}{{$.T "settings.repository"}}{{else}}{{$.T "settings.backup_storage"}}{{end}}</dt>
@@ -159,7 +160,7 @@
   <p class="tv-muted tv-small">{{if $.ShowPhysical}}{{$.T "settings.storage_hint"}}{{else}}{{$.T "settings.restore_hint_user"}}{{end}}</p>
 </section>
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "settings.service"}}>
   <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "settings.service"}}</h2>
     <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/status"}}">{{$.T "nav.status"}}</a></div>
   <dl class="tv-facts">
@@ -168,6 +169,7 @@
     <div><dt>{{$.T "settings.listen"}}</dt><dd><code>{{.Deployment.ListenAddr}}</code></dd></div>
     <div><dt>{{$.T "settings.database"}}</dt><dd><code>{{.Deployment.Database}}</code></dd></div>
     <div><dt>{{$.T "settings.directory"}}</dt><dd>{{if .Deployment.UserDirectory}}<code>{{.Deployment.UserDirectory}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
+    <div><dt>{{$.T "settings.web_log"}}</dt><dd>{{if .Deployment.WebLog}}<code>{{.Deployment.WebLogKey}}</code> <span class="tv-muted tv-small">({{$.T "settings.web_log_host"}}: <code>{{.Deployment.WebLogHost}}</code>)</span>{{else}}{{$.T "settings.off"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.sso"}}</dt><dd>{{if .Deployment.SSOHost}}<code>{{.Deployment.SSOHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.base_path"}}</dt><dd>{{if .Deployment.BasePath}}<code>{{.Deployment.BasePath}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
     <div><dt>{{$.T "settings.local_admin"}}</dt><dd>{{if .Deployment.LocalAdmin}}{{.Deployment.LocalAdmin}}{{else}}{{$.T "settings.none"}}{{end}}</dd></div>
@@ -179,7 +181,7 @@
   {{if $.ShowPhysical}}<p class="tv-muted tv-small">{{$.T "settings.env_hint"}}</p>{{end}}
 </section>
 
-<section class="tv-card" id="updates">
+<section class="tv-card" id="updates" {{$.Tour "settings.updates"}}>
   <div class="tv-card-head"><h2>{{template "icon" "refresh"}} {{$.T "settings.updates"}}</h2>
     {{if and .Update.Enabled $.CanManage}}
     <form method="post" action="{{url "/settings/update/check"}}" class="tv-inline-form">

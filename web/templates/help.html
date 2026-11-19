@@ -1,0 +1,1012 @@
+{{define "content"}}
+{{if not .IsZh}}
+<div class="tv-doc">
+  <nav class="tv-doc-toc" aria-label="Contents" {{$.Tour "help.toc"}}>
+    <h2>Contents</h2>
+    <ol>
+      <li><a href="#overview">What TimeVault is</a></li>
+      <li><a href="#concepts">Key terms</a></li>
+      <li><a href="#signin">Signing in and permissions</a></li>
+      <li><a href="#interface">Around the screen</a></li>
+      <li><a href="#explorer">Explorer</a></li>
+      <li><a href="#history">Time Machine</a></li>
+      <li><a href="#versions">File versions</a></li>
+      <li><a href="#restore">Restoring files</a></li>
+      <li><a href="#backups">Backups</a></li>
+      <li><a href="#jobs">Jobs</a></li>
+      <li><a href="#automatic">Automatic backups and versions kept</a></li>
+      <li><a href="#audit">Audit</a></li>
+      <li><a href="#settings">Settings</a></li>
+      <li><a href="#status">Status</a></li>
+      <li><a href="#faq">Problems and answers</a></li>
+      <li><a href="#glossary">Glossary of labels</a></li>
+      <li><a href="#administrators">For administrators</a></li>
+    </ol>
+  </nav>
+  <article class="tv-doc-body" {{$.Tour "help.body"}}>
+    <h1 class="tv-page-title">{{template "icon" "book"}} TimeVault user guide</h1>
+
+    <section id="overview" class="tv-doc-section">
+      <h2>What TimeVault is</h2>
+      <p>TimeVault backs up selected folders on a server and keeps their history. Each backup adds a <strong>recovery point</strong>, a saved picture of the folder at one moment. You can look at a folder as it is now, go back to how it was earlier, find a file that was changed or deleted by mistake, and restore it. The pages <a href="{{url "/explorer"}}">Explorer</a>, <a href="{{url "/history"}}">Time Machine</a> and <a href="{{url "/backups"}}">Backups</a> are open to everyone; <a href="{{url "/audit"}}">Audit</a>, <a href="{{url "/settings"}}">Settings</a> and <a href="{{url "/status"}}">Status</a> are for signed-in accounts.</p>
+
+      <h3>What it does not do</h3>
+      <ul>
+        <li>It only reads the monitored folders; it never changes, moves or deletes anything in them.</li>
+        <li>A restore never overwrites the original files: it writes copies into a new folder inside the restore folder, and you copy back what you need.</li>
+        <li>It does not offer file contents for download; you pick restored copies up from the restore folder.</li>
+        <li>It reads the live disk, not snapshots, so every recovery point is labelled <strong>Live scan</strong>. A file locked by another program, or changing while it is read, can be skipped and shows as <strong>Not captured</strong>.</li>
+      </ul>
+
+      <h3>Common tasks</h3>
+      <ul>
+        <li><strong>Get back a deleted file:</strong> in the <a href="#explorer">Explorer</a> open <em>Deleted since the last backup</em>, open the file and press <strong>Restore…</strong>.</li>
+        <li><strong>Get back an older version:</strong> click the file, then press <strong>Restore…</strong> beside the version (<a href="#versions">File versions</a>).</li>
+        <li><strong>Restore a whole folder:</strong> open it in the <a href="#history">Time Machine</a> and press <strong>Restore this folder…</strong>.</li>
+        <li><strong>Back up a folder now:</strong> press <strong>Back up now</strong> on <a href="#backups">Backups</a>.</li>
+        <li><strong>Change a schedule:</strong> press <strong>Edit</strong> in <a href="#settings">Settings</a>.</li>
+      </ul>
+    </section>
+
+    <section id="concepts" class="tv-doc-section">
+      <h2>Key terms</h2>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Term</th><th>What it means</th></tr></thead>
+          <tbody>
+            <tr><td>Monitored folder</td><td class="tv-small">A folder on the server that TimeVault backs up. It is only read, never changed.</td></tr>
+            <tr><td>Display folder</td><td class="tv-small">The network path people use to open it, such as <code>\\server\share\folder</code>. Ordinary users see only this path.</td></tr>
+            <tr><td>Folder on the server</td><td class="tv-small">The same folder on the server's own disk, such as <code>D:\Data</code>. Only administrators see it.</td></tr>
+            <tr><td>Recovery point</td><td class="tv-small">The folder as it was at one moment, numbered #1, #2, … for each folder. It shows the whole folder, although only the changes are stored.</td></tr>
+            <tr><td>Version</td><td class="tv-small">One state of a file (content and modified date). A file gets a new version each time it changes.</td></tr>
+            <tr><td>Restore folder</td><td class="tv-small">Receives restored copies; every restore creates its own folder inside it.</td></tr>
+            <tr><td>Access level</td><td class="tv-small">What you may do with one folder: Browse, Back up or Full control.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="signin" class="tv-doc-section">
+      <h2>Signing in and permissions</h2>
+
+      <h3>Without signing in</h3>
+      <p>Anyone can browse. A visitor who has not signed in (a <em>guest</em>) can use the Explorer, the Time Machine, the file versions and the Backups page, but only for folders that allow guests; other folders are simply not there. Guests cannot back up or restore, cannot open Audit, Settings or Status, and do not see who started a job, why it failed or its log.</p>
+
+      <h3>Signing in</h3>
+      <ol>
+        <li>Press <strong>Sign in</strong> at the top right, or a button such as <strong>Sign in to back up</strong>.</li>
+        <li>Enter your <strong>Account (employee ID, name or e-mail)</strong> and <strong>Password</strong>, then press <strong>Sign in</strong>. The employee ID is the least ambiguous.</li>
+        <li>Or press <strong>Sign in with Windows (SSO)</strong> when it is offered: a small window opens and closes by itself (allow pop-ups for this site, and use your company computer).</li>
+      </ol>
+      <p>You return to the page you came from. Signing in lasts a limited time (<strong>Settings</strong>, card <strong>Service</strong>, <strong>Sign-in lasts</strong>); press <strong>Sign out</strong> at the top right when you are done.</p>
+
+      <h3>Access levels</h3>
+      <p>What you may do is decided for each monitored folder, and each level includes the ones before it. Buttons you may not use are not shown.</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Level</th><th>What it allows</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-level">Browse</span></td><td class="tv-small">See the folder, its files and its history, and restore copies from it (restoring needs a signed-in account).</td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">Back up</span></td><td class="tv-small">Everything in Browse, and back up now (also a full re-read), verify recovery points and stop its jobs.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">Full control</span></td><td class="tv-small">Everything in Back up, and change this folder's settings and who may do what with it.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A level can be given to guests (Browse only), to everyone who is signed in, or to named people; you get the highest one that applies. A folder on which you have no level is not visible to you. A chip next to a folder's name on Backups and Settings shows your level.</p>
+      <p>Administrators have Full control of every folder. Only they can add monitored folders, change a <strong>Folder on the server</strong>, see folders on the server's own disk and use <strong>Check now</strong> for program updates.</p>
+    </section>
+
+    <section id="interface" class="tv-doc-section">
+      <h2>Around the screen</h2>
+
+      <h3>The header</h3>
+      <ul>
+        <li>The <strong>TimeVault</strong> logo leads to the start page (the Explorer, or Backups when you have no folder to browse). Next to it are <strong>Explorer</strong>, <strong>Time Machine</strong>, <strong>Backups</strong> and, for signed-in accounts, <strong>Audit</strong> and <strong>Settings</strong>; the current page is highlighted.</li>
+        <li>The sun/moon button (<strong>Switch light / dark theme</strong>) follows your system's setting until you press it; the browser then remembers your choice.</li>
+        <li><strong>EN</strong> and <strong lang="zh">中文</strong> switch the language of the pages and of this guide; your choice is remembered, and at first your browser's language is used.</li>
+        <li>Visitors see <strong>Sign in</strong>; signed-in accounts see their name and the <strong>Sign out</strong> button.</li>
+      </ul>
+
+      <h3>Notice bar and footer</h3>
+      <p>Under the header, signed-in accounts see a sentence when a new version of TimeVault is about to be installed; nothing needs to be done. The footer shows <strong>Powered by TimeVault</strong>, a link to <strong>Status</strong> (signed-in accounts) and the version number.</p>
+
+      <h3>The round buttons at the bottom right</h3>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Button</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Back to top</strong> (↑)</td><td class="tv-small">Scrolls to the top. It appears only on long pages, after you have scrolled down.</td></tr>
+            <tr><td><strong>Go to bottom</strong> (↓)</td><td class="tv-small">Scrolls to the bottom. It appears only on long pages, while there is more below.</td></tr>
+            <tr><td><strong>Documentation</strong> (book icon)</td><td class="tv-small">Opens this guide in a new browser tab.</td></tr>
+            <tr><td><strong>Guide</strong> (compass icon)</td><td class="tv-small">Starts a step-by-step tour of the page you are on. It dims the page and highlights one part at a time, with a step counter and a short explanation of what a button does or what the data there shows. Use <strong>Next</strong> and <strong>Back</strong> (or <kbd>→</kbd> or <kbd>Enter</kbd>, and <kbd>←</kbd>) to move, and <strong>Done</strong> on the last step or <kbd>Esc</kbd> to close it. Only parts you can see get a step. The tour never changes data and never clicks anything for you, and it ends when you go to another page. On a page with nothing special it explains the header and these buttons.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>On the Explorer, press <kbd>/</kbd> to jump to the search box (unless you are typing in a field). Times are shown in the time zone of the server.</p>
+    </section>
+
+    <section id="explorer" class="tv-doc-section">
+      <h2>Explorer</h2>
+      <p>The Explorer shows a monitored folder as it is on the disk right now and tells you, item by item, whether it is backed up.</p>
+
+      <h3>The top of the page</h3>
+      <ul>
+        <li>The drop-down list chooses the monitored folder (only folders you may browse). The path bar shows the folders you opened; click a name to go back.</li>
+        <li><strong>Location</strong> is the network path (display folder) of what you are looking at; <strong>Copy</strong> copies it (the button says <strong>Copied</strong> for a moment). Administrators also see <strong>On the server</strong>, with the real folder.</li>
+        <li><strong>Last recovery point</strong> tells when the newest recovery point was made, with its integrity label (see <a href="#history">Time Machine</a>); <strong>Open in Time Machine</strong> shows the same folder there. A folder never backed up says <strong>This folder has not been backed up yet.</strong></li>
+      </ul>
+
+      <h3>The file list</h3>
+      <p>Click a folder to open it, or a file to see its versions. The columns are <strong>Name</strong>; <strong>Type</strong> (the extension in capitals, such as PDF; Folder; Link; File for a file without an extension); <strong>Backup</strong>; <strong>Size</strong> (a folder has one only when the search engine knows it, otherwise “-”); and <strong>Modified</strong>. Backup shows:</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Label</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-protected">Protected</span></td><td class="tv-small">Same as in the newest recovery point. A folder is Protected when it exists there; open it to see its files.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-changed">Changed</span></td><td class="tv-small">Different from the newest recovery point. The next backup records the change.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-new">New</span></td><td class="tv-small">Not in the newest recovery point. A new file cannot be opened yet: no copy exists.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-not_captured">Not captured</span></td><td class="tv-small">The last backup could not read it (for example another program had locked it), so there is no copy.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">Deleted</span></td><td class="tv-small">Only in the panel <strong>Deleted since the last backup</strong> (below).</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Sorting, filtering and paging</h3>
+      <ul>
+        <li>Click <strong>Name</strong>, <strong>Type</strong>, <strong>Size</strong> or <strong>Modified</strong> to sort the whole folder, and again to reverse it. Folders come first.</li>
+        <li>The <strong>Type</strong> list keeps one kind of item: <strong>All types</strong>, or <strong>Folders</strong>, <strong>Files</strong>, <strong>No extension</strong> or one extension, each with the number of items it holds.</li>
+        <li><strong>Per page</strong> sets 50, 100 (the default), 200 or 500 items; use <strong>Previous</strong>, <strong>Next</strong> and the page numbers. Your choices stay in the address, so a link opens the same view.</li>
+      </ul>
+
+      <h3>Search</h3>
+      <ol>
+        <li>Type words from the name in the search box (press <kbd>/</kbd> to jump there) and press <strong>Search</strong>. A result must match all the words; use double quotes for a phrase; up to 16 words.</li>
+        <li>Matches are listed with Name, Type, <strong>Folder</strong>, Size and Modified (100 per page; 50 or 200 can be chosen). Click a folder to open it, a file to see its versions. <strong>Clear search</strong> returns to the folder list.</li>
+      </ol>
+      <p>The search covers the whole monitored folder, not only the open folder, and finds what is on the disk now, not deleted files. If the search engine does not answer you see <em>Search is unavailable right now (the search engine did not answer). Browsing and history still work.</em></p>
+
+      <h3>Deleted since the last backup</h3>
+      <p>On the first page, a panel lists up to 500 items that are in the newest recovery point but gone from the disk. Open a file and press <strong>Restore…</strong>; open a folder to see it in the Time Machine and press <strong>Restore this folder…</strong> (see <a href="#restore">Restoring files</a>).</p>
+    </section>
+
+    <section id="history" class="tv-doc-section">
+      <h2>Time Machine</h2>
+      <p>The Time Machine shows a monitored folder as it was at a recovery point you choose. Pick the folder in the list at the top. A folder without recovery points says <strong>No recovery points yet</strong>: run the first backup on <a href="#backups">Backups</a>.</p>
+
+      <h3>The timeline</h3>
+      <p>Each dot is a recovery point, the oldest at the left and the newest at the right (the 80 newest are shown), with its capture time, number and integrity label, such as <code>#12 · Validated</code>; point at it for the number of files and the size. Click a dot to see the folder as it was then. A point that cannot be restored has a warning colour. The last dot, <strong>Now</strong> (<em>Live files</em>), leads back to the Explorer.</p>
+
+      <h3>The banner</h3>
+      <p>The line under the timeline says <strong>Viewing recovery point #12 captured …</strong> and shows labels:</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Label</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-live">Live scan</span></td><td class="tv-small">Read from the live disk, not from a snapshot. A file that changed during the scan was read again or skipped.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-pending">Pending</span></td><td class="tv-small">Integrity not checked yet. New recovery points are validated at once, so you normally see Validated.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-validated">Validated</span></td><td class="tv-small">Checked when the backup finished: what it newly stored exists with the right size.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-verified">Verified</span></td><td class="tv-small">A deep check (<strong>Verify</strong> on the Backups page) re-read all stored content and the checksums matched.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Failed</span></td><td class="tv-small">A check found missing or damaged content.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-old">Older point</span></td><td class="tv-small">Not the newest recovery point.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Not restorable</span></td><td class="tv-small">It failed its integrity check, so restoring from it is not possible.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">Partial</span></td><td class="tv-small">Older versions of some files were deleted to stay within <em>Versions kept per file</em>, so it no longer shows every file as it was. A warning appears under the banner.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The list</h3>
+      <p>Below are the path bar, the <strong>Location</strong> line and the folder's contents at that point, with the columns Name, Type, <strong>Compared with now</strong>, Size and Modified. A folder opens at the same recovery point; a file leads to its versions; sorting, Type, Per page and paging work as in the Explorer. <strong>Compared with now</strong> compares each item with the newest recovery point, not with the live disk:</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Label</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-same">Unchanged</span></td><td class="tv-small">The same in the newest recovery point.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-modified">Changed later</span></td><td class="tv-small">Different in the newest recovery point.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">Deleted later</span></td><td class="tv-small">No longer in the newest recovery point.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">Not captured</span></td><td class="tv-small">The backup could not read it (point at the label for the reason). It cannot be restored from this point.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Restoring from here</h3>
+      <p>Signed-in accounts see a tick box in front of each item and, above the list:</p>
+      <ul>
+        <li><strong>Restore selected…</strong>, with a counter, restores the ticked items; it stays disabled until you tick one. <strong>Select all</strong> selects only the items on the current page.</li>
+        <li><strong>Restore this folder…</strong> (inside a folder) or <strong>Restore everything…</strong> (at the top of the monitored folder) restores the folder you are looking at and ignores ticks.</li>
+      </ul>
+      <p>Visitors who are not signed in see <strong>Sign in to restore files</strong> and no tick boxes. Without a restore folder you see <em>Restore is disabled because no restore folder is configured.</em>, and a Not restorable recovery point offers no restore buttons. Next: <a href="#restore">Restoring files</a>.</p>
+    </section>
+
+    <section id="versions" class="tv-doc-section">
+      <h2>File versions</h2>
+      <p>Click a file (in the Explorer, the Time Machine, a search result or the deleted-items panel) to open its versions page: a <strong>Location</strong> line and a table of every recorded state of the file, newest first. <strong>Back</strong> returns to where you came from.</p>
+      <ul>
+        <li><strong>Captured</strong> and <strong>Until</strong> give the times of the first and the last recovery point that contain this version; <span class="tv-chip tv-chip-same">Current</span> under Until marks the newest state of the file.</li>
+        <li><strong>Size</strong> and <strong>Modified</strong> are the file's size and modified date in this version. <strong>SHA-256</strong> is the start of the content checksum (point at it for the whole value); equal checksums mean equal content.</li>
+        <li><strong>Content</strong> says whether the stored copy can be used:</li>
+      </ul>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Label</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-validated tv-chip-available">Available</span></td><td class="tv-small">The stored copy is there and can be restored.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Content missing</span></td><td class="tv-small">The stored copy is missing from the backup storage, so this version cannot be restored. Tell an administrator; another version may still work.</td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">Not captured</span></td><td class="tv-small">The backup could not read the file then (point at the label for the reason). Nothing to restore.</td></tr>
+            <tr><td><span class="tv-chip">Folder</span></td><td class="tv-small">The entry is a folder.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>At the end of each row, <strong>Restore…</strong> restores that version (signed-in accounts, when a restore folder is set up and the version was captured), and <strong>Browse point</strong> opens the Time Machine at the first recovery point that contains it, in the file's folder.</p>
+    </section>
+
+    <section id="restore" class="tv-doc-section">
+      <h2>Restoring files</h2>
+      <p>A restore copies files or folders from a recovery point into the restore folder. It never writes into a monitored folder and never overwrites the original files. You must be signed in and have at least the Browse level.</p>
+      <ol>
+        <li><strong>Choose what to restore.</strong> In the <a href="#history">Time Machine</a> tick items and press <strong>Restore selected…</strong>, or press <strong>Restore this folder…</strong> or <strong>Restore everything…</strong>. On a file's <a href="#versions">versions page</a> press <strong>Restore…</strong> beside the version you want. You can select up to 500 items at a time; a folder counts as one.</li>
+        <li><strong>Read the preview.</strong> The page <strong>Restore preview</strong> says <em>Nothing has been written yet.</em> It shows your selection, the <strong>Destination</strong>, a <strong>Summary</strong> (Files, Folders, Data, Create, Replace, Restore as copy, Skipped, Blocked), warnings, the <strong>Problems</strong> (blocked items and why; the first 100) and the <strong>Planned changes</strong> (the first 200 items). Each planned change is labelled Create folder, Folder exists, Create, Replace, Restore as copy, Already identical, Keep existing or Blocked (see the <a href="#glossary">Glossary</a>).</li>
+        <li><strong>Set the options</strong> if the defaults do not suit you (table below), then press <strong>Update preview</strong>. Changes count only after you press it.</li>
+        <li><strong>Confirm.</strong> Press <strong>Start restore</strong> within 15 minutes. If files would be replaced, first tick <strong>I understand that N existing file(s) will be replaced.</strong> The button is disabled while blocked items prevent the restore.</li>
+        <li><strong>Follow the job</strong> on its page (see <a href="#jobs">Jobs</a>). When it says <strong>Succeeded</strong>, the copies are in the destination folder.</li>
+        <li><strong>Collect your files.</strong> The <strong>Destination</strong> is a network path such as <code>\\server\share\restore\restore-20261118-141257</code>. Open it and copy what you need back. Each selected item is restored under its own name directly inside it (a whole monitored folder under that folder's name). If you see <code>[restore folder]\restore-20261118-141257</code> instead, ask an administrator how to reach the restore folder.</li>
+      </ol>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Option</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td>Destination folder name</td><td class="tv-small">The folder inside the restore folder that receives the copies. Proposed as <code>restore-&lt;date&gt;-&lt;time&gt;</code>; created if it does not exist. Use letters, digits, spaces and <code>.</code> <code>_</code> <code>-</code>.</td></tr>
+            <tr><td>If a file already exists</td><td class="tv-small"><strong>Keep the existing file (skip)</strong> (the default) leaves a file that is already there alone. <strong>Keep both (restore under a new name)</strong> saves the copy next to it, named like <code>report (restored 20261118-141300).docx</code>. <strong>Replace the existing file</strong> replaces the file in the destination folder, never the original, and needs an extra confirmation.</td></tr>
+            <tr><td class="tv-small">Restore what is possible even if some items are blocked</td><td class="tv-small">Without the tick, one blocked item stops the whole restore. With it, everything else is restored and the blocked items are reported as failed.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tv-doc-note"><strong>Note:</strong> A preview is valid for 15 minutes, for you only and for exactly this selection and these options. Otherwise you see <em>The preview is out of date. Review the new preview and confirm again.</em> Restored files get the modified date and attributes of the recorded version. Do not start a second restore into the same destination folder while one is running.</p>
+    </section>
+
+    <section id="backups" class="tv-doc-section">
+      <h2>Backups</h2>
+      <p>The Backups page shows how the backups of each monitored folder you may browse are doing, lets people with the right level start them, and lists the recent jobs. If there is no folder to show, sign in or ask an administrator for access; administrators are offered <strong>Manage monitored folders</strong>.</p>
+
+      <h3>A folder card</h3>
+      <ul>
+        <li>The heading shows the folder's name, <strong>Switched off</strong> if it is, and (when signed in) your level. Under it is the display folder; administrators also see <strong>On the server</strong>.</li>
+        <li><strong>Back up now</strong> reads the folder, copies new and changed files into the backup storage and records a new recovery point; it never changes the folder. <strong>Full re-read</strong> does the same but reads every file again instead of trusting size and modified date; it is slower and also writes missing content again. Both need the Back up level and a folder that is switched on, and are greyed out while a backup of the folder is queued or running. A guest who could get them by signing in sees <strong>Sign in to back up</strong>.</li>
+        <li>While a backup runs the card shows <strong>Backup job #12 is in progress</strong> with its state, phase and a progress bar; click the number to open the job.</li>
+        <li>The facts: <strong>Latest recovery point</strong> (when, and its number; or <strong>Never</strong>), <strong>Schedule</strong> (for example <strong>every 60 min</strong> with the <strong>next backup</strong>, or <strong>Manual only</strong>), <strong>Last run</strong> (when the last run ended; an automatic run that found nothing changed counts, so it can be later than the latest recovery point) and <strong>Excluded</strong> (the patterns that are never backed up).</li>
+      </ul>
+
+      <h3>Recovery points</h3>
+      <p>The table in each card lists the folder's 12 most recent backup attempts:</p>
+      <ul>
+        <li><strong>#</strong> is the number; <strong>Type</strong> is <strong>Full</strong> for the first recovery point of a folder and <strong>Incremental</strong> for later ones (each shows the whole folder); <strong>Captured</strong> is when it was made; <strong>Files</strong> and <strong>Size</strong> are what the folder held then.</li>
+        <li><strong>State</strong>: <span class="tv-chip tv-chip-committed">Committed</span> is finished and usable; <span class="tv-chip tv-chip-building">Building</span> is still being made; <span class="tv-chip tv-chip-failed">Failed</span> and <span class="tv-chip tv-chip-aborted">Aborted</span> did not finish and show nothing (signed-in accounts can point at Failed for the reason).</li>
+        <li><strong>Changes</strong>: <span class="tv-delta tv-add">+3</span> <span class="tv-delta tv-mod">~2</span> <span class="tv-delta tv-del">-1</span> files added, modified and deleted since the previous recovery point. <strong>Not captured</strong> counts the items the backup could not read (<span class="tv-chip tv-chip-warn">2</span> when above 0). <strong>Integrity</strong> shows the integrity label and <strong>Partial</strong> when it applies.</li>
+        <li><strong>Browse</strong> opens the recovery point in the Time Machine. <strong>Verify</strong> (Back up level) re-reads every stored object and checks its checksum; the label becomes Verified or Failed. Use it after the backup storage was copied or restored, or whenever you want proof that a recovery point is intact.</li>
+      </ul>
+
+      <h3>Recent jobs and the Restore card</h3>
+      <p><strong>Recent jobs</strong> lists the 25 newest jobs of the folders you may browse (number, Type, Monitored folder, State, Created, Duration, <strong>Requested by</strong>); click the number to open the job. Only signed-in accounts see who requested a job, and only they see restores and the card <strong>Restore</strong>, which says where restores are written (<strong>Restores are written below</strong> a network folder) or that restore is disabled.</p>
+    </section>
+
+    <section id="jobs" class="tv-doc-section">
+      <h2>Jobs</h2>
+      <p>Everything TimeVault does in the background is a <strong>job</strong> with a number: <strong>Backup</strong>, <strong>Verification</strong>, <strong>Restore</strong> or <strong>Version cleanup</strong>. A job is <span class="tv-chip tv-chip-queued">Queued</span> while it waits its turn (the jobs of one folder take turns), then <span class="tv-chip tv-chip-running">Running</span>, and ends as <span class="tv-chip tv-chip-succeeded">Succeeded</span>, <span class="tv-chip tv-chip-failed">Failed</span> or <span class="tv-chip tv-chip-canceled">Canceled</span>. Open a job from the Backups page or from the page that started it.</p>
+      <ul>
+        <li><strong>Cancel job</strong> stops a job that is queued or running. It is offered to people with the Back up level on the folder, and to whoever started a restore.</li>
+        <li>The facts are <strong>Monitored folder</strong>, <strong>Recovery point</strong>, <strong>Requested by</strong> (signed-in accounts only; automatic backups are requested by <code>scheduler</code>), <strong>Created</strong>, <strong>Duration</strong> and <strong>Phase</strong>, which says what the job is doing now (for example Scanning and copying, Verifying, Restoring).</li>
+        <li>A progress bar and counters show the work done, and the page refreshes itself every second or two.</li>
+        <li><strong>Error</strong> gives the reason for a failure; guests see <em>It failed. Sign in to see the reason and the log.</em> The card <strong>Log</strong> is for signed-in accounts.</li>
+        <li>The page of a restore job (signed-in accounts only) also has <strong>Restore details</strong> and a table <strong>Items</strong> with Name, Action, Result (<span class="tv-chip tv-chip-ok">OK</span>, <span class="tv-chip tv-chip-skipped">Skipped</span> or <span class="tv-chip tv-chip-failed">Failed</span>), Size and Message. The tabs <strong>All</strong> and <strong>Failed only</strong> filter it, and <strong>Load more</strong> shows the next 200. Every failed item is listed; on a very large restore the list of the other items stops after 20,000.</li>
+      </ul>
+      <p class="tv-doc-note"><strong>Note:</strong> A restore job ends as Failed when any item could not be restored, even if everything else was copied. That includes blocked items you left out with the partial restore option. Open <strong>Failed only</strong> to see which items and why.</p>
+      <p class="tv-doc-note"><strong>Note:</strong> An automatic backup that finds nothing changed leaves no job behind, so a job you saw running may no longer exist when it ends.</p>
+    </section>
+
+    <section id="automatic" class="tv-doc-section">
+      <h2>Automatic backups and versions kept</h2>
+
+      <h3>Automatic backups</h3>
+      <ul>
+        <li>A folder can be backed up every N minutes (1 to 43200); someone with Full control sets it in <a href="#settings">Settings</a>. The interval counts from the end of the previous backup. Backups and Settings show the schedule and the next backup (or <strong>any moment now</strong>); <strong>Manual only</strong> means no schedule. Folders that are due together are spread out, so a backup can start a little later than shown.</li>
+        <li>An automatic backup that finds nothing changed records nothing: no recovery point, no job, no audit entry. <strong>Last run</strong> still moves forward, while <strong>Latest recovery point</strong> stays. <strong>Back up now</strong> always records a recovery point.</li>
+        <li>A switched-off folder is not backed up. When you set a schedule, or switch a folder on, a backup starts at once if the last run is older than the interval.</li>
+      </ul>
+
+      <h3>Versions kept per file</h3>
+      <ul>
+        <li>Each folder can limit how many versions of a file are kept (1 to 10000; 0 keeps all). Settings shows <strong>Versions kept</strong> as <em>All versions of every file</em> or <em>The newest N of each file</em>.</li>
+        <li>After each backup, the files it changed lose the versions beyond the limit, <strong>for good</strong>, and storage that nothing uses any more is freed (this can take a while to show). A recovery point that lost versions is marked <strong>Partial</strong>: it no longer shows every file as it was, so a restore from it can be incomplete.</li>
+        <li>Setting the limit on a folder that has history, or lowering it, starts a <strong>Version cleanup</strong> job for the whole folder. The form first shows how many versions of how many files would go and asks you to tick <strong>I understand that these versions are deleted for good</strong>. While a cleanup runs, restores and verifications of that folder are refused and the limit cannot be changed.</li>
+      </ul>
+      <p class="tv-doc-note"><strong>Warning:</strong> Deleted versions cannot be brought back. Without a limit, a short interval on a folder that keeps changing makes the backup storage grow without bound.</p>
+    </section>
+
+    <section id="audit" class="tv-doc-section">
+      <h2>Audit</h2>
+      <p>The page <strong>Audit log</strong> (signed-in accounts only) records sign-ins, backups, verifications, restores, changes to monitored folders, refused requests and program updates. The application cannot change or delete these records. Administrators see every event; everyone else sees the events of the folders they may browse and those that belong to no folder, such as sign-ins. The list above the table (<strong>Filter by action</strong>) keeps one kind of action; <strong>All actions</strong> shows everything. The newest events come first, 50 at a time; <strong>Load more</strong> shows older ones.</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Column</th><th>What it shows</th></tr></thead>
+          <tbody>
+            <tr><td>When</td><td class="tv-small">Date and time, to the second.</td></tr>
+            <tr><td>User</td><td class="tv-small">Who did it: an employee ID, or <code>scheduler</code> or <code>updater</code> for the service itself.</td></tr>
+            <tr><td>Action</td><td class="tv-small">What happened, for example Signed in, Backup finished, Restore requested, Access denied.</td></tr>
+            <tr><td>Target</td><td class="tv-small">What it concerned, such as a recovery point or a job, with its number.</td></tr>
+            <tr><td>Result</td><td class="tv-small"><span class="tv-chip tv-chip-audit-ok">OK</span>, <span class="tv-chip tv-chip-audit-denied">Denied</span> or <span class="tv-chip tv-chip-audit-failed">Failed</span>.</td></tr>
+            <tr><td>Duration</td><td class="tv-small">How long a backup, verification, restore or cleanup ran; for backups and restores also the speed, such as “41.2 MB/s”.</td></tr>
+            <tr><td>From</td><td class="tv-small">The network address of the request.</td></tr>
+            <tr><td>Details</td><td class="tv-small">Extra facts. The lists of who may do what are shown only to people with Full control of the folder (others see <code>[hidden]</code>), and folders on the server's disk are replaced by display folders for everyone but administrators.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="settings" class="tv-doc-section">
+      <h2>Settings</h2>
+      <p>Any signed-in account can open Settings. It describes the monitored folders you may browse and how the service is set up; what you can change depends on your level.</p>
+
+      <h3>Monitored folders</h3>
+      <p>There is one card per folder: its name, chips (<strong>Switched off</strong>, <strong>No display folder yet</strong> for administrators, and your level), the display folder (administrators also see <strong>On the server</strong>) and the facts <strong>Automatic backup</strong>, <strong>Latest recovery point</strong>, <strong>Last run</strong>, <strong>Last run took</strong>, <strong>Versions kept</strong> and <strong>Excluded</strong>. With Full control you also see <strong>Who may do what</strong> (a summary) and <strong>Edit</strong>.</p>
+
+      <h3>Changing a folder</h3>
+      <p>Press <strong>Edit</strong>, change the fields below and press <strong>Save changes</strong> (or <strong>Cancel</strong>). Changes apply at once.</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Field</th><th>What it does</th></tr></thead>
+          <tbody>
+            <tr><td>Display folder</td><td class="tv-small">The network path people use to open the folder, such as <code>\\server\share\folder</code>. When the server's host name is set in the service settings, it is required and the folder must be on this server.</td></tr>
+            <tr><td>Folder on the server</td><td class="tv-small">Administrators only. Locked once the folder has a recovery point: to move a folder, switch the old one off and add the new one.</td></tr>
+            <tr><td>Exclude patterns (one per line)</td><td class="tv-small">Names that are never backed up. Not case-sensitive; <code>*</code> and <code>?</code> match any characters in a name; a pattern with a slash is compared with the whole path below the monitored folder.</td></tr>
+            <tr><td>Back up this folder</td><td class="tv-small">Untick to switch the folder off: no backups at all, but its history stays browsable.</td></tr>
+            <tr><td class="tv-small">Back up automatically every … minutes (1 to 43200), Versions kept per file (0 keeps them all)</td><td class="tv-small">See <a href="#automatic">Automatic backups and versions kept</a>.</td></tr>
+            <tr><td>Who may do what</td><td class="tv-small">Three lists: Browse, Back up, Full control. Tick <strong>Guests (not signed in)</strong> (Browse only), <strong>Everyone who is signed in</strong>, or named people (<strong>Find a person…</strong> searches the list). The highest level wins. A group cannot be combined with the other group or with named people in one list. At most 500 people per folder.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tv-doc-note"><strong>Note:</strong> If you have Full control but are not an administrator and your change would take it away from you, first tick <strong>I understand that I will no longer be able to change this folder (an administrator can give the access back)</strong>. If somebody else changed who may do what while you were editing, nothing is saved: check the lists the page now shows, repeat your change and save.</p>
+
+      <h3>Adding a folder (administrators)</h3>
+      <p>Press <strong>Add a folder</strong>, fill in the same fields and press <strong>Add monitored folder</strong>. The <strong>Folder on the server</strong> must be a local folder that does not overlap the backup storage, the restore folder or another monitored folder; it is only ever read. The exclude patterns start as <code>$RECYCLE.BIN</code>, <code>System Volume Information</code>, <code>Thumbs.db</code> and <code>~$*</code>. A new folder is seen by administrators only until you give somebody access to it.</p>
+
+      <h3>Storage, service and updates</h3>
+      <ul>
+        <li><strong>Backup storage</strong> shows where backups are kept (administrators see <strong>Backup folder (repository)</strong> with the real folder), its state and free space, and the <strong>Restore folder (where restored copies go)</strong> as a network folder, or <strong>not configured</strong>. Both are set in the service settings (<code>TIMEVAULT_REPOSITORY_PATH</code> and <code>TIMEVAULT_RESTORE_ROOT</code> in the <code>.env</code> file) and change only when the service is restarted.</li>
+        <li><strong>Service</strong> is read-only. It shows the <strong>Version</strong> and how the service is set up: <strong>Server host name</strong>, <strong>Listening on</strong>, <strong>Database</strong>, <strong>User accounts (Redis)</strong>, <strong>Web log</strong> (the list that receives a line for every page opened and every action, with the host name used in those lines, or <em>off</em>), <strong>Single sign-on</strong>, <strong>Address prefix</strong>, <strong>Local administrator</strong>, <strong>Search (Everything)</strong>, <strong>Sign-in lasts</strong> and <strong>Secure cookie</strong>. Secrets are never shown. The button <strong>Status</strong> opens the <a href="#status">Status</a> page.</li>
+        <li><strong>Program updates</strong> says whether TimeVault updates itself: when a different version is released, the service downloads and checks it, waits for the running jobs to finish and restarts itself; jobs requested meanwhile wait in the queue. The status is <span class="tv-chip tv-chip-update-idle">Up to date</span>, <span class="tv-chip tv-chip-update-checking">Checking</span>, <span class="tv-chip tv-chip-update-downloading">Downloading</span>, <span class="tv-chip tv-chip-update-waiting">Waiting for the running jobs</span>, <span class="tv-chip tv-chip-update-applying">Installing</span> or <span class="tv-chip tv-chip-update-error">Problem</span>. Administrators also see the release address and the last problem, and can press <strong>Check now</strong>.</li>
+      </ul>
+    </section>
+
+    <section id="status" class="tv-doc-section">
+      <h2>Status</h2>
+      <p>The page <strong>Service status</strong> (signed-in accounts only; open it with <strong>Status</strong> in the footer or in the Settings card Service) says when it was checked and lists each <strong>Component</strong> with its <strong>State</strong> and a <strong>Detail</strong>. The states are <span class="tv-chip tv-chip-status-ok">OK</span>, <span class="tv-chip tv-chip-status-degraded">Degraded</span> (working, with a problem), <span class="tv-chip tv-chip-status-disabled">Not enabled</span> (not set up) and <span class="tv-chip tv-chip-status-failed">Failed</span>.</p>
+      <ul>
+        <li><strong>Database</strong>: OK, or Failed when it does not answer.</li>
+        <li><strong>Repository</strong> (the backup storage): a write test and the free space. Degraded below 5% free, Failed when it cannot be written to.</li>
+        <li><strong>Search (Everything)</strong>: OK, Not enabled when none is set up, Degraded when it does not answer properly.</li>
+        <li><strong>User accounts (Redis)</strong>: Degraded when it does not answer; browsing and the local administrator still work, but other accounts cannot sign in. Not enabled when it is not configured: only the local administrator can sign in.</li>
+        <li><strong>Restore</strong>: OK, or Not enabled without a restore folder. <strong>Job queue</strong>: how many jobs are running and queued in the folders you may browse.</li>
+        <li><strong>VSS snapshots</strong> and <strong>USN journal</strong> are always Not enabled: TimeVault reads the live disk.</li>
+      </ul>
+    </section>
+
+    <section id="faq" class="tv-doc-section">
+      <h2>Problems and answers</h2>
+
+      <h3>I cannot see a monitored folder (“The page, folder or recovery point was not found, or you are not allowed to see it.”)</h3>
+      <p>A folder is visible only to the people it was given to. Sign in if you have not; otherwise ask an administrator, or someone with Full control of the folder, to give you access (Settings, <strong>Edit</strong>, <strong>Who may do what</strong>).</p>
+
+      <h3>“You are not allowed to do this.”</h3>
+      <p>You can see the folder, but your level is too low: Back up is needed to back up, verify or stop a job, Full control to change settings, and only administrators add folders. The attempt is recorded in the audit log as <strong>Access denied</strong>.</p>
+
+      <h3>The restore buttons are missing or disabled</h3>
+      <p>You are not signed in (<strong>Sign in to restore files</strong>); or no restore folder is set up (<em>Restore is disabled because no restore folder is configured.</em>), which an administrator must fix; or you have ticked nothing (<strong>Restore selected…</strong> stays disabled); or the recovery point is <strong>Not restorable</strong>, so choose another one.</p>
+
+      <h3>Signing in fails</h3>
+      <p><em>Invalid account or password.</em> Check what you typed; the employee ID is the safest account name. <em>Too many failed attempts. Wait a few minutes and try again.</em> Wait about ten minutes, even if the last password was right. <em>The user accounts cannot be reached.</em> Try again later; browsing still works.</p>
+
+      <h3>Sign in with Windows (SSO) does not work</h3>
+      <p>If the browser blocked the sign-in window, allow pop-ups for this site and try again. If Windows could not tell who you are, or has no active account for you here, open TimeVault from your company computer or use your password. Otherwise try again in the same browser on the same computer.</p>
+
+      <h3>Search says it is unavailable</h3>
+      <p>The search engine is not answering or is not set up. Everything else keeps working; try again later and tell an administrator if it continues.</p>
+
+      <h3>A job page says “not found”, or the job has disappeared</h3>
+      <p>An automatic backup that finds nothing changed leaves no job. A job of a folder you may not browse is also “not found” for you.</p>
+
+      <h3>Back up now is missing, or the folder shows “Switched off”</h3>
+      <p>A switched-off folder cannot be backed up, but its history stays browsable. An administrator, or someone with Full control, switches it on in Settings (<strong>Back up this folder</strong>). You also need the Back up level.</p>
+
+      <h3>“The form has expired or is invalid. Reload the page and try again.”</h3>
+      <p>The page or your sign-in is too old. Reload the page (<kbd>F5</kbd>), sign in again if asked, and repeat the action.</p>
+
+      <h3>“The preview is out of date…”, “A backup of this monitored folder is running” or “Old versions of this monitored folder are being deleted”</h3>
+      <p>A restore preview expires after 15 minutes or when something changes (such as the files in the destination folder): check the new preview and press <strong>Start restore</strong> again. The jobs of one folder take turns, so for the other two messages wait until the running job has finished and try again.</p>
+
+      <h3>A file shows “Not captured”, or stays “New”</h3>
+      <p><strong>Not captured</strong>: the backup could not read the file (for example another program had locked it, or it changed while being read). Point at the label for the reason and run the backup again later; such a file cannot be restored from that recovery point. <strong>New</strong> becomes <strong>Protected</strong> after the next successful backup; if it stays New, check <strong>Excluded</strong> on the Backups page, because files that match an exclude pattern are never backed up.</p>
+
+      <h3>“The folder cannot be read right now. Time Machine history is still available.” or “Something went wrong on the server.”</h3>
+      <p>The first means the monitored folder cannot be reached at the moment; history and restores keep working. For the second, note the <strong>Reference</strong> code. In both cases tell an administrator if it continues.</p>
+    </section>
+
+    <section id="glossary" class="tv-doc-section">
+      <h2>Glossary of labels</h2>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>Label</th><th>Meaning</th><th>Where</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-protected">Protected</span></td><td class="tv-small">Same as in the newest recovery point.</td><td><a href="#explorer">Explorer</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-changed">Changed</span></td><td class="tv-small">Different from the newest recovery point.</td><td><a href="#explorer">Explorer</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-new">New</span></td><td class="tv-small">Not in the newest recovery point yet.</td><td><a href="#explorer">Explorer</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-not_captured">Not captured</span></td><td class="tv-small">The backup could not read it; no copy exists.</td><td><a href="#explorer">Explorer</a>, <a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">Deleted</span></td><td class="tv-small">In the newest recovery point, gone from the disk.</td><td><a href="#explorer">Explorer</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-same">Unchanged</span></td><td class="tv-small">The same in the newest recovery point.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-modified">Changed later</span></td><td class="tv-small">Different in the newest recovery point.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">Deleted later</span></td><td class="tv-small">Gone from the newest recovery point.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-live">Live scan</span></td><td class="tv-small">Read from the live disk, not a snapshot.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-old">Older point</span></td><td class="tv-small">Not the newest recovery point.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Not restorable</span></td><td class="tv-small">Failed its integrity check.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">Partial</span></td><td class="tv-small">Some older versions were deleted.</td><td><a href="#automatic">Automatic backups</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-pending">Pending</span></td><td class="tv-small">Integrity not checked yet.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-validated">Validated</span></td><td class="tv-small">Checked when the backup finished.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-verified">Verified</span></td><td class="tv-small">Deep check of all stored content passed.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Failed</span></td><td class="tv-small">Integrity: missing or damaged content found.</td><td><a href="#history">Time Machine</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-same">Current</span></td><td class="tv-small">The newest state of a file.</td><td><a href="#versions">File versions</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-validated tv-chip-available">Available</span></td><td class="tv-small">The stored copy can be restored.</td><td><a href="#versions">File versions</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Content missing</span></td><td class="tv-small">The stored copy is gone from the backup storage.</td><td><a href="#versions">File versions</a></td></tr>
+            <tr><td><span class="tv-chip">Folder</span></td><td class="tv-small">The entry is a folder.</td><td><a href="#versions">File versions</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-queued">Queued</span></td><td class="tv-small">Waiting for its turn.</td><td><a href="#jobs">Jobs</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-running">Running</span></td><td class="tv-small">In progress.</td><td><a href="#jobs">Jobs</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-succeeded">Succeeded</span></td><td class="tv-small">Finished successfully.</td><td><a href="#jobs">Jobs</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">Failed</span></td><td class="tv-small">Did not work: a job, recovery point, restored item, audited action or component.</td><td><a href="#jobs">Jobs</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-canceled">Canceled</span></td><td class="tv-small">Stopped by a person.</td><td><a href="#jobs">Jobs</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-building">Building</span></td><td class="tv-small">A recovery point still being made.</td><td><a href="#backups">Backups</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-committed">Committed</span></td><td class="tv-small">A recovery point that is finished and usable.</td><td><a href="#backups">Backups</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-aborted">Aborted</span></td><td class="tv-small">A recovery point that was interrupted.</td><td><a href="#backups">Backups</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">Browse</span></td><td class="tv-small">See the folder and restore from it.</td><td><a href="#signin">Permissions</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">Back up</span></td><td class="tv-small">Browse, plus back up, verify, stop jobs.</td><td><a href="#signin">Permissions</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">Full control</span></td><td class="tv-small">Back up, plus change settings and permissions.</td><td><a href="#signin">Permissions</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-skipped">Switched off</span></td><td class="tv-small">Not backed up; its history stays.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">No display folder yet</span></td><td class="tv-small">The folder has no display folder.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-mkdir">Create folder</span></td><td class="tv-small">The folder will be created.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-dir_exists">Folder exists</span></td><td class="tv-small">The folder is already there.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-create">Create</span></td><td class="tv-small">The file will be copied.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-overwrite">Replace</span></td><td class="tv-small">A different file there will be replaced.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-rename">Restore as copy</span></td><td class="tv-small">A different file is there; saved under a new name.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-skip_same">Already identical</span></td><td class="tv-small">The same file is already there; skipped.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-skip_exists">Keep existing</span></td><td class="tv-small">A different file there is left alone.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-blocked">Blocked</span></td><td class="tv-small">It cannot be restored; Problems says why.</td><td><a href="#restore">Restoring</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-ok">OK</span></td><td class="tv-small">Done, working or allowed.</td><td><a href="#jobs">Jobs</a>, <a href="#audit">Audit</a>, <a href="#status">Status</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-skipped">Skipped</span></td><td class="tv-small">Not restored: already there.</td><td><a href="#jobs">Jobs</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-audit-denied">Denied</span></td><td class="tv-small">The action was refused.</td><td><a href="#audit">Audit</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-status-degraded">Degraded</span></td><td class="tv-small">Working, but with a problem.</td><td><a href="#status">Status</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-status-disabled">Not enabled</span></td><td class="tv-small">Not set up, or not in this version.</td><td><a href="#status">Status</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-idle">Up to date</span></td><td class="tv-small">The running version is the released one.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-checking">Checking</span></td><td class="tv-small">Looking for a new version.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-downloading">Downloading</span></td><td class="tv-small">Fetching the new version.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-waiting">Waiting for the running jobs</span></td><td class="tv-small">The update starts when they finish.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-applying">Installing</span></td><td class="tv-small">Installing and restarting.</td><td><a href="#settings">Settings</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-error">Problem</span></td><td class="tv-small">The last check or installation failed.</td><td><a href="#settings">Settings</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="administrators" class="tv-doc-section">
+      <h2>For administrators</h2>
+      <p>Installing, configuring and running the service is described in technical documents in the <code>docs</code> folder of the TimeVault repository. This application does not serve them; ask whoever maintains the service for a copy.</p>
+      <ul>
+        <li><code>runbook.md</code>: setup and settings (the <code>.env</code> file), folder permissions, single sign-on, search, the scheduler, program updates, operation and troubleshooting.</li>
+        <li><code>security.md</code>: the security model and its known limits.</li>
+        <li><code>api.md</code>: the JSON API and the page routes.</li>
+      </ul>
+    </section>
+  </article>
+</div>
+{{else}}
+<div class="tv-doc">
+  <nav class="tv-doc-toc" aria-label="目录" {{$.Tour "help.toc"}}>
+    <h2>目录</h2>
+    <ol>
+      <li><a href="#overview">TimeVault 是什么</a></li>
+      <li><a href="#concepts">基本术语</a></li>
+      <li><a href="#signin">登录与权限</a></li>
+      <li><a href="#interface">界面总览</a></li>
+      <li><a href="#explorer">文件浏览</a></li>
+      <li><a href="#history">时间机器</a></li>
+      <li><a href="#versions">文件版本</a></li>
+      <li><a href="#restore">恢复文件</a></li>
+      <li><a href="#backups">备份</a></li>
+      <li><a href="#jobs">任务</a></li>
+      <li><a href="#automatic">自动备份与保留的版本</a></li>
+      <li><a href="#audit">审计</a></li>
+      <li><a href="#settings">设置</a></li>
+      <li><a href="#status">状态</a></li>
+      <li><a href="#faq">常见问题</a></li>
+      <li><a href="#glossary">标签词汇表</a></li>
+      <li><a href="#administrators">给管理员</a></li>
+    </ol>
+  </nav>
+  <article class="tv-doc-body" {{$.Tour "help.body"}}>
+    <h1 class="tv-page-title">{{template "icon" "book"}} TimeVault 用户手册</h1>
+
+    <section id="overview" class="tv-doc-section">
+      <h2>TimeVault 是什么</h2>
+      <p>TimeVault 会备份服务器上选定的文件夹，并保留它们的历史。每次备份都会增加一个<strong>恢复点</strong>：文件夹在某一时刻的保存状态。你可以查看文件夹现在的样子，回到它较早时的样子，找出被误改或误删的文件，并把它恢复出来。页面<a href="{{url "/explorer"}}">文件浏览</a>、<a href="{{url "/history"}}">时间机器</a>和<a href="{{url "/backups"}}">备份</a>对所有人开放；<a href="{{url "/audit"}}">审计</a>、<a href="{{url "/settings"}}">设置</a>和<a href="{{url "/status"}}">状态</a>只对已登录的账号开放。</p>
+
+      <h3>它不会做什么</h3>
+      <ul>
+        <li>它只读取监控文件夹，绝不会修改、移动或删除其中的任何内容。</li>
+        <li>恢复不会覆盖原文件：它把副本写入恢复文件夹里的一个新文件夹，需要哪些再由你自己复制回去。</li>
+        <li>它不提供文件内容下载；你到恢复文件夹里取恢复出的副本。</li>
+        <li>它读取的是实时磁盘，而不是快照，所以每个恢复点都标有<strong>实时扫描</strong>。被其他程序锁定、或在读取过程中发生变化的文件可能被跳过，并显示为<strong>未能备份</strong>。</li>
+      </ul>
+
+      <h3>常见任务</h3>
+      <ul>
+        <li><strong>找回已删除的文件：</strong>在<a href="#explorer">文件浏览</a>中打开<em>自上次备份以来已删除</em>面板，打开该文件，点击<strong>恢复…</strong>。</li>
+        <li><strong>找回文件的旧版本：</strong>点击该文件，然后在要恢复的版本旁点击<strong>恢复…</strong>（见<a href="#versions">文件版本</a>）。</li>
+        <li><strong>恢复整个文件夹：</strong>在<a href="#history">时间机器</a>中打开它，点击<strong>恢复此文件夹…</strong>。</li>
+        <li><strong>立即备份一个文件夹：</strong>在<a href="#backups">备份</a>页点击<strong>立即备份</strong>。</li>
+        <li><strong>更改备份计划：</strong>在<a href="#settings">设置</a>中点击<strong>编辑</strong>。</li>
+      </ul>
+    </section>
+
+    <section id="concepts" class="tv-doc-section">
+      <h2>基本术语</h2>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>术语</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td>监控文件夹</td><td class="tv-small">服务器上由 TimeVault 备份的文件夹。它只会被读取，绝不会被修改。</td></tr>
+            <tr><td>显示文件夹</td><td class="tv-small">人们用来打开它的网络路径，例如 <code>\\server\share\folder</code>。普通用户只会看到这个路径。</td></tr>
+            <tr><td>服务器上的文件夹</td><td class="tv-small">同一个文件夹在服务器本机磁盘上的位置，例如 <code>D:\Data</code>。只有管理员能看到。</td></tr>
+            <tr><td>恢复点</td><td class="tv-small">文件夹在某一时刻的样子，每个文件夹各自编号为 #1、#2……。打开恢复点可以看到整个文件夹，尽管存储的只是变化的部分。</td></tr>
+            <tr><td>版本</td><td class="tv-small">文件的一个状态（内容和修改时间）。文件每变化一次，就会有一个新版本。</td></tr>
+            <tr><td>恢复文件夹</td><td class="tv-small">接收恢复出的副本；每次恢复都会在其中创建自己的文件夹。</td></tr>
+            <tr><td>权限级别</td><td class="tv-small">你对某个文件夹能做什么：浏览、备份或完全控制。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="signin" class="tv-doc-section">
+      <h2>登录与权限</h2>
+
+      <h3>不登录时</h3>
+      <p>任何人都可以浏览。未登录的访问者（<em>访客</em>）可以使用文件浏览、时间机器、文件版本和备份页，但只限允许访客浏览的文件夹；其他文件夹对访客来说根本不存在。访客不能备份或恢复，不能打开审计、设置或状态，也看不到谁发起了任务、任务为何失败以及任务日志。</p>
+
+      <h3>登录</h3>
+      <ol>
+        <li>点击右上角的<strong>登录</strong>，或者点击<strong>登录后可备份</strong>这样的按钮。</li>
+        <li>输入<strong>账号（工号、姓名或邮箱）</strong>和<strong>密码</strong>，然后点击<strong>登录</strong>。用工号最不容易产生歧义。</li>
+        <li>页面提供时，也可以点击<strong>使用 Windows 账号登录（SSO）</strong>：会弹出一个小窗口，完成后自动关闭（请允许本站弹出窗口，并使用公司电脑）。</li>
+      </ol>
+      <p>登录后会回到你原来所在的页面。登录的有效期是有限的（<strong>设置</strong>页中<strong>服务</strong>卡片里的<strong>登录有效期</strong>）；用完后请点击右上角的<strong>退出登录</strong>。</p>
+
+      <h3>权限级别</h3>
+      <p>你能做什么是按监控文件夹分别决定的，每个级别都包含前面的级别。你无权使用的按钮不会显示。</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>级别</th><th>允许做什么</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-level">浏览</span></td><td class="tv-small">查看文件夹、其中的文件和历史，并从中恢复副本（恢复需要已登录的账号）。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">备份</span></td><td class="tv-small">包含“浏览”的全部权限，并可立即备份（包括完整重读）、校验恢复点、停止它的任务。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">完全控制</span></td><td class="tv-small">包含“备份”的全部权限，并可修改这个文件夹的设置以及谁能对它做什么。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>权限可以授予访客（只能是“浏览”）、所有已登录的人或指定的人；你拥有适用于你的最高级别。你在某个文件夹上没有任何级别时，它对你不可见。备份页和设置页中，文件夹名称旁边的标签显示你的级别。</p>
+      <p>管理员对所有文件夹拥有完全控制权。只有管理员能添加监控文件夹、修改<strong>服务器上的文件夹</strong>、看到服务器本机磁盘上的文件夹，并使用<strong>立即检查</strong>来检查程序更新。</p>
+    </section>
+
+    <section id="interface" class="tv-doc-section">
+      <h2>界面总览</h2>
+
+      <h3>页眉</h3>
+      <ul>
+        <li><strong>TimeVault</strong> 徽标会回到起始页（文件浏览；如果你没有可浏览的文件夹，则是备份页）。旁边依次是<strong>文件浏览</strong>、<strong>时间机器</strong>、<strong>备份</strong>，已登录的账号还有<strong>审计</strong>和<strong>设置</strong>；当前页面会高亮显示。</li>
+        <li>太阳/月亮按钮（<strong>切换浅色 / 深色主题</strong>）在你按下之前会跟随系统的设置；按下之后，浏览器会记住你的选择。</li>
+        <li><strong>EN</strong> 和 <strong lang="zh">中文</strong>用于切换页面和本手册的语言；你的选择会被记住，首次访问时使用浏览器的语言。</li>
+        <li>访客看到<strong>登录</strong>；已登录的账号看到自己的姓名和<strong>退出登录</strong>按钮。</li>
+      </ul>
+
+      <h3>通知栏和页脚</h3>
+      <p>当新版本的 TimeVault 即将安装时，已登录的账号会在页眉下方看到一句提示，无需任何操作。页脚显示<strong>由 TimeVault 提供支持</strong>、指向<strong>状态</strong>的链接（仅已登录的账号可见）和版本号。</p>
+
+      <h3>右下角的圆形按钮</h3>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>按钮</th><th>作用</th></tr></thead>
+          <tbody>
+            <tr><td><strong>回到顶部</strong>（↑）</td><td class="tv-small">滚动到页面顶部。只在较长的页面上、向下滚动之后才会出现。</td></tr>
+            <tr><td><strong>到底部</strong>（↓）</td><td class="tv-small">滚动到页面底部。只在较长的页面上、下面还有内容时才会出现。</td></tr>
+            <tr><td><strong>文档</strong>（书本图标）</td><td class="tv-small">在新的浏览器标签页中打开本手册。</td></tr>
+            <tr><td><strong>页面导览</strong>（指南针图标）</td><td class="tv-small">对你当前所在的页面开始一段分步导览。它会让页面变暗，每次突出显示一个部分，并带有步骤计数，简要说明按钮的作用或该处显示的数据。用<strong>下一步</strong>和<strong>上一步</strong>（或 <kbd>→</kbd> 或 <kbd>Enter</kbd>，以及 <kbd>←</kbd>）切换步骤，在最后一步点击<strong>完成</strong>或按 <kbd>Esc</kbd> 关闭。只有你能看到的部分才有对应的步骤。导览绝不会更改数据，也不会替你点击任何东西，转到其他页面时导览会结束。在没有特别内容的页面上，它会介绍页眉和这些按钮。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>在文件浏览页，按 <kbd>/</kbd> 可跳到搜索框（正在输入框中打字时除外）。时间按服务器所在的时区显示。</p>
+    </section>
+
+    <section id="explorer" class="tv-doc-section">
+      <h2>文件浏览</h2>
+      <p>文件浏览按磁盘上现在的样子显示监控文件夹，并逐项告诉你它是否已备份。</p>
+
+      <h3>页面顶部</h3>
+      <ul>
+        <li>下拉列表用来选择监控文件夹（只列出你可以浏览的文件夹）。路径栏显示你打开过的各级文件夹，点击名称可返回。</li>
+        <li><strong>位置</strong>是你正在查看的内容的网络路径（显示文件夹）；<strong>复制</strong>会复制它（按钮会短暂显示<strong>已复制</strong>）。管理员还会看到<strong>服务器上</strong>，其中是真实的文件夹。</li>
+        <li><strong>最近的恢复点</strong>显示最新恢复点的创建时间及其完整性标签（见<a href="#history">时间机器</a>）；<strong>在时间机器中打开</strong>会在那里显示同一个文件夹。从未备份过的文件夹会显示<strong>该文件夹尚未备份。</strong></li>
+      </ul>
+
+      <h3>文件列表</h3>
+      <p>点击文件夹可打开它，点击文件可查看它的版本。各列依次是<strong>名称</strong>；<strong>类型</strong>（扩展名以大写显示，例如 PDF；文件夹；链接；没有扩展名的文件显示为“文件”）；<strong>备份状态</strong>；<strong>大小</strong>（文件夹只有在搜索引擎知道其大小时才显示，否则显示“-”）；以及<strong>修改时间</strong>。备份状态列显示：</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>标签</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-protected">已保护</span></td><td class="tv-small">与最新恢复点中的一致。文件夹只要存在于最新恢复点中就是已保护；请打开它查看其中的文件。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-changed">已变更</span></td><td class="tv-small">与最新恢复点不同。下一次备份会记录这一变化。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-new">新增</span></td><td class="tv-small">不在最新恢复点中。新文件暂时无法打开：还没有副本。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-not_captured">未能备份</span></td><td class="tv-small">最近一次备份无法读取它（例如被其他程序锁定），所以没有副本。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">已删除</span></td><td class="tv-small">只出现在“自上次备份以来已删除”面板中（见下文）。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>排序、筛选与分页</h3>
+      <ul>
+        <li>点击<strong>名称</strong>、<strong>类型</strong>、<strong>大小</strong>或<strong>修改时间</strong>可对整个文件夹排序，再点一次反向。文件夹始终排在最前面。</li>
+        <li><strong>类型</strong>下拉框只保留一种项目：<strong>所有类型</strong>，或<strong>文件夹</strong>、<strong>文件</strong>、<strong>无扩展名</strong>、某一种扩展名，各项后面都带有它所含项目的数量。</li>
+        <li><strong>每页</strong>可选 50、100（默认）、200 或 500 项；使用<strong>上一页</strong>、<strong>下一页</strong>和页码翻页。你的选择会保留在地址中，所以链接会打开同样的视图。</li>
+      </ul>
+
+      <h3>搜索</h3>
+      <ol>
+        <li>在搜索框中输入名称中的词语（按 <kbd>/</kbd> 可跳到搜索框），然后点击<strong>搜索</strong>。结果必须匹配所有词语；短语请用双引号括起来；最多 16 个词。</li>
+        <li>匹配项按名称、类型、<strong>所在文件夹</strong>、大小和修改时间列出（每页 100 项；可改为 50 或 200）。点击文件夹打开它，点击文件查看它的版本。<strong>清除搜索</strong>会回到文件夹列表。</li>
+      </ol>
+      <p>搜索覆盖整个监控文件夹，而不只是你打开的那个文件夹，并且查找的是磁盘上现在存在的内容，找不到已删除的文件。如果搜索引擎没有响应，会显示<em>搜索暂时不可用（搜索引擎没有响应）。浏览和历史记录仍可使用。</em></p>
+
+      <h3>自上次备份以来已删除</h3>
+      <p>在列表第一页的下方，有一个面板最多列出 500 个存在于最新恢复点、但已从磁盘上消失的项目。打开文件后点击<strong>恢复…</strong>；打开文件夹则在时间机器中查看它，并点击<strong>恢复此文件夹…</strong>（见<a href="#restore">恢复文件</a>）。</p>
+    </section>
+
+    <section id="history" class="tv-doc-section">
+      <h2>时间机器</h2>
+      <p>时间机器显示监控文件夹在你所选恢复点时的样子。在顶部的列表中选择文件夹。没有恢复点的文件夹会显示<strong>还没有恢复点</strong>：请在<a href="#backups">备份</a>页运行第一次备份。</p>
+
+      <h3>时间线</h3>
+      <p>每个圆点是一个恢复点，最早的在左边，最新的在右边（显示最新的 80 个），上面有它的采集时间、编号和完整性标签，例如 <code>#12 · 已验证提交</code>；把鼠标指向它可看到文件数和大小。点击圆点可查看文件夹当时的样子。无法恢复的恢复点带有警示颜色。最后一个圆点<strong>现在</strong>（<em>实时文件</em>）会回到文件浏览。</p>
+
+      <h3>横幅</h3>
+      <p>时间线下面的一行写着<strong>正在查看恢复点 #12，采集于……</strong>，并显示这些标签：</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>标签</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-live">实时扫描</span></td><td class="tv-small">读取自实时磁盘，而非快照。扫描期间发生变化的文件已被重新读取或跳过。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-pending">待处理</span></td><td class="tv-small">完整性尚未检查。新的恢复点会立刻完成验证，所以通常看到的是“已验证提交”。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-validated">已验证提交</span></td><td class="tv-small">备份结束时已检查：它新存入的内容都存在且大小正确。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-verified">已完整校验</span></td><td class="tv-small">一次深度校验（备份页上的<strong>校验</strong>）重新读取了所有已存储的内容，校验值一致。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">校验失败</span></td><td class="tv-small">检查发现内容缺失或已损坏。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-old">较早的恢复点</span></td><td class="tv-small">不是最新的恢复点。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">不可恢复</span></td><td class="tv-small">它没有通过完整性校验，所以不能从它恢复。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">不完整</span></td><td class="tv-small">为了不超过<em>每个文件保留的版本数</em>，部分文件的较早版本已被删除，所以它不再完整显示每个文件当时的样子。横幅下方会显示一条警告。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>列表</h3>
+      <p>横幅下面是路径栏、<strong>位置</strong>行，以及该恢复点时文件夹的内容，各列为名称、类型、<strong>与当前对比</strong>、大小和修改时间。文件夹会在同一个恢复点中打开；文件会进入它的版本页；排序、类型、每页和分页的用法与文件浏览相同。<strong>与当前对比</strong>是把每一项与最新恢复点比较，而不是与实时磁盘比较：</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>标签</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-same">未变化</span></td><td class="tv-small">在最新恢复点中相同。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-modified">之后被修改</span></td><td class="tv-small">在最新恢复点中不同。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">之后被删除</span></td><td class="tv-small">已不在最新恢复点中。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">未能备份</span></td><td class="tv-small">备份无法读取它（把鼠标指向该标签可看到原因）。不能从这个恢复点恢复它。</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>从这里恢复</h3>
+      <p>已登录的账号会在每一项前看到一个勾选框，并在列表上方看到：</p>
+      <ul>
+        <li><strong>恢复所选项…</strong>（带计数）恢复已勾选的项目；在你勾选之前它保持禁用。<strong>全选</strong>只选中当前页的项目。</li>
+        <li><strong>恢复此文件夹…</strong>（在某个文件夹内）或<strong>恢复全部内容…</strong>（在监控文件夹的顶层）会恢复你正在查看的文件夹，并忽略勾选。</li>
+      </ul>
+      <p>未登录的访问者看到的是<strong>登录后可恢复文件</strong>，没有勾选框。没有恢复文件夹时会显示<em>由于未配置恢复目录，恢复功能已禁用。</em>，而不可恢复的恢复点不提供恢复按钮。下一步：<a href="#restore">恢复文件</a>。</p>
+    </section>
+
+    <section id="versions" class="tv-doc-section">
+      <h2>文件版本</h2>
+      <p>点击文件（在文件浏览、时间机器、搜索结果或已删除项目面板中）即可打开它的版本页：一行<strong>位置</strong>，以及该文件每个已记录状态的表格，最新的在最前。<strong>返回</strong>会回到你来时的页面。</p>
+      <ul>
+        <li><strong>采集时间</strong>和<strong>有效至</strong>给出包含该版本的第一个和最后一个恢复点的时间；“有效至”下的<span class="tv-chip tv-chip-same">当前版本</span>表示文件的最新状态。</li>
+        <li><strong>大小</strong>和<strong>修改时间</strong>是文件在该版本中的大小和修改时间。<strong>SHA-256</strong> 是内容校验值的开头部分（把鼠标指向它可看到完整的值）；校验值相同就表示内容相同。</li>
+        <li><strong>内容</strong>说明已存储的副本能否使用：</li>
+      </ul>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>标签</th><th>含义</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-validated tv-chip-available">可用</span></td><td class="tv-small">已存储的副本存在，可以恢复。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">内容缺失</span></td><td class="tv-small">已存储的副本在备份存储中丢失，所以无法恢复这个版本。请告知管理员；其他版本也许仍可使用。</td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">未能备份</span></td><td class="tv-small">备份当时无法读取这个文件（把鼠标指向该标签可看到原因）。没有可恢复的内容。</td></tr>
+            <tr><td><span class="tv-chip">文件夹</span></td><td class="tv-small">这个条目是一个文件夹。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>每一行的末尾，<strong>恢复…</strong>会恢复该版本（已登录的账号，在已设置恢复文件夹且该版本已被备份时可见），<strong>浏览该恢复点</strong>会在时间机器中打开包含该版本的第一个恢复点，并定位到该文件所在的文件夹。</p>
+    </section>
+
+    <section id="restore" class="tv-doc-section">
+      <h2>恢复文件</h2>
+      <p>恢复会把文件或文件夹从某个恢复点复制到恢复文件夹中。它绝不会写入监控文件夹，也绝不会覆盖原文件。你必须已登录，并且至少拥有该文件夹的“浏览”级别。</p>
+      <ol>
+        <li><strong>选择要恢复的内容。</strong>在<a href="#history">时间机器</a>中勾选项目并点击<strong>恢复所选项…</strong>，或者点击<strong>恢复此文件夹…</strong>或<strong>恢复全部内容…</strong>。在文件的<a href="#versions">版本页</a>上，点击想要的版本旁的<strong>恢复…</strong>。一次最多可选择 500 项；一个文件夹算一项。</li>
+        <li><strong>查看预览。</strong><strong>恢复预览</strong>页会写明<em>目前尚未写入任何内容。</em>它显示你的所选内容、<strong>目标位置</strong>、<strong>概要</strong>（文件、文件夹、数据量、创建、替换、另存为副本、跳过、受阻）、警告、<strong>问题</strong>（受阻的项目及原因；最多前 100 项）和<strong>计划的变更</strong>（前 200 项）。每项计划的变更都带有标签：创建文件夹、文件夹已存在、创建、替换、另存为副本、已完全一致、保留已有或受阻（见<a href="#glossary">标签词汇表</a>）。</li>
+        <li><strong>设置选项</strong>（如果默认值不合适，见下表），然后点击<strong>更新预览</strong>。更改只有在点击它之后才会生效。</li>
+        <li><strong>确认。</strong>在 15 分钟内点击<strong>开始恢复</strong>。如果有文件将被替换，请先勾选<strong>我明白目标位置中已有的 N 个文件将被替换。</strong>存在受阻项目导致无法恢复时，该按钮是禁用的。</li>
+        <li><strong>查看任务。</strong>在任务页面上跟踪进度（见<a href="#jobs">任务</a>）。显示<strong>成功</strong>时，副本已在目标文件夹中。</li>
+        <li><strong>取回你的文件。</strong><strong>目标位置</strong>是一个网络路径，例如 <code>\\server\share\restore\restore-20261118-141257</code>。打开它，把需要的内容复制回去。每个所选项目都以自己的名称直接恢复到其中（整个监控文件夹则以该文件夹的名称恢复）。如果你看到的是 <code>[restore folder]\restore-20261118-141257</code>，请向管理员询问如何访问恢复文件夹。</li>
+      </ol>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>选项</th><th>作用</th></tr></thead>
+          <tbody>
+            <tr><td>目标文件夹名称</td><td class="tv-small">恢复文件夹里接收副本的文件夹。默认建议为 <code>restore-&lt;date&gt;-&lt;time&gt;</code>；不存在时会自动创建。请使用字母、数字、空格以及 <code>.</code> <code>_</code> <code>-</code>。</td></tr>
+            <tr><td>如果文件已存在</td><td class="tv-small"><strong>保留已有文件（跳过）</strong>（默认）不动已经存在的文件。<strong>两者都保留（以新名称恢复）</strong>把副本保存在它旁边，名称类似 <code>report (restored 20261118-141300).docx</code>。<strong>替换已有文件</strong>会替换目标文件夹里的文件（绝不是原文件），并需要额外确认。</td></tr>
+            <tr><td class="tv-small">即使部分项目受阻，也恢复其余可恢复的内容</td><td class="tv-small">不勾选时，只要有一个项目受阻，整个恢复就会停止。勾选后，其余内容都会被恢复，受阻的项目会被报告为失败。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tv-doc-note"><strong>注意：</strong>预览的有效期为 15 分钟，只对你本人有效，并且只对完全相同的所选内容和选项有效。否则你会看到<em>预览已过期。请查看新的预览并重新确认。</em>恢复出的文件会带有所记录版本的修改时间和文件属性。在一次恢复进行期间，不要再向同一个目标文件夹启动第二次恢复。</p>
+    </section>
+
+    <section id="backups" class="tv-doc-section">
+      <h2>备份</h2>
+      <p>备份页显示你可以浏览的每个监控文件夹的备份情况，让拥有相应级别的人启动备份，并列出最近的任务。如果没有可显示的文件夹，请登录或向管理员申请访问权限；管理员会看到<strong>管理监控文件夹</strong>。</p>
+
+      <h3>文件夹卡片</h3>
+      <ul>
+        <li>标题显示文件夹的名称，如果已停用则显示<strong>已停用</strong>，已登录时还显示你的级别。下面是显示文件夹；管理员还会看到<strong>服务器上</strong>。</li>
+        <li><strong>立即备份</strong>会读取文件夹，把新增和变化的文件复制到备份存储中，并记录一个新的恢复点；它绝不会修改该文件夹。<strong>完整重读</strong>做同样的事，但会重新读取每个文件，而不是仅依据大小和修改时间判断；它更慢，并且会把丢失的内容重新写入。两个按钮都需要“备份”级别，且文件夹处于启用状态；当该文件夹的备份正在排队或运行时，它们会变灰。如果访客登录后就能使用它们，则会看到<strong>登录后可备份</strong>。</li>
+        <li>备份运行期间，卡片会显示<strong>备份任务 #12 正在进行</strong>，以及任务状态、阶段和进度条；点击编号可打开该任务。</li>
+        <li>各项信息：<strong>最新恢复点</strong>（时间及编号；或<strong>从未备份</strong>）、<strong>定时备份</strong>（例如<strong>每 60 分钟</strong>，并显示<strong>下次备份</strong>；或<strong>仅手动</strong>）、<strong>上次运行</strong>（上一次运行结束的时间；没有发现变化的自动运行也算数，所以它可能比最新恢复点更晚）和<strong>排除项</strong>（永远不会被备份的规则）。</li>
+      </ul>
+
+      <h3>恢复点</h3>
+      <p>每张卡片中的表格列出该文件夹最近的 12 次备份尝试：</p>
+      <ul>
+        <li><strong>#</strong> 是编号；<strong>类型</strong>：文件夹的第一个恢复点为<strong>全量</strong>，之后的为<strong>增量</strong>（每个都显示整个文件夹）；<strong>采集时间</strong>是它的创建时间；<strong>文件数</strong>和<strong>大小</strong>是文件夹当时的内容量。</li>
+        <li><strong>状态</strong>：<span class="tv-chip tv-chip-committed">已提交</span>表示已完成且可用；<span class="tv-chip tv-chip-building">构建中</span>表示仍在创建；<span class="tv-chip tv-chip-failed">失败</span>和<span class="tv-chip tv-chip-aborted">已中止</span>表示没有完成，不显示任何内容（已登录的账号可以把鼠标指向“失败”查看原因）。</li>
+        <li><strong>变化</strong>：<span class="tv-delta tv-add">+3</span> <span class="tv-delta tv-mod">~2</span> <span class="tv-delta tv-del">-1</span> 表示相对于上一个恢复点新增、修改和删除的文件数。<strong>未能备份</strong>统计备份无法读取的项目（大于 0 时显示为 <span class="tv-chip tv-chip-warn">2</span>）。<strong>完整性</strong>显示完整性标签，适用时还有<strong>不完整</strong>。</li>
+        <li><strong>浏览</strong>会在时间机器中打开该恢复点。<strong>校验</strong>（需要“备份”级别）会重新读取每个已存储的对象并核对其校验值；标签会变为已完整校验或校验失败。在备份存储被复制或恢复之后，或者任何时候想确认某个恢复点完好无损，都可以使用它。</li>
+      </ul>
+
+      <h3>最近的任务与“恢复”卡片</h3>
+      <p><strong>最近的任务</strong>列出你可以浏览的文件夹最近的 25 个任务（编号、类型、监控文件夹、状态、创建时间、耗时、<strong>发起人</strong>）；点击编号可打开该任务。只有已登录的账号能看到任务的发起人，也只有他们能看到恢复任务和<strong>恢复</strong>卡片，该卡片说明恢复结果写在哪里（<strong>恢复结果写入</strong>某个网络文件夹之下），或者说明恢复功能已禁用。</p>
+    </section>
+
+    <section id="jobs" class="tv-doc-section">
+      <h2>任务</h2>
+      <p>TimeVault 在后台做的每件事都是一个带编号的<strong>任务</strong>：<strong>备份</strong>、<strong>校验</strong>、<strong>恢复</strong>或<strong>版本清理</strong>。任务在等待轮到自己时是<span class="tv-chip tv-chip-queued">排队中</span>（同一个文件夹的任务依次进行），然后是<span class="tv-chip tv-chip-running">运行中</span>，最后以<span class="tv-chip tv-chip-succeeded">成功</span>、<span class="tv-chip tv-chip-failed">失败</span>或<span class="tv-chip tv-chip-canceled">已取消</span>结束。可以在备份页或发起它的页面中打开任务。</p>
+      <ul>
+        <li><strong>取消任务</strong>会停止排队中或运行中的任务。对该文件夹拥有“备份”级别的人，以及发起恢复的人，可以使用它。</li>
+        <li>各项信息：<strong>监控文件夹</strong>、<strong>恢复点</strong>、<strong>发起人</strong>（仅已登录的账号可见；自动备份的发起人是 <code>scheduler</code>）、<strong>创建时间</strong>、<strong>耗时</strong>和<strong>阶段</strong>，阶段说明任务现在在做什么（例如“扫描并复制”“校验中”“恢复中”）。</li>
+        <li>进度条和计数器显示已完成的工作量，页面每隔一两秒会自动刷新。</li>
+        <li><strong>错误</strong>说明任务失败的原因；访客看到的是<em>任务失败。登录后可查看原因和日志。</em>卡片<strong>日志</strong>仅对已登录的账号显示。</li>
+        <li>恢复任务的页面（仅已登录的账号可见）还有<strong>恢复详情</strong>和一个<strong>项目</strong>表格，列有名称、操作、结果（<span class="tv-chip tv-chip-ok">成功</span>、<span class="tv-chip tv-chip-skipped">已跳过</span>或<span class="tv-chip tv-chip-failed">失败</span>）、大小和说明。标签页<strong>全部</strong>和<strong>仅失败项</strong>用来筛选，<strong>加载更多</strong>会再显示 200 项。每个失败的项目都会列出；非常大的恢复中，其他项目的列表在 20,000 项之后停止。</li>
+      </ul>
+      <p class="tv-doc-note"><strong>注意：</strong>只要有任何项目未能恢复，恢复任务就会以“失败”结束，即使其他内容都已复制。这也包括你用部分恢复选项排除在外的受阻项目。请打开<strong>仅失败项</strong>查看是哪些项目以及原因。</p>
+      <p class="tv-doc-note"><strong>注意：</strong>没有发现变化的自动备份不会留下任务，所以你看到正在运行的任务，结束时可能已经不存在了。</p>
+    </section>
+
+    <section id="automatic" class="tv-doc-section">
+      <h2>自动备份与保留的版本</h2>
+
+      <h3>自动备份</h3>
+      <ul>
+        <li>文件夹可以每隔 N 分钟（1 到 43200）自动备份一次；由拥有“完全控制”的人在<a href="#settings">设置</a>中设定。间隔从上一次备份结束时开始计算。备份页和设置页会显示计划和下次备份的时间（或<strong>即将开始</strong>）；<strong>仅手动</strong>表示没有计划。同时到期的文件夹会被错开，所以备份可能比显示的时间稍晚开始。</li>
+        <li>没有发现变化的自动备份不会记录任何内容：没有恢复点、没有任务、没有审计记录。<strong>上次运行</strong>仍会更新，而<strong>最新恢复点</strong>保持不变。<strong>立即备份</strong>则总会记录一个恢复点。</li>
+        <li>已停用的文件夹不会被备份。设置计划或重新启用文件夹时，如果上次运行早于间隔，会立即开始一次备份。</li>
+      </ul>
+
+      <h3>每个文件保留的版本数</h3>
+      <ul>
+        <li>每个文件夹可以限制每个文件保留多少个版本（1 到 10000；0 表示全部保留）。设置页把<strong>保留的版本</strong>显示为<em>每个文件的全部版本</em>或<em>每个文件最新的 N 个</em>。</li>
+        <li>每次备份之后，它改动过的文件超出上限的版本会被<strong>永久</strong>删除，没有任何东西再使用的存储空间会被释放（空闲空间的变化可能要过一阵子才看得到）。失去版本的恢复点会被标记为<strong>不完整</strong>：它不再完整显示每个文件当时的样子，所以从它恢复可能不完整。</li>
+        <li>对已有历史的文件夹设置上限或调低上限，会为整个文件夹排入一个<strong>版本清理</strong>任务。表单会先显示将删除多少个文件的多少个版本，并要求你勾选<strong>我知道这些版本会被永久删除</strong>。清理运行期间，该文件夹的恢复和校验会被拒绝，上限也不能更改。</li>
+      </ul>
+      <p class="tv-doc-note"><strong>警告：</strong>被删除的版本无法找回。没有上限时，对一直在变化的文件夹使用很短的间隔，会让备份存储无限增长。</p>
+    </section>
+
+    <section id="audit" class="tv-doc-section">
+      <h2>审计</h2>
+      <p><strong>审计日志</strong>页（仅已登录的账号可见）记录登录、备份、校验、恢复、监控文件夹的变更、被拒绝的请求和程序更新。应用程序无法修改或删除这些记录。管理员能看到全部事件；其他人看到的是他们可以浏览的文件夹的事件，以及不属于任何文件夹的事件（例如登录）。表格上方的列表（<strong>按操作筛选</strong>）只保留一种操作；<strong>全部操作</strong>显示所有事件。最新的事件在最前，每次 50 条；<strong>加载更多</strong>显示更早的事件。</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>列</th><th>显示什么</th></tr></thead>
+          <tbody>
+            <tr><td>时间</td><td class="tv-small">日期和时间，精确到秒。</td></tr>
+            <tr><td>用户</td><td class="tv-small">操作者：工号，或者服务自身使用的 <code>scheduler</code> 或 <code>updater</code>。</td></tr>
+            <tr><td>操作</td><td class="tv-small">发生了什么，例如登录、备份结束、请求恢复、访问被拒绝。</td></tr>
+            <tr><td>对象</td><td class="tv-small">涉及的对象，例如某个恢复点或任务及其编号。</td></tr>
+            <tr><td>结果</td><td class="tv-small"><span class="tv-chip tv-chip-audit-ok">成功</span>、<span class="tv-chip tv-chip-audit-denied">已拒绝</span>或<span class="tv-chip tv-chip-audit-failed">失败</span>。</td></tr>
+            <tr><td>耗时</td><td class="tv-small">备份、校验、恢复或清理运行了多久；备份和恢复还会显示速度，例如“41.2 MB/s”。</td></tr>
+            <tr><td>来源</td><td class="tv-small">请求来自的网络地址。</td></tr>
+            <tr><td>详情</td><td class="tv-small">补充信息。“谁能做什么”的列表只向对该文件夹拥有“完全控制”的人显示（其他人看到 <code>[hidden]</code>），而服务器磁盘上的文件夹，对管理员以外的所有人都会被替换为显示文件夹。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="settings" class="tv-doc-section">
+      <h2>设置</h2>
+      <p>任何已登录的账号都可以打开设置。它介绍你可以浏览的监控文件夹以及服务的配置情况；你能更改什么取决于你的级别。</p>
+
+      <h3>监控文件夹</h3>
+      <p>每个文件夹一张卡片：它的名称，标签（<strong>已停用</strong>、对管理员显示的<strong>还没有显示文件夹</strong>，以及你的级别），显示文件夹（管理员还会看到<strong>服务器上</strong>），以及这些信息：<strong>自动备份</strong>、<strong>最新恢复点</strong>、<strong>上次运行</strong>、<strong>上次耗时</strong>、<strong>保留的版本</strong>和<strong>排除项</strong>。拥有“完全控制”时，你还会看到<strong>谁能做什么</strong>（摘要）和<strong>编辑</strong>。</p>
+
+      <h3>修改文件夹</h3>
+      <p>点击<strong>编辑</strong>，修改下面的字段，然后点击<strong>保存更改</strong>（或<strong>取消</strong>）。更改立即生效。</p>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>字段</th><th>作用</th></tr></thead>
+          <tbody>
+            <tr><td>显示文件夹</td><td class="tv-small">人们用来打开该文件夹的网络路径，例如 <code>\\server\share\folder</code>。当服务设置中配置了服务器的主机名时，它是必填项，且该文件夹必须位于本服务器上。</td></tr>
+            <tr><td>服务器上的文件夹</td><td class="tv-small">仅管理员可见。文件夹一旦有了恢复点就会被锁定：要迁移文件夹，请停用旧的并添加新的。</td></tr>
+            <tr><td>排除规则（每行一条）</td><td class="tv-small">永远不会被备份的名称。不区分大小写；<code>*</code> 和 <code>?</code> 可匹配名称中的任意字符；含有斜杠的规则会与监控文件夹之下的完整路径比较。</td></tr>
+            <tr><td>备份此文件夹</td><td class="tv-small">取消勾选即停用该文件夹：完全不再备份，但它的历史仍可浏览。</td></tr>
+            <tr><td class="tv-small">自动备份，间隔 … 分钟（1 到 43200）；每个文件保留的版本数（0 表示全部保留）</td><td class="tv-small">见<a href="#automatic">自动备份与保留的版本</a>。</td></tr>
+            <tr><td>谁能做什么</td><td class="tv-small">三个列表：浏览、备份、完全控制。勾选<strong>访客（未登录）</strong>（仅限“浏览”）、<strong>所有已登录的人</strong>，或勾选指定的人（<strong>查找人员…</strong>可在列表中查找）。取最高的级别。在同一个列表中，一个组不能与另一个组或指定的人员同时选择。每个文件夹最多可指定 500 人。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="tv-doc-note"><strong>注意：</strong>如果你拥有“完全控制”但不是管理员，而你的更改会让你失去它，请先勾选<strong>我知道之后我将不能再修改这个文件夹（管理员可以把权限重新授予我）</strong>。如果在你编辑期间别人修改了谁能做什么，则不会保存任何内容：请检查页面现在显示的列表，重新做一次你的修改并保存。</p>
+
+      <h3>添加文件夹（管理员）</h3>
+      <p>点击<strong>添加文件夹</strong>，填写同样的字段，然后点击<strong>添加监控文件夹</strong>。<strong>服务器上的文件夹</strong>必须是本机文件夹，不能与备份存储、恢复文件夹或其他监控文件夹重叠；它只会被读取。排除规则初始为 <code>$RECYCLE.BIN</code>、<code>System Volume Information</code>、<code>Thumbs.db</code> 和 <code>~$*</code>。新文件夹在你授权给某人之前，只有管理员能看到。</p>
+
+      <h3>存储、服务与更新</h3>
+      <ul>
+        <li><strong>备份存储</strong>显示备份保存的位置（管理员看到的是带真实文件夹的<strong>备份文件夹（仓库）</strong>）、它的状态和剩余空间，以及以网络文件夹形式显示的<strong>恢复文件夹（恢复出的副本放这里）</strong>，或者显示<strong>未配置</strong>。这两者在服务设置中配置（<code>.env</code> 文件中的 <code>TIMEVAULT_REPOSITORY_PATH</code> 和 <code>TIMEVAULT_RESTORE_ROOT</code>），重启服务后才会生效。</li>
+        <li><strong>服务</strong>卡片是只读的。它显示<strong>版本</strong>以及服务的配置情况：<strong>服务器主机名</strong>、<strong>监听地址</strong>、<strong>数据库</strong>、<strong>用户账号（Redis）</strong>、<strong>Web 日志</strong>（接收每次打开页面和每次操作所生成日志行的列表，以及这些行中使用的主机名；或显示“关闭”）、<strong>单点登录</strong>、<strong>地址前缀</strong>、<strong>本地管理员</strong>、<strong>搜索（Everything）</strong>、<strong>登录有效期</strong>和<strong>安全 Cookie</strong>。机密信息绝不会显示。<strong>状态</strong>按钮会打开<a href="#status">状态</a>页。</li>
+        <li><strong>程序更新</strong>说明 TimeVault 是否会自行更新：当发布了不同的版本时，服务会下载并检查它，等待正在运行的任务结束，然后重新启动自己；这期间提交的任务会在队列中等待。状态为<span class="tv-chip tv-chip-update-idle">已是最新</span>、<span class="tv-chip tv-chip-update-checking">正在检查</span>、<span class="tv-chip tv-chip-update-downloading">正在下载</span>、<span class="tv-chip tv-chip-update-waiting">等待正在运行的任务</span>、<span class="tv-chip tv-chip-update-applying">正在安装</span>或<span class="tv-chip tv-chip-update-error">出现问题</span>。管理员还会看到发布地址和最近的问题，并可点击<strong>立即检查</strong>。</li>
+      </ul>
+    </section>
+
+    <section id="status" class="tv-doc-section">
+      <h2>状态</h2>
+      <p><strong>服务状态</strong>页（仅已登录的账号可见；通过页脚中的<strong>状态</strong>，或设置页<strong>服务</strong>卡片中的<strong>状态</strong>打开）会写明检查时间，并列出每个<strong>组件</strong>及其<strong>状态</strong>和<strong>详情</strong>。状态有<span class="tv-chip tv-chip-status-ok">正常</span>、<span class="tv-chip tv-chip-status-degraded">降级</span>（仍在工作，但有问题）、<span class="tv-chip tv-chip-status-disabled">未启用</span>（尚未设置）和<span class="tv-chip tv-chip-status-failed">故障</span>。</p>
+      <ul>
+        <li><strong>数据库</strong>：正常；没有响应时为故障。</li>
+        <li><strong>备份仓库</strong>（备份存储）：写入测试和剩余空间。剩余不足 5% 时为降级，无法写入时为故障。</li>
+        <li><strong>搜索（Everything）</strong>：正常；没有设置时为未启用；没有正常响应时为降级。</li>
+        <li><strong>用户账号（Redis）</strong>：没有响应时为降级；浏览和本地管理员仍可使用，但其他账号无法登录。没有配置时为未启用：只有本地管理员可以登录。</li>
+        <li><strong>恢复</strong>：正常；没有恢复文件夹时为未启用。<strong>任务队列</strong>：在你可以浏览的文件夹中，有多少任务正在运行和排队。</li>
+        <li><strong>VSS 快照</strong>和 <strong>USN 日志</strong>始终为未启用：TimeVault 读取的是实时磁盘。</li>
+      </ul>
+    </section>
+
+    <section id="faq" class="tv-doc-section">
+      <h2>常见问题</h2>
+
+      <h3>我看不到某个监控文件夹（“未找到该页面、文件夹或恢复点，或者你没有权限查看它。”）</h3>
+      <p>文件夹只对被授权的人可见。如果还没有登录，请先登录；否则请联系管理员，或对该文件夹拥有“完全控制”的人，给你授权（设置、<strong>编辑</strong>、<strong>谁能做什么</strong>）。</p>
+
+      <h3>“你没有权限执行此操作。”</h3>
+      <p>你能看到该文件夹，但你的级别不够：备份、校验或停止任务需要“备份”级别，修改设置需要“完全控制”，而添加文件夹只有管理员才能做。这次尝试会作为<strong>访问被拒绝</strong>记入审计日志。</p>
+
+      <h3>恢复按钮不见了或被禁用</h3>
+      <p>你没有登录（<strong>登录后可恢复文件</strong>）；或者没有设置恢复文件夹（<em>由于未配置恢复目录，恢复功能已禁用。</em>），需要管理员处理；或者你没有勾选任何项目（<strong>恢复所选项…</strong>保持禁用）；或者该恢复点<strong>不可恢复</strong>，请选择另一个。</p>
+
+      <h3>登录失败</h3>
+      <p><em>账号或密码错误。</em>请检查输入的内容；用工号最稳妥。<em>失败次数过多，请等待几分钟后再试。</em>请等待大约十分钟，即使最后一次的密码是对的也一样。<em>无法连接用户账号服务。</em>请稍后再试；浏览仍然可用。</p>
+
+      <h3>使用 Windows 账号登录（SSO）不成功</h3>
+      <p>如果浏览器拦截了登录窗口，请允许本站弹出窗口后重试。如果 Windows 无法识别你的身份，或者你的 Windows 账号在这里没有可用的账号，请在公司电脑上打开 TimeVault，或使用密码登录。其他情况请在同一台电脑的同一个浏览器中重试。</p>
+
+      <h3>搜索提示不可用</h3>
+      <p>搜索引擎没有响应，或者尚未设置。其他功能都不受影响；请稍后再试，如果持续出现，请告知管理员。</p>
+
+      <h3>任务页面显示“未找到”，或者任务不见了</h3>
+      <p>没有发现变化的自动备份不会留下任务。你无权浏览的文件夹的任务，对你来说同样是“未找到”。</p>
+
+      <h3>没有“立即备份”，或者文件夹显示“已停用”</h3>
+      <p>已停用的文件夹不能被备份，但它的历史仍可浏览。管理员或拥有“完全控制”的人可以在设置中重新启用它（<strong>备份此文件夹</strong>）。你还需要“备份”级别。</p>
+
+      <h3>“表单已过期或无效，请刷新页面后重试。”</h3>
+      <p>页面或你的登录太旧了。请刷新页面（<kbd>F5</kbd>），如有提示请重新登录，然后重复刚才的操作。</p>
+
+      <h3>“预览已过期……”“该监控文件夹正在备份”或“该监控文件夹的旧版本正在删除”</h3>
+      <p>恢复预览在 15 分钟后或发生变化（例如目标文件夹里的文件变了）时会过期：请查看新的预览，再次点击<strong>开始恢复</strong>。同一个文件夹的任务依次进行，所以对另外两条提示，请等正在运行的任务结束后再试。</p>
+
+      <h3>文件显示“未能备份”，或一直是“新增”</h3>
+      <p><strong>未能备份</strong>：备份无法读取该文件（例如被其他程序锁定，或读取时发生了变化）。把鼠标指向该标签可看到原因，请稍后再运行一次备份；这样的文件无法从该恢复点恢复。<strong>新增</strong>在下一次备份成功后会变成<strong>已保护</strong>；如果它一直是新增，请查看备份页上的<strong>排除项</strong>，因为匹配排除规则的文件永远不会被备份。</p>
+
+      <h3>“当前无法读取该文件夹，但时间机器中的历史记录仍可使用。”或“服务器发生内部错误。”</h3>
+      <p>前一条表示目前无法在服务器上访问该监控文件夹；历史记录和恢复仍可使用。对于后一条，请记下页面上的<strong>参考编号</strong>。两种情况如果持续出现，都请告知管理员。</p>
+    </section>
+
+    <section id="glossary" class="tv-doc-section">
+      <h2>标签词汇表</h2>
+      <div class="tv-table-wrap">
+        <table class="tv-table">
+          <thead><tr><th>标签</th><th>含义</th><th>见于</th></tr></thead>
+          <tbody>
+            <tr><td><span class="tv-chip tv-chip-protected">已保护</span></td><td class="tv-small">与最新恢复点中的一致。</td><td><a href="#explorer">文件浏览</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-changed">已变更</span></td><td class="tv-small">与最新恢复点不同。</td><td><a href="#explorer">文件浏览</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-new">新增</span></td><td class="tv-small">还不在最新恢复点中。</td><td><a href="#explorer">文件浏览</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-not_captured">未能备份</span></td><td class="tv-small">备份无法读取它，没有副本。</td><td><a href="#explorer">文件浏览</a>、<a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">已删除</span></td><td class="tv-small">在最新恢复点中，但已从磁盘上消失。</td><td><a href="#explorer">文件浏览</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-same">未变化</span></td><td class="tv-small">在最新恢复点中相同。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-modified">之后被修改</span></td><td class="tv-small">在最新恢复点中不同。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-deleted">之后被删除</span></td><td class="tv-small">已不在最新恢复点中。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-live">实时扫描</span></td><td class="tv-small">读取自实时磁盘，而非快照。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-old">较早的恢复点</span></td><td class="tv-small">不是最新的恢复点。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">不可恢复</span></td><td class="tv-small">没有通过完整性校验。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">不完整</span></td><td class="tv-small">部分较早的版本已被删除。</td><td><a href="#automatic">自动备份</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-pending">待处理</span></td><td class="tv-small">完整性尚未检查。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-validated">已验证提交</span></td><td class="tv-small">备份结束时已检查。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-verified">已完整校验</span></td><td class="tv-small">对所有已存储内容的深度校验已通过。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">校验失败</span></td><td class="tv-small">完整性：发现内容缺失或已损坏。</td><td><a href="#history">时间机器</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-same">当前版本</span></td><td class="tv-small">文件的最新状态。</td><td><a href="#versions">文件版本</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-validated tv-chip-available">可用</span></td><td class="tv-small">已存储的副本可以恢复。</td><td><a href="#versions">文件版本</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">内容缺失</span></td><td class="tv-small">已存储的副本已从备份存储中丢失。</td><td><a href="#versions">文件版本</a></td></tr>
+            <tr><td><span class="tv-chip">文件夹</span></td><td class="tv-small">这个条目是一个文件夹。</td><td><a href="#versions">文件版本</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-queued">排队中</span></td><td class="tv-small">等待轮到自己。</td><td><a href="#jobs">任务</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-running">运行中</span></td><td class="tv-small">正在进行。</td><td><a href="#jobs">任务</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-succeeded">成功</span></td><td class="tv-small">已成功完成；也用于恢复的项目和审计中已完成的操作。</td><td><a href="#jobs">任务</a>、<a href="#audit">审计</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-failed">失败</span></td><td class="tv-small">没有成功：任务、恢复点、恢复的项目或审计中的操作。</td><td><a href="#jobs">任务</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-canceled">已取消</span></td><td class="tv-small">被人停止。</td><td><a href="#jobs">任务</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-building">构建中</span></td><td class="tv-small">仍在创建的恢复点。</td><td><a href="#backups">备份</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-committed">已提交</span></td><td class="tv-small">已完成且可用的恢复点。</td><td><a href="#backups">备份</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-aborted">已中止</span></td><td class="tv-small">被中断的恢复点。</td><td><a href="#backups">备份</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">浏览</span></td><td class="tv-small">查看文件夹并从中恢复。</td><td><a href="#signin">权限</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">备份</span></td><td class="tv-small">浏览，外加备份、校验、停止任务。</td><td><a href="#signin">权限</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-level">完全控制</span></td><td class="tv-small">备份，外加修改设置和权限。</td><td><a href="#signin">权限</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-skipped">已停用</span></td><td class="tv-small">不会被备份；历史保留。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-warn">还没有显示文件夹</span></td><td class="tv-small">该文件夹还没有显示文件夹。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-mkdir">创建文件夹</span></td><td class="tv-small">将创建该文件夹。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-dir_exists">文件夹已存在</span></td><td class="tv-small">该文件夹已经在那里。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-create">创建</span></td><td class="tv-small">将复制该文件。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-overwrite">替换</span></td><td class="tv-small">那里不同的文件将被替换。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-rename">另存为副本</span></td><td class="tv-small">那里有不同的文件；以新名称保存。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-skip_same">已完全一致</span></td><td class="tv-small">相同的文件已经在那里；已跳过。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-skip_exists">保留已有</span></td><td class="tv-small">那里不同的文件保持不动。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-action-blocked">受阻</span></td><td class="tv-small">无法恢复；“问题”会说明原因。</td><td><a href="#restore">恢复文件</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-skipped">已跳过</span></td><td class="tv-small">没有恢复：它已经在那里。</td><td><a href="#jobs">任务</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-audit-denied">已拒绝</span></td><td class="tv-small">该操作被拒绝。</td><td><a href="#audit">审计</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-status-ok">正常</span></td><td class="tv-small">组件工作正常。</td><td><a href="#status">状态</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-status-degraded">降级</span></td><td class="tv-small">仍在工作，但有问题。</td><td><a href="#status">状态</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-status-disabled">未启用</span></td><td class="tv-small">尚未设置，或不属于本版本。</td><td><a href="#status">状态</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-status-failed">故障</span></td><td class="tv-small">组件无法工作。</td><td><a href="#status">状态</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-idle">已是最新</span></td><td class="tv-small">正在运行的版本就是已发布的版本。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-checking">正在检查</span></td><td class="tv-small">正在查找新版本。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-downloading">正在下载</span></td><td class="tv-small">正在获取新版本。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-waiting">等待正在运行的任务</span></td><td class="tv-small">它们结束后更新才会开始。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-applying">正在安装</span></td><td class="tv-small">正在安装并重新启动。</td><td><a href="#settings">设置</a></td></tr>
+            <tr><td><span class="tv-chip tv-chip-update-error">出现问题</span></td><td class="tv-small">最近一次检查或安装失败了。</td><td><a href="#settings">设置</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="administrators" class="tv-doc-section">
+      <h2>给管理员</h2>
+      <p>服务的安装、配置和运行，在 TimeVault 代码仓库的 <code>docs</code> 文件夹中的技术文档里有说明。本应用不提供这些文档；请向维护该服务的人索取副本。</p>
+      <ul>
+        <li><code>runbook.md</code>：安装与设置（<code>.env</code> 文件）、文件夹权限、单点登录、搜索、调度器、程序更新、运维和故障排查。</li>
+        <li><code>security.md</code>：安全模型及其已知局限。</li>
+        <li><code>api.md</code>：JSON API 和页面路由。</li>
+      </ul>
+    </section>
+  </article>
+</div>
+{{end}}
+{{end}}

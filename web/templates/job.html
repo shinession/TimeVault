@@ -8,7 +8,7 @@
 </nav>
 
 <section class="tv-card tv-job" data-job-id="{{.View.Job.ID}}"{{if .View.Active}} data-job-active="1"{{end}} data-job-reload>
-  <div class="tv-card-head">
+  <div class="tv-card-head" {{$.Tour "job.card"}}>
     <h1>{{$.JobKindLabel .View.Job.Kind}} <span class="tv-chip tv-chip-{{.View.Job.State}}" data-job-field="state">{{$.StateLabel .View.Job.State}}</span></h1>
     {{if .CanCancel}}
     <form method="post" action="{{url (printf "/jobs/%d/cancel" .View.Job.ID)}}" class="tv-inline-form">
@@ -18,7 +18,7 @@
     {{end}}
   </div>
 
-  <dl class="tv-facts">
+  <dl class="tv-facts" {{$.Tour "job.facts"}}>
     {{if .Source}}<div><dt>{{$.T "common.source"}}</dt><dd><a href="{{url "/explorer" "source" .Source.ID}}">{{.Source.Name}}</a></dd></div>{{end}}
     {{if .Point}}<div><dt>{{$.T "job.point"}}</dt><dd><a href="{{url "/history" "source" .Point.SourceID "point" .Point.ID}}">#{{.Point.Seq}} · {{$.Time .Point.CapturedAt}}</a></dd></div>{{end}}
     <div><dt>{{$.T "jobs.by"}}</dt><dd>{{if $.SignedIn}}{{template "person" (pair $ .View.Job.RequestedBy)}}{{.View.Job.RequestedBy}}{{else}}-{{end}}</dd></div>
@@ -28,15 +28,15 @@
   </dl>
 
   {{if .View.Active}}
-  {{if ge .View.Pct 0}}<progress class="tv-progress" max="100" value="{{.View.Pct}}" data-job-progress></progress>
-  {{else}}<progress class="tv-progress" max="100" data-job-progress></progress>{{end}}
+  {{if ge .View.Pct 0}}<progress class="tv-progress" max="100" value="{{.View.Pct}}" data-job-progress {{$.Tour "job.progress"}}></progress>
+  {{else}}<progress class="tv-progress" max="100" data-job-progress {{$.Tour "job.progress"}}></progress>{{end}}
   {{end}}
 
   {{if .View.Job.Error}}<div class="tv-alert tv-alert-error" role="alert"><strong>{{$.T "job.error"}}:</strong> <span data-job-field="error">{{.View.Job.Error}}</span></div>
   {{else if and (not $.SignedIn) (eq .View.Job.State "failed")}}<div class="tv-alert tv-alert-info" role="note">{{$.T "job.sign_in_for_details"}}</div>{{end}}
 
   {{if .View.Counters}}
-  <ul class="tv-counters" data-job-counters>
+  <ul class="tv-counters" data-job-counters {{$.Tour "job.counters"}}>
     {{range .View.Counters}}<li><span class="tv-counter-value">{{if .Bytes}}{{bytes .Value}}{{else}}{{.Value}}{{end}}</span><span class="tv-counter-label">{{$.T .Key}}</span></li>{{end}}
   </ul>
   {{end}}
@@ -55,7 +55,7 @@
   </dl>
 </section>
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "job.items"}}>
   <div class="tv-card-head">
     <h2>{{template "icon" "file"}} {{$.T "job.items"}}</h2>
     <div class="tv-tabs">
@@ -86,7 +86,7 @@
 {{end}}
 
 {{if $.SignedIn}}
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "job.log"}}>
   <div class="tv-card-head"><h2>{{template "icon" "clock"}} {{$.T "job.log"}}</h2></div>
   {{if .Events}}
   <ol class="tv-log" data-job-log data-last-event="{{(index .Events (add (len .Events) -1)).ID}}">

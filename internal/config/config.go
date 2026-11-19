@@ -110,6 +110,14 @@ type Config struct {
 	LogLevel slog.Level
 	LogJSON  bool
 
+	// WebLog says whether the service appends lines to the web log that the company applications share, a list in
+	// the Redis of the user directory (TIMEVAULT_WEB_LOG): on by default when TIMEVAULT_REDIS_URL is set.
+	WebLog bool
+	// WebLogKey is the Redis list of the web log (TIMEVAULT_WEB_LOG_KEY), web_log by default.
+	WebLogKey string
+	// WebLogHost is the host name that ends every line (TIMEVAULT_WEB_LOG_HOST): the name of this computer in lower
+	// case unless it is set.
+	WebLogHost string
 	// EnvFile is the .env file the settings were read from, if any. It is set by the caller of LoadEnv.
 	EnvFile string
 	// EnvOverrides names the settings of EnvFile that the process environment overrides (see EnvOverrides).
@@ -223,6 +231,7 @@ func Load(lookup Lookup) (Config, error) {
 	default:
 		l.errs = append(l.errs, errors.New("TIMEVAULT_LOG_FORMAT must be text or json"))
 	}
+	c.parseWebLog(&l)
 
 	if c.SessionTTL < 5*time.Minute || c.SessionTTL > 30*24*time.Hour {
 		l.errs = append(l.errs, errors.New("TIMEVAULT_SESSION_TTL must be between 5m and 720h"))
@@ -379,6 +388,9 @@ func (c Config) LogAttrs() []any {
 		"scheduler_rest", autoText(c.SchedulerRestAuto, c.SchedulerRest),
 		"scheduler_everything_probe", c.SchedulerEverythingProbe,
 		"process_priority", c.ProcessPriority,
+		"web_log", c.WebLog,
+		"web_log_key", c.WebLogKey,
+		"web_log_host", c.WebLogHost,
 	}
 }
 
@@ -410,6 +422,9 @@ type Deployment struct {
 	AuthDisabled       bool
 	SessionTTL         time.Duration
 	CookieSecure       bool
+	WebLog             bool   // whether lines are written to the shared web log in Redis
+	WebLogKey          string // the Redis list of the web log
+	WebLogHost         string // the host name that ends every line of the web log
 }
 
 // Describe summarises the configuration for display.
@@ -432,6 +447,9 @@ func (c Config) Describe() Deployment {
 		UpdateRestart:      c.UpdateRestart,
 		SessionTTL:         c.SessionTTL,
 		CookieSecure:       c.CookieSecure,
+		WebLog:             c.WebLog,
+		WebLogKey:          c.WebLogKey,
+		WebLogHost:         c.WebLogHost,
 	}
 	if c.AdminPasswordHash != "" {
 		d.LocalAdmin = c.AdminUser
@@ -633,7 +651,7 @@ func parseUpdateURL(raw string) (string, error) {
 // only taken to carry the base path when it starts with it, so a base path that begins with one of these would make
 // the application's own addresses ambiguous.
 var reservedBasePaths = []string{"static", "api", "login", "logout", "auth", "lang", "explorer", "history", "versions",
-	"backups", "jobs", "restore", "audit", "status", "settings", "healthz"}
+	"backups", "jobs", "restore", "audit", "status", "settings", "healthz", "help"}
 
 // ParseBasePath normalises the path prefix the site is served under: "tv", "/tv" and "/tv/" all become "/tv", while ""
 // and "/" become "" (no prefix). Every segment may only hold letters, digits and - _ . ~, so the prefix is the same
@@ -695,6 +713,60 @@ func (c Config) IsTrustedProxy(addr netip.Addr) bool {
 		}
 	}
 	return false
+}
+
+// DefaultWebLogKey is the list the company applications write their web log to.
+const DefaultWebLogKey = "web_log"
+
+// parseWebLog reads TIMEVAULT_WEB_LOG, TIMEVAULT_WEB_LOG_KEY and TIMEVAULT_WEB_LOG_HOST. The web log is written to the
+// Redis of TIMEVAULT_REDIS_URL, so "auto" (the default) is on exactly when that is set. The key must not be able to
+// name something of the accounts: the web log appends to a list, and a key in the namespace of the accounts or of the
+// single sign-on results would be a way to write there.
+func (c *Config) parseWebLog(l *loader) {
+	switch v := strings.ToLower(l.str("TIMEVAULT_WEB_LOG", "auto")); v {
+	case "auto":
+		c.WebLog = c.RedisURL != ""
+	case "on", "true", "1", "yes":
+		c.WebLog = true
+		if c.RedisURL == "" {
+			l.errs = append(l.errs, errors.New("TIMEVAULT_WEB_LOG is on, but TIMEVAULT_REDIS_URL is not set: the web log is written to that Redis"))
+		}
+	case "off", "false", "0", "no":
+		c.WebLog = false
+	default:
+		l.errs = append(l.errs, errors.New("TIMEVAULT_WEB_LOG must be on, off or auto"))
+	}
+
+	c.WebLogKey = l.str("TIMEVAULT_WEB_LOG_KEY", DefaultWebLogKey)
+	lower := strings.ToLower(c.WebLogKey)
+	switch {
+	case len(c.WebLogKey) > 128 || !onlyOf(c.WebLogKey, "_.:-"):
+		l.errs = append(l.errs, errors.New("TIMEVAULT_WEB_LOG_KEY may only have letters, digits and _ . : - (at most 128 characters)"))
+	case strings.HasPrefix(lower, "sso_login_") || (c.RedisKeyPrefix != "" && strings.HasPrefix(lower, strings.ToLower(c.RedisKeyPrefix))):
+		l.errs = append(l.errs, errors.New("TIMEVAULT_WEB_LOG_KEY must not start like the keys of the accounts (TIMEVAULT_REDIS_KEY_PREFIX) or of the single sign-on results (sso_login_)"))
+	}
+
+	c.WebLogHost = l.str("TIMEVAULT_WEB_LOG_HOST", "")
+	switch {
+	case c.WebLogHost == "":
+		if h, err := os.Hostname(); err == nil && h != "" {
+			c.WebLogHost = strings.ToLower(h)
+		} else {
+			c.WebLogHost = "unknown"
+		}
+	case len(c.WebLogHost) > 63 || !onlyOf(c.WebLogHost, "._-"):
+		l.errs = append(l.errs, errors.New("TIMEVAULT_WEB_LOG_HOST may only have letters, digits and . - _ (at most 63 characters)"))
+	}
+}
+
+// onlyOf reports whether s is not empty and holds only ASCII letters, digits and the characters of extra.
+func onlyOf(s, extra string) bool {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune(extra, r)) {
+			return false
+		}
+	}
+	return s != ""
 }
 
 type loader struct {

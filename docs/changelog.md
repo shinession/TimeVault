@@ -4,6 +4,48 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 1.0.0
+
+The first official release. It is still the vertical slice that [mvp-status.md](./mvp-status.md) describes, and its limits stand (the live disk, no VSS or NTFS USN journal, no TLS of its own). Three things are new: the console log names the user and the address of every request; the service writes a **web log** to the Redis list that the company's other applications share, which is the first time TimeVault writes to Redis ([ADR 0016](./adr/0016-web-log-in-the-shared-redis-list.md)); and every page but the sign-in page has a **Documentation** button (the user guide) and a **Guide** button (a step-by-step tour of the page). No migration and no setting is required. Nobody has published 1.0.0 yet: `.\scripts\release.ps1` builds the release, and publishing it to the folder that the servers read is the administrator's decision.
+
+### Added
+
+- **The web log in Redis.** With `TIMEVAULT_REDIS_URL` set, the service appends lines to the list `web_log` of that Redis (the same database), the list that the company's other applications write their web log to. A line is `ip | YYYY-MM-DD HH:MM:SS.ffffff | message | status | level | host`, for example `10.0.0.5 | 2026-11-18 14:05:12.250431 | TimeVault: /explorer user=E123456 0.112(s) | 200 | info | sgmeslt595`, and an element of the list is `zlib.compress(pickle.dumps(line, protocol=4))`, written the way Python writes it, so what reads the lines of the other applications reads these too. TimeVault never adds a field: the account is in the message as `user=<employee ID>` (`guest` for a visitor who has not signed in). The address is that of the browser (`127.0.0.1` for what the service does on its own), the time is the local time of the server, and the last field is `TIMEVAULT_WEB_LOG_HOST` or, by default, the computer name in lower case. What is written:
+  - **A page that somebody opened:** `TimeVault: <route> user=<employee ID or guest> <seconds>(s)`: the route that matched (`/explorer`, `/jobs/12`; never the address as it was typed: no query, no path, no search text, and `(not found)` for an address that matched nothing), the user and how long the page took to build. `info`, or `warning` for a `4xx`. Not written: static files, `/healthz`, API calls, redirects, and the reloads that the page script makes by itself while a job that the page shows runs or when it has finished (the request header `X-TV-Auto: 1`).
+  - **A request that failed on the server** (any `5xx`, the API too, and a panic): `TimeVault: error <route> user=<employee ID> ref=<reference>`, `error`. `ref` is the reference that the error page shows and that the console log holds as `id=` together with the error text; the error text itself is never written to Redis.
+  - **Every audit event,** once it is stored in the database: what people do, and what the scheduler and the updater do. For example `TimeVault: backup.request source=3 user=E123456`, `TimeVault: backup.finish source=3 point=17 user=scheduler 12.400(s)` and `TimeVault: access.denied method=POST route=/settings/sources user=E1001`. `ok` is `info` (status 200), `denied` is `warning` (403) and `failed` is `error` (500). The name that was typed at a failed sign-in, which may be a password, is never copied (`user=-`).
+  - **The scheduler and the service:** `TimeVault: scheduler.queued source=<id> user=scheduler`, `TimeVault: scheduler.error [source=<id>] user=scheduler` (a warning, at most once per folder and minute, like the warning in the console), `TimeVault: started version=1.0.0` once everything is built, and `TimeVault: stopped` when the service stops.
+  - **Only with `TIMEVAULT_LOG_LEVEL=debug`:** the page line of API calls (the polling of a job) and of the automatic reloads, and `scheduler.skipped` (the search engine saw no change). The other log levels change nothing in the web log.
+- **The web log is best effort and never gets in the way.** `Write` only puts a line into a queue of 1,024, and a worker sends up to 100 lines with one `RPUSH`. A flood is cut at the door (page lines: 10 per second on average, a burst of 100; event lines: 20 per second, a burst of 200), a full queue drops the line, and after a failed `RPUSH` the worker leaves Redis alone for 30 seconds, then longer, up to 5 minutes, and drops what comes meanwhile; it says so with one warning, with the password of the URL masked. At shutdown the queue is sent first, for at most 3 seconds. TimeVault never trims or expires the list: it is shared, and the other applications manage it. Nothing that a visitor typed, no path, no file or folder name and no error text is written: only routes, numbers, employee IDs and addresses. The details are in [Web log](./runbook.md#web-log).
+- **Three settings:** `TIMEVAULT_WEB_LOG` (`auto`, the default, is on exactly when `TIMEVAULT_REDIS_URL` is set; `on` needs it; `off`), `TIMEVAULT_WEB_LOG_KEY` (default `web_log`; it must not start like the keys of the accounts or of the single sign-on results) and `TIMEVAULT_WEB_LOG_HOST`. The start-up log has `web_log`, `web_log_key` and `web_log_host`, and, when the web log is on, a second line, `web log is on`, with the list, the host name and the Redis as `host:port/db`, never the password. The Settings page has a **Web log** row in the **Service** card, and `GET /api/v1/settings` has `web_log` (`enabled`, `key`, `host`).
+- **Two round buttons: Documentation and Guide.** Next to the arrows at the bottom right, which still appear only on a long page, every page except the sign-in page has two buttons that are always there. **Documentation** (a book) opens the user guide in a new tab. **Guide** (a compass) starts a step-by-step tour of the page you are on: it dims the page, lights up one part at a time and shows a bubble with a title, a text, "Step n of N", **Back**, **Next** or **Done**, and a close button. The parts of the page itself come first, then the header (the navigation, the theme, the language, the account or the sign-in) and the round buttons. The right and left arrow keys go on and back, **Esc** closes the guide, and **Enter** presses the button that has the focus; clicking the dimmed page does nothing, and nothing is clicked or changed for the visitor. On a narrow screen (640 pixels or less) the bubble is docked at the bottom (at the top for the round buttons). The guide ends when another page is shown or the back button is used, and it goes on when the same page refreshes itself, as the job page does while its job runs. A part that is not shown has no step. It is `web/assets/js/tour.js` (no library, no inline script or style); the texts are in English and Chinese (`internal/server/i18n_tour.go`).
+- **`GET /help`, the user guide.** A page of the application, open to everybody, in English and Chinese (the language of the EN / 中文 switch): what TimeVault is for and how each page is used. It is `web/templates/help.html`.
+
+### Changed
+
+- **The `request` line of the console log has the address and the user:** `ip=<address of the browser> user=<employee ID, or guest> method=… path=… status=… ms=…`. The address is the connection, or the browser address that a proxy of `TIMEVAULT_TRUSTED_PROXIES` reports. The user is read from the session cookie only, without asking the user directory; a visitor who has not signed in is `guest`, and the request that signs somebody in (`POST /login`, `POST /auth/sso/poll`) is logged as the account that signed in. Static files and `/healthz` are still not logged.
+- **The lines `request failed` and `panic while handling a request`** carry the same `ip`, `user`, `method` and `path`, and `id`, the reference that the error page shows. A request that panicked now also gets its normal `request` line, with `status=500` (the recoverer now sits inside the request log).
+- **The lines `job finished` and `job finished with an error`** carry `by=<who requested the job>` (`scheduler` for an automatic backup).
+- **`TIMEVAULT_BASE_PATH` may not start with `/help`:** it is a page of the application now, and the service refuses to start with such a prefix.
+- The version number is 1.0.0 (the footer of every page, the Settings page, `GET /api/v1/settings`, `timevault-server version`); `go build` is unchanged.
+- **In the code:** `redisuser.Connect` and `redisuser.Conn` hand a Redis client with the same settings to the writer of the web log (`internal/weblog`); `internal/redisuser` itself still only reads. `audit.Logger.SetMirror` hands every event, after it is stored, to the web log. `service.Config.WebLog` and `server.Options.WebLog` take a `weblog.Sink`. `Page.Tour` writes the steps of the guide into the templates.
+
+### Upgrade notes
+
+1. **Nothing is required:** no migration, no new required setting, and the service runs as before.
+2. **The service now writes to Redis.** With `TIMEVAULT_REDIS_URL` set, the web log is **on by default**: a service that is upgraded from 0.1.x starts to append to the list `web_log` in that Redis, also when it updated itself. To switch it off put `TIMEVAULT_WEB_LOG=off` into the `.env` (older versions ignore a setting they do not know, so it can be added before the release is published); `TIMEVAULT_WEB_LOG_KEY` and `TIMEVAULT_WEB_LOG_HOST` change the list and the host name in the lines. The Redis account of `TIMEVAULT_REDIS_URL` has to be allowed to `RPUSH` to the list; if it is not, the service logs the warning `web log: the lines cannot be written to Redis` and drops the lines, and nothing else stops. After the first start look at the **Web log** row of the Settings page and at the start-up line `web log is on`. A `TIMEVAULT_REDIS_KEY_PREFIX` that `web_log` starts with makes the default key invalid (the service refuses to start): set another `TIMEVAULT_WEB_LOG_KEY`, or `off`.
+3. **The console lines have new fields.** After `msg=request` come `ip=…` and `user=…`, before `method`; `request failed` and `panic while handling a request` have them too, and the job lines have `by=`. Anything that parses these lines by position has to be adapted; anything that reads them by name keeps working.
+4. **To release:** the version in `cmd\timevault-server\main.go` is already 1.0.0, so run `.\scripts\release.ps1` and copy `timevault.exe`, then `timevault.json`, to the release folder that the servers read. A service that runs 0.1.8 or later and has `TIMEVAULT_UPDATE_URL` finds it within its interval (**Check now** on the Settings page looks at once), waits for its running jobs and restarts into 1.0.0: a version that differs is an update. Decide about the web log (note 2) before you publish.
+5. The `.env` template (`configs/timevault.example.env`) has the three new settings.
+
+### Known limits
+
+- **The web log is best effort.** A full queue, the limits and a Redis that does not answer drop lines, and a dropped line is not written later. An audit event reaches the web log only after it is stored in the database, so an event that could not be stored is not in it. It does not replace the audit trail in PostgreSQL.
+- **TimeVault never trims or expires the shared list,** and each line is about 100 to 150 bytes in Redis. The volume is bounded (at most 10 page lines and 20 event lines per second on average) but not zero, anybody who can reach TimeVault can cause page lines, and the Redis has no `maxmemory` limit. Cutting the list is for whoever manages that Redis.
+- **The lines hold employee IDs and client addresses,** and everybody who can read the list reads them. No path, no file or folder name, no typed text and no error text is written.
+- The texts of the guide and the user guide exist in English and Chinese only, like the rest of the interface.
+- Checked with automated tests, and the guide in a real browser against the test harness (all pages, English and Chinese, light and dark theme, desktop and 390 pixels wide); not on the production server: the web log was not written to the production Redis, the compiled program was not run against the production database and Redis, and that the log page of the other application shows these lines was not checked (see [mvp-status.md](./mvp-status.md)). The known limits of the earlier versions stand.
+
 ## 0.1.10
 
 Only the version number changes: in everything else the program is the one of 0.1.9. The version exists to try the automatic update from one release to the next on a server (see [Releasing and automatic updates](./runbook.md#releasing-and-automatic-updates)).
@@ -359,6 +401,48 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 1.0.0
+
+第一个正式版本。它仍然是 [mvp-status.md](./mvp-status.md) 所描述的垂直切片，它的限制依然有效（读取在线磁盘、没有 VSS 或 NTFS USN journal、自身没有 TLS）。有三项新内容：控制台日志会写出每个请求的用户和地址；服务会把 **Web 日志**写入公司其他应用共用的 Redis 列表，这是 TimeVault 第一次写 Redis（[ADR 0016](./adr/0016-web-log-in-the-shared-redis-list.md)）；除登录页之外，每个页面都有**文档**按钮（用户手册）和**页面导览**按钮（逐步介绍本页）。不需要迁移，也没有必填的设置。还没有人发布 1.0.0：`.\scripts\release.ps1` 负责构建发布，是否把它发布到服务器读取的文件夹由管理员决定。
+
+### 新增
+
+- **Redis 中的 Web 日志。** 设置了 `TIMEVAULT_REDIS_URL` 时，服务会把行追加到该 Redis（同一个数据库）的列表 `web_log` 中，也就是公司其他应用写它们的 Web 日志的那个列表。一行是 `ip | YYYY-MM-DD HH:MM:SS.ffffff | message | status | level | host`，例如 `10.0.0.5 | 2026-11-18 14:05:12.250431 | TimeVault: /explorer user=E123456 0.112(s) | 200 | info | sgmeslt595`，列表中的一个元素是 `zlib.compress(pickle.dumps(line, protocol=4))`，按 Python 写出的方式写出，所以能读其他应用那些行的东西也能读这些行。TimeVault 从不增加字段：账号以 `user=<工号>` 写在 message 中（没有登录的访问者是 `guest`）。地址是浏览器的地址（服务自己做的事用 `127.0.0.1`），时间是服务器的本地时间，最后一个字段是 `TIMEVAULT_WEB_LOG_HOST`，默认是小写的计算机名。写入的内容：
+  - **有人打开的页面：** `TimeVault: <route> user=<工号或 guest> <seconds>(s)`：匹配到的路由（`/explorer`、`/jobs/12`；绝不是输入时的地址：没有查询串、没有路径、没有搜索文本，没有匹配任何路由的地址写作 `(not found)`）、用户，以及构建这个页面花了多久。`info`，`4xx` 时是 `warning`。不写入：静态文件、`/healthz`、API 调用、重定向，以及页面脚本在页面所显示的任务运行期间或结束时自己发起的重新加载（请求头 `X-TV-Auto: 1`）。
+  - **在服务器上失败的请求**（任何 `5xx`，包括 API 的，以及 panic）：`TimeVault: error <route> user=<工号> ref=<参考编号>`，`error`。`ref` 是错误页面显示的参考编号，控制台日志把它记作 `id=`，并连同错误文本一起保存；错误文本本身绝不写入 Redis。
+  - **每一个审计事件**，在它被存入数据库之后：人们做的事，以及调度器和更新器做的事。例如 `TimeVault: backup.request source=3 user=E123456`、`TimeVault: backup.finish source=3 point=17 user=scheduler 12.400(s)` 和 `TimeVault: access.denied method=POST route=/settings/sources user=E1001`。`ok` 是 `info`（状态码 200），`denied` 是 `warning`（403），`failed` 是 `error`（500）。登录失败时输入的名称（它可能是密码）绝不复制（`user=-`）。
+  - **调度器和服务：** `TimeVault: scheduler.queued source=<id> user=scheduler`、`TimeVault: scheduler.error [source=<id>] user=scheduler`（一条警告，每个文件夹每分钟最多一次，与控制台中的警告一样）、一切构建完成后的 `TimeVault: started version=1.0.0`，以及服务停止时的 `TimeVault: stopped`。
+  - **只在 `TIMEVAULT_LOG_LEVEL=debug` 时：** API 调用（任务的轮询）和自动重新加载的页面行，以及 `scheduler.skipped`（搜索引擎看到没有变化）。其他日志级别不会改变 Web 日志的任何内容。
+- **Web 日志是尽力而为的，并且从不妨碍服务。** `Write` 只把一行放进容量为 1,024 的队列，一个 worker 用一次 `RPUSH` 发送最多 100 行。大量涌入的行在入口处被截断（页面行：平均每秒 10 行，突发 100 行；事件行：每秒 20 行，突发 200 行），队列满了就丢弃这一行，`RPUSH` 失败之后，worker 会先暂停访问 Redis 30 秒，然后更久，最长 5 分钟，期间到来的行都被丢弃；它会用一条警告说明这一点，其中 URL 的密码被遮盖。关闭时先发送队列，最多等待 3 秒。TimeVault 从不裁剪列表，也不让它过期：它是共用的，由其他应用管理。访问者输入的任何内容、路径、文件或文件夹的名称和错误文本都不会写入：只有路由、数字、工号和地址。详情见 [Web 日志](./runbook.md#web-日志)。
+- **三个设置：** `TIMEVAULT_WEB_LOG`（默认的 `auto` 恰好在设置了 `TIMEVAULT_REDIS_URL` 时开启；`on` 需要它；`off`）、`TIMEVAULT_WEB_LOG_KEY`（默认 `web_log`；不能以账号或单点登录结果的键的写法开头）和 `TIMEVAULT_WEB_LOG_HOST`。启动日志中有 `web_log`、`web_log_key` 和 `web_log_host`，Web 日志开启时还有第二行 `web log is on`，其中是列表、主机名，以及显示为 `host:port/db` 的 Redis，绝不显示密码。设置页的**服务**卡片中有一行 **Web 日志**，`GET /api/v1/settings` 中有 `web_log`（`enabled`、`key`、`host`）。
+- **两个圆形按钮：文档和页面导览。** 在右下角的箭头旁边（箭头仍然只在较长的页面上出现），除登录页之外的每个页面都有两个始终存在的按钮。**文档**（书本图标）在新标签页中打开用户手册。**页面导览**（指南针图标）开始逐步介绍你当前所在的页面：它让页面变暗，一次点亮一个部分，并显示一个气泡，其中有标题、文字、"第 n 步，共 N 步"、**上一步**、**下一步**或**完成**，以及一个关闭按钮。页面自己的部分排在最前面，然后是页眉（导航、主题、语言、账号或登录）和圆形按钮。左右方向键用于前进和后退，**Esc** 关闭导览，**Enter** 按下获得焦点的按钮；点击变暗的页面没有任何作用，也不会替访问者点击或更改任何东西。在窄屏幕（640 像素或更窄）上，气泡停靠在底部（针对圆形按钮时在顶部）。显示另一个页面或使用后退按钮时，导览结束；同一个页面自己刷新时（任务页在任务运行期间会这样），导览继续。没有显示出来的部分没有对应的步骤。它是 `web/assets/js/tour.js`（没有第三方库，没有内联脚本或样式）；文字有英文和中文两种（`internal/server/i18n_tour.go`）。
+- **`GET /help`，用户手册。** 应用自己的一个页面，对所有人开放，有英文和中文两种（取决于 EN / 中文 切换）：说明 TimeVault 是做什么的，以及每个页面怎么用。它是 `web/templates/help.html`。
+
+### 变更
+
+- **控制台日志的 `request` 行有了地址和用户：** `ip=<浏览器的地址> user=<工号，或 guest> method=… path=… status=… ms=…`。地址是连接的地址，或者是 `TIMEVAULT_TRUSTED_PROXIES` 中的代理所报告的浏览器地址。用户只从会话 Cookie 读取，不询问用户目录；没有登录的访问者是 `guest`，让某人登录的那个请求（`POST /login`、`POST /auth/sso/poll`）会按登录成功的账号记录。静态文件和 `/healthz` 仍然不记录。
+- **`request failed` 和 `panic while handling a request` 这两种行**带有同样的 `ip`、`user`、`method` 和 `path`，以及 `id`，即错误页面显示的参考编号。发生 panic 的请求现在也会有它正常的 `request` 行，其中 `status=500`（恢复处理器现在位于请求日志之内）。
+- **`job finished` 和 `job finished with an error` 这两种行**带有 `by=<谁请求了这个任务>`（自动备份是 `scheduler`）。
+- **`TIMEVAULT_BASE_PATH` 不能以 `/help` 开头：** 它现在是应用自己的页面，服务遇到这样的前缀会拒绝启动。
+- 版本号为 1.0.0（每个页面的页脚、设置页、`GET /api/v1/settings`、`timevault-server version`）；`go build` 的命令不变。
+- **代码方面：** `redisuser.Connect` 和 `redisuser.Conn` 把一个设置相同的 Redis 客户端交给 Web 日志的写入方（`internal/weblog`）；`internal/redisuser` 本身仍然只读。`audit.Logger.SetMirror` 把每个事件在被存储之后交给 Web 日志。`service.Config.WebLog` 和 `server.Options.WebLog` 接受一个 `weblog.Sink`。`Page.Tour` 把导览的各个步骤写进模板。
+
+### 升级说明
+
+1. **不需要做任何事：** 没有迁移，没有新增的必填设置，服务的运行方式和以前一样。
+2. **服务现在会写 Redis。** 设置了 `TIMEVAULT_REDIS_URL` 时，Web 日志**默认开启**：从 0.1.x 升级的服务会开始向该 Redis 中的列表 `web_log` 追加内容，自己更新的服务也一样。要关闭它，请在 `.env` 中写入 `TIMEVAULT_WEB_LOG=off`（较旧的版本会忽略它不认识的设置，所以可以在发布之前先加上）；`TIMEVAULT_WEB_LOG_KEY` 和 `TIMEVAULT_WEB_LOG_HOST` 用来更改列表和行中的主机名。`TIMEVAULT_REDIS_URL` 中的 Redis 账号必须被允许对该列表执行 `RPUSH`；不被允许时，服务会记录警告 `web log: the lines cannot be written to Redis` 并丢弃这些行，其他一切照常。首次启动之后，请查看设置页的 **Web 日志**一行和启动日志中的 `web log is on` 一行。如果 `web_log` 是以 `TIMEVAULT_REDIS_KEY_PREFIX` 开头的，默认的键就是无效的（服务会拒绝启动）：请设置另一个 `TIMEVAULT_WEB_LOG_KEY`，或者 `off`。
+3. **控制台日志的各行有了新字段。** `msg=request` 之后是 `ip=…` 和 `user=…`，然后才是 `method`；`request failed` 和 `panic while handling a request` 也有它们，任务各行有 `by=`。按位置解析这些行的任何东西都要调整；按名称读取的则继续可用。
+4. **发布：** `cmd\timevault-server\main.go` 中的版本已经是 1.0.0，所以运行 `.\scripts\release.ps1`，并把 `timevault.exe`，再把 `timevault.json`，复制到服务器读取的发布文件夹。运行 0.1.8 或更高版本并设置了 `TIMEVAULT_UPDATE_URL` 的服务，会在它的间隔内发现这个发布（设置页的**立即检查**会马上查看），等正在运行的任务结束，然后重启成 1.0.0：版本不同就是更新。发布之前请先决定如何处理 Web 日志（说明 2）。
+5. `.env` 模板（`configs/timevault.example.env`）包含这三个新设置。
+
+### 已知限制
+
+- **Web 日志是尽力而为的。** 队列已满、限制，以及不应答的 Redis 都会丢弃行，被丢弃的行以后不会再写。审计事件只有在被存入数据库之后才会进入 Web 日志，所以没能存储的事件不在其中。它不能替代 PostgreSQL 中的审计记录。
+- **TimeVault 从不裁剪共用的列表，也不让它过期**，每一行在 Redis 中约 100 到 150 字节。写入量是有界的（平均每秒最多 10 行页面行和 20 行事件行），但不为零；任何能访问 TimeVault 的人都能制造页面行；而且这个 Redis 没有 `maxmemory` 限制。要裁剪这个列表，由管理那个 Redis 的人决定。
+- **这些行里有工号和客户端地址**，所有能读取这个列表的人都能读到。不会写入路径、文件或文件夹的名称、输入的文本和错误文本。
+- 页面导览和用户手册的文字只有英文和中文两种，与界面的其余部分一样。
+- 已用自动化测试检查过，页面导览还在真实浏览器中针对测试环境检查过（所有页面，英文和中文，浅色和深色主题，桌面宽度和 390 像素宽）；没有在生产服务器上检查：Web 日志没有写入过生产环境的 Redis，编译后的程序没有针对生产环境的数据库和 Redis 运行过，另一个应用的日志页面是否会显示这些行也没有检查过（见 [mvp-status.md](./mvp-status.md)）。更早版本的已知限制依然有效。
 
 ## 0.1.10
 

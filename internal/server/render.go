@@ -80,6 +80,16 @@ func (p *Page) T(key string, args ...any) string { return p.loc.T(key, args...) 
 // IsZh reports whether the interface language is Chinese.
 func (p *Page) IsZh() bool { return p.Lang == "zh" }
 
+// Tour gives the element of a template the attributes that the guide of the page (web/assets/js/tour.js) reads: the key of
+// its step and the title and the text of the step, in the language of the page. They are the messages tour.<key>.title
+// and tour.<key>.text. Put the call where an attribute may stand: <nav class="x" {{$.Tour "nav"}}>. An element that the
+// page does not show has no step, so a button that only some visitors get is explained only to those who see it.
+func (p *Page) Tour(key string) template.HTMLAttr {
+	return template.HTMLAttr(` data-tour="` + template.HTMLEscapeString(key) +
+		`" data-tour-title="` + template.HTMLEscapeString(p.T("tour."+key+".title")) +
+		`" data-tour-text="` + template.HTMLEscapeString(p.T("tour."+key+".text")) + `"`)
+}
+
 // Time formats a time in the server's time zone, to the minute.
 func (p *Page) Time(t time.Time) string {
 	if t.IsZero() {

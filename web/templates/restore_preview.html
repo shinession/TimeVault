@@ -10,7 +10,7 @@
 <section class="tv-card">
   <div class="tv-card-head"><h1>{{template "icon" "restore"}} {{$.T "restore.title"}}</h1></div>
   <p class="tv-muted">{{$.T "restore.intro"}}</p>
-  <dl class="tv-facts">
+  <dl class="tv-facts" {{$.Tour "restore.facts"}}>
     <div><dt>{{$.T "common.source"}}</dt><dd>{{.Plan.Source.Name}}</dd></div>
     <div><dt>{{$.T "job.point"}}</dt><dd>#{{.Plan.Point.Seq}} · {{$.Time .Plan.Point.CapturedAt}}
       <span class="tv-chip tv-chip-{{.Plan.Point.Verification}}">{{$.VerifyLabel .Plan.Point.Verification}}</span>
@@ -23,7 +23,7 @@
   </dl>
 </section>
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "restore.summary"}}>
   <div class="tv-card-head"><h2>{{$.T "restore.summary"}}</h2></div>
   <ul class="tv-counters">
     <li><span class="tv-counter-value">{{.Plan.Totals.Files}}</span><span class="tv-counter-label">{{$.T "restore.files"}}</span></li>
@@ -49,7 +49,7 @@
   {{end}}
 </section>
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "restore.options"}}>
   <div class="tv-card-head"><h2>{{$.T "restore.options"}}</h2></div>
   <form method="post" action="{{url "/restore/preview"}}" class="tv-form tv-form-grid">
     {{template "csrf" $}}
@@ -70,7 +70,7 @@
   </form>
 </section>
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "restore.changes"}}>
   <div class="tv-card-head"><h2>{{$.T "restore.changes"}}</h2><span class="tv-muted tv-small">{{$.T "restore.sample_hint" (len .Plan.Sample)}}</span></div>
   <div class="tv-table-wrap">
     <table class="tv-table">
@@ -88,7 +88,7 @@
   </div>
 </section>
 
-<section class="tv-card tv-confirm">
+<section class="tv-card tv-confirm" {{$.Tour "restore.confirm"}}>
   <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "restore.confirm_title"}}</h2></div>
   <form method="post" action="{{url "/restore/start"}}" class="tv-form">
     {{template "csrf" $}}

@@ -4,7 +4,7 @@
 
 **TimeVault — enterprise file backup, search and time travel** for Windows and NTFS. It keeps point-in-time recovery points of local folders, lets you browse the past state of any folder, search by name, and restore files into a safe folder below a restore root after a preview.
 
-**Status: version 0.1.10 (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse the folders that let guests browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings, and what an account may do is decided for each monitored folder (Browse, Back up, Full control). It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles and the three levels per folder but no rights for a path inside a folder, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
+**Status: version 1.0.0, the first official release (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse the folders that let guests browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings, and what an account may do is decided for each monitored folder (Browse, Back up, Full control). It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles and the three levels per folder but no rights for a path inside a folder, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
 
 ### What works today
 
@@ -19,7 +19,9 @@
 - **Display folders**: people see the network paths (`\\server\share\folder`) of the monitored folders and of the restore folder; only administrators see the real folders on the server's disk, and texts that quote them are rewritten for everybody else.
 - **Pictures of the accounts**: the header, the audit log, the job pages and the people lists show the picture of an account, which the browser reads from `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/<employee ID>.webp` (the other company applications' employee pictures; `TIMEVAULT_AVATAR_URL`), with the default picture as the fallback.
 - **Releases and automatic updates**: `scripts\release.ps1` writes a release folder (`timevault.exe` and `timevault.json`); a service with `TIMEVAULT_UPDATE_URL` reads it, and when a different version is released it downloads and checks the program, waits for the running jobs to finish, swaps the file and restarts itself (see [Releasing and automatic updates](docs/runbook.md#releasing-and-automatic-updates)).
-- CSRF protection, sign-in limits, an append-only audit log (with the duration of every backup, verification and restore) and a status page.
+- **Help in the application**: every page except the sign-in page has two round buttons at the bottom right: **Documentation** opens the user guide (`/help`, English and 中文) in a new tab, and **Guide** starts a step-by-step tour of the page you are on (it dims the page and lights up one part at a time; nothing is clicked or changed).
+- **Web log**: with Redis configured, the service appends the pages that people open, the requests that failed, every audit event and what the scheduler does to the Redis list `web_log` that the company's other applications share, in the format they use (`TIMEVAULT_WEB_LOG`; on by default when `TIMEVAULT_REDIS_URL` is set, best effort, never trimmed by TimeVault; see [Web log](docs/runbook.md#web-log)).
+- CSRF protection, sign-in limits, an append-only audit log (with the duration of every backup, verification and restore), a status page, and a console log that names the user and the address of every request.
 
 ### Quick start (development, Windows PowerShell)
 
@@ -31,7 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-run.ps1         
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        # in a second window: demo data
 ```
 
-To use your own PostgreSQL server, create the database and the role, then put the URL into `.env` (`TIMEVAULT_DATABASE_URL`, and `TIMEVAULT_TEST_DATABASE_URL` for the tests); the scripts then start no private cluster. `dev-run.ps1` creates `.env` with comments and fills in what the service needs. For company sign-in add `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0` there and check it with `data\dev\bin\timevault-server.exe check-redis-users`. A `TIMEVAULT_*` variable in your terminal would override `.env`: the scripts remove such variables, and the service names them in its start-up log.
+To use your own PostgreSQL server, create the database and the role, then put the URL into `.env` (`TIMEVAULT_DATABASE_URL`, and `TIMEVAULT_TEST_DATABASE_URL` for the tests); the scripts then start no private cluster. `dev-run.ps1` creates `.env` with comments and fills in what the service needs. For company sign-in add `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0` there and check it with `data\dev\bin\timevault-server.exe check-redis-users`. That also turns the web log on (see [Web log](docs/runbook.md#web-log)): on a development computer that uses the company's Redis, put `TIMEVAULT_WEB_LOG=off` into `.env` too. A `TIMEVAULT_*` variable in your terminal would override `.env`: the scripts remove such variables, and the service names them in its start-up log.
 
 Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests browse; to back up, restore or change settings, sign in as `admin` (the generated password is in `data\dev\admin-password.txt`) or with a company account that has the level it needs on the folder. An administrator adds the monitored folders on the **Settings** page, and says there who may do what with each. Run the tests with `. .\scripts\dev-env.ps1` followed by `go test ./... -count=1`.
 
@@ -50,12 +52,14 @@ Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests bro
 | [docs/adr/](docs/adr/) | Architecture decision records |
 | [docs/PROJECT_CANVAS.md](docs/PROJECT_CANVAS.md), [docs/TimeVault_Project_Canvas.html](docs/TimeVault_Project_Canvas.html) | Product charter and the offline UI concept (mock data) |
 
+The user guide for the people who use TimeVault is part of the application: open `/help`, or press the **Documentation** button at the bottom right of any page.
+
 ### Layout
 
 | Path | Content |
 |---|---|
 | `cmd/timevault-server/` | Program entry point |
-| `internal/` | Catalog, backup engine, repository, restore, jobs, auth, Redis user directory, audit, search adapter, folder-list engine, scheduler, HTTP server |
+| `internal/` | Catalog, backup engine, repository, restore, jobs, auth, Redis user directory, audit, web log writer, search adapter, folder-list engine, scheduler, HTTP server |
 | `migrations/` | Database schema (embedded in the executable) |
 | `web/` | Templates and static assets (embedded in the executable) |
 | `scripts/` | Development helper scripts |
@@ -71,7 +75,7 @@ Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests bro
 
 **TimeVault —— 企业文件备份、搜索与时间回溯**，面向 Windows 和 NTFS。它为本地文件夹保存时间点恢复点，可以浏览任意文件夹过去的状态、按名称搜索，并在预览之后把文件恢复到恢复根目录下的安全文件夹中。
 
-**状态：0.1.10 版（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览允许访客浏览的文件夹；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置，而账号能做什么是按每个监控文件夹分别决定的（浏览、备份、完全控制）。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），有两种角色和每个文件夹三个级别，但没有针对文件夹内某个路径的权限，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
+**状态：1.0.0 版，第一个正式版本（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览允许访客浏览的文件夹；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置，而账号能做什么是按每个监控文件夹分别决定的（浏览、备份、完全控制）。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），有两种角色和每个文件夹三个级别，但没有针对文件夹内某个路径的权限，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
 
 ### 目前可用的功能
 
@@ -86,7 +90,9 @@ Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests bro
 - **显示文件夹**：人们看到的是监控文件夹和恢复文件夹的网络路径（`\\server\share\folder`）；只有管理员能看到服务器磁盘上的真实文件夹，引用它们的文本会为其他人改写。
 - **账号头像**：页眉、审计日志、任务页和人员列表会显示账号的头像，由浏览器从 `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/<工号>.webp` 读取（公司其他应用保存的员工照片；`TIMEVAULT_AVATAR_URL`），读不到时回退到默认头像。
 - **发布与自动更新**：`scripts\release.ps1` 生成发布文件夹（`timevault.exe` 和 `timevault.json`）；设置了 `TIMEVAULT_UPDATE_URL` 的服务会读取它，发布了不同版本时，下载并检查程序，等正在运行的任务结束，交换文件并重启自己（见[发布与自动更新](docs/runbook.md#发布与自动更新)）。
-- CSRF 防护、登录限制、只追加的审计日志（含每次备份、校验和恢复的耗时）和状态页。
+- **应用内的帮助**：除登录页之外，每个页面右下角都有两个圆形按钮：**文档**在新标签页中打开用户手册（`/help`，英文和 中文），**页面导览**开始逐步介绍你当前所在的页面（它让页面变暗，一次点亮一个部分；不会点击或更改任何东西）。
+- **Web 日志**：配置了 Redis 时，服务会把人们打开的页面、失败的请求、每一个审计事件和调度器所做的事，按公司其他应用所用的格式追加到它们共用的 Redis 列表 `web_log`（`TIMEVAULT_WEB_LOG`；设置了 `TIMEVAULT_REDIS_URL` 时默认开启，尽力而为，TimeVault 从不裁剪它；见 [Web 日志](docs/runbook.md#web-日志)）。
+- CSRF 防护、登录限制、只追加的审计日志（含每次备份、校验和恢复的耗时）、状态页，以及会写出每个请求的用户和地址的控制台日志。
 
 ### 快速开始（开发环境，Windows PowerShell）
 
@@ -98,7 +104,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-run.ps1         
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        # in a second window: demo data
 ```
 
-要使用你自己的 PostgreSQL 服务器，先创建好数据库和角色，再把 URL 写入 `.env`（`TIMEVAULT_DATABASE_URL`，测试用的是 `TIMEVAULT_TEST_DATABASE_URL`）；这样脚本就不会启动私有集群。`dev-run.ps1` 会创建带注释的 `.env`，并填入服务需要的内容。要启用公司账号登录，请在其中加入 `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0`，并用 `data\dev\bin\timevault-server.exe check-redis-users` 检查。终端里的 `TIMEVAULT_*` 变量会覆盖 `.env`：脚本会移除这类变量，服务也会在启动日志里点名它们。
+要使用你自己的 PostgreSQL 服务器，先创建好数据库和角色，再把 URL 写入 `.env`（`TIMEVAULT_DATABASE_URL`，测试用的是 `TIMEVAULT_TEST_DATABASE_URL`）；这样脚本就不会启动私有集群。`dev-run.ps1` 会创建带注释的 `.env`，并填入服务需要的内容。要启用公司账号登录，请在其中加入 `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0`，并用 `data\dev\bin\timevault-server.exe check-redis-users` 检查。这也会开启 Web 日志（见 [Web 日志](docs/runbook.md#web-日志)）：在使用公司 Redis 的开发电脑上，请同时在 `.env` 中写入 `TIMEVAULT_WEB_LOG=off`。终端里的 `TIMEVAULT_*` 变量会覆盖 `.env`：脚本会移除这类变量，服务也会在启动日志里点名它们。
 
 打开 `http://127.0.0.1:8660/`。任何人都可以浏览允许访客浏览的文件夹；要备份、恢复或修改设置，请以 `admin`（生成的密码在 `data\dev\admin-password.txt` 中）或在该文件夹上拥有所需级别的公司账号登录。管理员在**设置**页添加监控文件夹，并在那里说明谁可以对每个文件夹做什么。运行测试：先执行 `. .\scripts\dev-env.ps1`，再执行 `go test ./... -count=1`。
 
@@ -117,12 +123,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        
 | [docs/adr/](docs/adr/) | 架构决策记录 |
 | [docs/PROJECT_CANVAS.md](docs/PROJECT_CANVAS.md)、[docs/TimeVault_Project_Canvas.html](docs/TimeVault_Project_Canvas.html) | 产品画布与离线界面概念稿（演示数据） |
 
+给使用 TimeVault 的人看的用户手册是应用的一部分：打开 `/help`，或点击任何页面右下角的**文档**按钮。
+
 ### 目录结构
 
 | 路径 | 内容 |
 |---|---|
 | `cmd/timevault-server/` | 程序入口 |
-| `internal/` | 目录库、备份引擎、仓库、恢复、任务、认证、Redis 用户目录、审计、搜索适配器、文件夹列表引擎、调度器、HTTP 服务 |
+| `internal/` | 目录库、备份引擎、仓库、恢复、任务、认证、Redis 用户目录、审计、Web 日志写入方、搜索适配器、文件夹列表引擎、调度器、HTTP 服务 |
 | `migrations/` | 数据库结构（嵌入可执行文件） |
 | `web/` | 模板和静态资源（嵌入可执行文件） |
 | `scripts/` | 开发辅助脚本 |

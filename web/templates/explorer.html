@@ -2,7 +2,7 @@
 {{template "flash" .}}
 {{with .Data}}
 {{if .NoSources}}
-<section class="tv-card tv-empty">
+<section class="tv-card tv-empty" {{$.Tour "empty"}}>
   {{template "icon" "folder"}}
   <h2>{{$.T "explorer.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
@@ -12,12 +12,12 @@
 <div class="tv-toolbar">
   <form class="tv-source-form" method="get" action="{{url "/explorer"}}" data-autosubmit>
     <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
-    <select id="source-select" name="source" class="tv-select">
+    <select id="source-select" name="source" class="tv-select" {{$.Tour "source"}}>
       {{range .Sources}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
     </select>
     <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
   </form>
-  <form class="tv-search" method="get" action="{{url "/explorer"}}" role="search">
+  <form class="tv-search" method="get" action="{{url "/explorer"}}" role="search" {{$.Tour "explorer.search"}}>
     <input type="hidden" name="source" value="{{.Source.ID}}">
     <span class="tv-search-icon">{{template "icon" "search"}}</span>
     <input class="tv-search-input" type="search" name="q" value="{{.Query}}" maxlength="256"
@@ -26,7 +26,7 @@
   </form>
 </div>
 
-<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}" {{$.Tour "crumbs"}}>
   <a class="tv-crumb" href="{{url "/explorer" "source" .Source.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
   {{range .Crumbs}}
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
@@ -40,7 +40,7 @@
 {{if .SearchMsg}}<div class="tv-alert tv-alert-warn" role="alert">{{template "icon" "alert"}} {{.SearchMsg}}</div>{{end}}
 
 {{if .Latest}}
-<p class="tv-meta">
+<p class="tv-meta" {{$.Tour "explorer.latest"}}>
   {{$.T "explorer.last_backup"}}: <time datetime="{{iso .Latest.CapturedAt}}">{{$.Time .Latest.CapturedAt}}</time>
   <span class="tv-chip tv-chip-{{.Latest.Verification}}">{{$.VerifyLabel .Latest.Verification}}</span>
   <a href="{{url "/history" "source" .Source.ID "path" .Rel}}">{{template "icon" "history"}} {{$.T "explorer.open_history"}}</a>
@@ -83,18 +83,18 @@
 </section>
 {{else if .Listing}}
 {{if or .Listing.Entries .List.Filtered}}
-<div class="tv-listbar">
+<div class="tv-listbar" {{$.Tour "tools"}}>
   {{template "listtools" $}}
   {{template "pager" $}}
 </div>
 {{end}}
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "explorer.list"}}>
   {{if .Listing.Entries}}
   <div class="tv-list" role="list">
     <div class="tv-list-head" role="row">
       <a class="c-name tv-sort" href="{{url .List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
       <a class="c-type tv-sort" href="{{url .List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
-      <span class="c-status">{{$.T "list.backup_status"}}</span>
+      <span class="c-status" {{$.Tour "explorer.status"}}>{{$.T "list.backup_status"}}</span>
       <a class="c-size tv-sort" href="{{url .List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
       <a class="c-time tv-sort" href="{{url .List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
     </div>
@@ -127,7 +127,7 @@
 </section>
 
 {{if and .Listing.Deleted (eq .List.Query.Page 1)}}
-<section class="tv-card tv-deleted">
+<section class="tv-card tv-deleted" {{$.Tour "explorer.deleted"}}>
   <div class="tv-card-head">
     <h2>{{template "icon" "trash"}} {{$.T "explorer.deleted_title" (len .Listing.Deleted)}}</h2>
   </div>

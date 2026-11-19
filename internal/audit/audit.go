@@ -75,14 +75,23 @@ func (e Event) DetailText() string {
 	return string(b)
 }
 
+// Mirror is told about every event after it was written to the audit trail, which is how the web log learns what
+// people and the scheduler do. It runs in the goroutine of the caller, so it must return at once.
+type Mirror func(Event)
+
 // Logger writes and reads the audit trail.
 type Logger struct {
-	pool *pgxpool.Pool
-	log  *slog.Logger
+	pool   *pgxpool.Pool
+	log    *slog.Logger
+	mirror Mirror
 }
 
 // New creates a Logger.
 func New(pool *pgxpool.Pool, log *slog.Logger) *Logger { return &Logger{pool: pool, log: log} }
+
+// SetMirror makes m hear of the events that are recorded from now on. Call it before the logger is shared with
+// other goroutines; nil stops it.
+func (l *Logger) SetMirror(m Mirror) { l.mirror = m }
 
 // Record appends an event. Callers whose operation must not proceed without an
 // audit record (restores) check the returned error; others may ignore it, it is
@@ -113,6 +122,9 @@ func (l *Logger) Record(ctx context.Context, e Event) error {
 	if err != nil {
 		l.log.Error("write audit event", "action", e.Action, "actor", e.Actor, "error", err)
 		return fmt.Errorf("audit: write event: %w", err)
+	}
+	if l.mirror != nil {
+		l.mirror(e)
 	}
 	return nil
 }

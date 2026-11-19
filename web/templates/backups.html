@@ -1,10 +1,11 @@
 {{define "content"}}
 {{template "flash" .}}
 {{with .Data}}
+{{$actionsTagged := false}}{{$runningTagged := false}}{{$verifyTagged := false}}
 <h1 class="tv-page-title">{{template "icon" "backup"}} {{$.T "backups.title"}}</h1>
 
 {{if not .Sources}}
-<section class="tv-card tv-empty">
+<section class="tv-card tv-empty" {{$.Tour "empty"}}>
   {{template "icon" "folder"}}
   {{if $.CanManage}}
   <h2>{{$.T "backups.no_sources_title"}}</h2>
@@ -16,21 +17,20 @@
   {{end}}
 </section>
 {{else if $.CanAudit}}
-<p><a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/settings"}}">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a></p>
+<p><a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/settings"}}" {{$.Tour "backups.manage"}}>{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a></p>
 {{end}}
 
-{{range .Sources}}
-{{$card := .}}
+{{range $i, $card := .Sources}}
 <section class="tv-card tv-source">
   <div class="tv-card-head">
-    <div>
+    <div {{if eq $i 0}}{{$.Tour "backups.card"}}{{end}}>
       <h2>{{template "icon" "folder"}} {{.Name}}{{if not .Enabled}} <span class="tv-chip tv-chip-skipped">{{$.T "backups.disabled"}}</span>{{end}}{{if $.SignedIn}} <span class="tv-chip tv-chip-level" title="{{$.T "level.yours"}}">{{$.LevelLabel .Level}}</span>{{end}}</h2>
       {{if or .DisplayPath $.ShowPhysical}}<p class="tv-muted tv-path">
         {{if .DisplayPath}}<code>{{.DisplayPath}}</code>{{end}}
         {{if $.ShowPhysical}}<span class="tv-small">{{if .DisplayPath}}<br>{{$.T "location.on_server"}}: {{end}}<code>{{.RootPath}}</code></span>{{end}}
       </p>{{end}}
     </div>
-    <div class="tv-actions">
+    <div class="tv-actions"{{if and .CanBackup .Enabled (not $actionsTagged)}} {{$.Tour "backups.actions"}}{{$actionsTagged = true}}{{end}}>
       {{if and .CanBackup .Enabled}}
       <form method="post" action="{{url "/backups/run"}}" class="tv-inline-form">
         {{template "csrf" $}}
@@ -50,7 +50,7 @@
   </div>
 
   {{if .Active}}
-  <div class="tv-job-inline" data-job-id="{{.Active.Job.ID}}" data-job-active="1">
+  <div class="tv-job-inline" data-job-id="{{.Active.Job.ID}}" data-job-active="1"{{if not $runningTagged}} {{$.Tour "backups.running"}}{{$runningTagged = true}}{{end}}>
     <a href="{{url (printf "/jobs/%d" .Active.Job.ID)}}">{{$.T "backups.running_job" .Active.Job.ID}}</a>
     <span class="tv-chip tv-chip-{{.Active.Job.State}}" data-job-field="state">{{$.StateLabel .Active.Job.State}}</span>
     <span class="tv-muted" data-job-field="phase">{{$.PhaseLabel .Active.Phase}}</span>
@@ -58,7 +58,7 @@
   </div>
   {{end}}
 
-  <dl class="tv-facts">
+  <dl class="tv-facts" {{if eq $i 0}}{{$.Tour "backups.facts"}}{{end}}>
     <div><dt>{{$.T "backups.latest"}}</dt>
       <dd>{{if .Latest}}<time datetime="{{iso .Latest.CapturedAt}}">{{$.Time .Latest.CapturedAt}}</time> · #{{.Latest.Seq}}{{else}}{{$.T "backups.never"}}{{end}}</dd></div>
     <div><dt>{{$.T "backups.schedule"}}</dt>
@@ -70,7 +70,7 @@
   </dl>
 
   {{if .Attempts}}
-  <div class="tv-table-wrap">
+  <div class="tv-table-wrap" {{if eq $i 0}}{{$.Tour "backups.points"}}{{end}}>
     <table class="tv-table">
       <thead><tr>
         <th>#</th><th>{{$.T "points.kind"}}</th><th>{{$.T "points.state"}}</th><th>{{$.T "points.captured"}}</th>
@@ -97,7 +97,7 @@
               <input type="hidden" name="source_id" value="{{.SourceID}}">
               <input type="hidden" name="point_id" value="{{.ID}}">
               <input type="hidden" name="deep" value="1">
-              <button class="tv-btn tv-btn-small" type="submit" title="{{$.T "points.verify_hint"}}">{{template "icon" "check"}} {{$.T "points.verify"}}</button>
+              <button class="tv-btn tv-btn-small" type="submit" title="{{$.T "points.verify_hint"}}"{{if not $verifyTagged}} {{$.Tour "backups.verify"}}{{$verifyTagged = true}}{{end}}>{{template "icon" "check"}} {{$.T "points.verify"}}</button>
             </form>
             {{else if eq .State "committed"}}
             <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
@@ -112,7 +112,7 @@
 </section>
 {{end}}
 
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "backups.jobs"}}>
   <div class="tv-card-head"><h2>{{template "icon" "clock"}} {{$.T "backups.jobs"}}</h2></div>
   {{if .Jobs}}
   <div class="tv-table-wrap">
@@ -138,7 +138,7 @@
 </section>
 
 {{if $.SignedIn}}
-<section class="tv-card">
+<section class="tv-card" {{$.Tour "backups.restore"}}>
   <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "backups.restore_settings"}}</h2></div>
   {{if .RestoreEnabled}}<p>{{$.T "backups.restore_root"}}:
     {{if .RestoreRoot}}<code>{{.RestoreRoot}}</code>{{else}}<span class="tv-muted">{{$.T "settings.restore_no_display"}}</span>{{end}}

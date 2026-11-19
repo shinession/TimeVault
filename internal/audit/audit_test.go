@@ -85,3 +85,32 @@ func TestListCanBeLimitedToSomeSources(t *testing.T) {
 		}
 	}
 }
+
+// The mirror hears of what was written, and of nothing that was not: the web log must not report an event that the
+// audit trail refused (a restore does not start without its record).
+func TestTheMirrorHearsOfRecordedEventsOnly(t *testing.T) {
+	ctx := context.Background()
+	pool := dbtest.New(t)
+	log := audit.New(pool, slog.New(slog.DiscardHandler))
+	var heard []audit.Event
+	log.SetMirror(func(e audit.Event) { heard = append(heard, e) })
+
+	if err := log.Record(ctx, audit.Event{Actor: "E1", Action: audit.ActionLogin, RemoteAddr: "10.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(heard) != 1 || heard[0].Action != audit.ActionLogin || heard[0].Actor != "E1" || heard[0].Result != audit.ResultOK || heard[0].RemoteAddr != "10.0.0.1" {
+		t.Fatalf("heard %+v, want the sign-in with the default result ok", heard)
+	}
+
+	if err := log.Record(ctx, audit.Event{Actor: "E1", Action: "x", Detail: map[string]any{"bad": func() {}}}); err == nil {
+		t.Fatal("an event whose detail cannot be encoded was recorded")
+	}
+	if len(heard) != 1 {
+		t.Errorf("the mirror heard of an event that was not recorded: %+v", heard[1:])
+	}
+
+	log.SetMirror(nil)
+	if err := log.Record(ctx, audit.Event{Actor: "E1", Action: audit.ActionLogout}); err != nil || len(heard) != 1 {
+		t.Errorf("after SetMirror(nil): %v, heard %d events", err, len(heard))
+	}
+}

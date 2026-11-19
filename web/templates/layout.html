@@ -12,6 +12,7 @@
   <script src="{{url "/static/js/theme-init.js"}}?v={{.AssetVer}}"></script>
   <link rel="stylesheet" href="{{url "/static/css/app.css"}}?v={{.AssetVer}}">
   <script src="{{url "/static/js/app.js"}}?v={{.AssetVer}}" defer></script>
+  <script src="{{url "/static/js/tour.js"}}?v={{.AssetVer}}" defer></script>
 </head>
 <body class="tv{{if .Bare}} tv-bare{{end}}">
   <header class="tv-header">
@@ -21,7 +22,7 @@
         <span class="tv-brand-name">TimeVault</span>
       </a>
       {{if not .Bare}}
-      <nav class="tv-nav" aria-label="{{.T "nav.label"}}">
+      <nav class="tv-nav" aria-label="{{.T "nav.label"}}" {{.Tour "nav"}}>
         <a class="tv-nav-link{{if eq .Nav "explorer"}} is-active{{end}}" data-nav="explorer" href="{{url "/explorer"}}">{{template "icon" "folder"}}<span>{{.T "nav.explorer"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "history"}} is-active{{end}}" data-nav="history" href="{{url "/history"}}">{{template "icon" "history"}}<span>{{.T "nav.history"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "backups"}} is-active{{end}}" data-nav="backups" href="{{url "/backups"}}">{{template "icon" "backup"}}<span>{{.T "nav.backups"}}</span></a>
@@ -32,21 +33,21 @@
       </nav>
       {{end}}
       <div class="tv-tools">
-        <button type="button" class="tv-iconbtn" data-theme-toggle title="{{.T "theme.toggle"}}" aria-label="{{.T "theme.toggle"}}">
+        <button type="button" class="tv-iconbtn" data-theme-toggle title="{{.T "theme.toggle"}}" aria-label="{{.T "theme.toggle"}}" {{.Tour "theme"}}>
           <span class="tv-theme-sun">{{template "icon" "sun"}}</span><span class="tv-theme-moon">{{template "icon" "moon"}}</span>
         </button>
-        <div class="tv-lang" role="group" aria-label="{{.T "lang.label"}}">
+        <div class="tv-lang" role="group" aria-label="{{.T "lang.label"}}" {{.Tour "lang"}}>
           <a class="tv-lang-link{{if not .IsZh}} is-active{{end}}" data-no-boost lang="en" href="{{url "/lang" "set" "en" "next" .RequestURI}}">EN</a>
           <a class="tv-lang-link{{if .IsZh}} is-active{{end}}" data-no-boost lang="zh" href="{{url "/lang" "set" "zh" "next" .RequestURI}}">中文</a>
         </div>
         {{if and (not .Bare) .SignedIn}}
-        <form class="tv-userbox" method="post" action="{{url "/logout"}}">
+        <form class="tv-userbox" method="post" action="{{url "/logout"}}" {{.Tour "account"}}>
           {{template "csrf" .}}
           <span class="tv-user" title="{{.Name}} ({{.User}})">{{template "avatar" (pair . .User)}}<span>{{.Name}}</span></span>
           {{if not .AuthDisabled}}<button class="tv-iconbtn" type="submit" title="{{.T "nav.logout"}}" aria-label="{{.T "nav.logout"}}">{{template "icon" "logout"}}</button>{{end}}
         </form>
         {{else if not .Bare}}
-        <a class="tv-btn tv-btn-small tv-signin" data-no-boost href="{{url "/login" "next" .RequestURI}}">{{template "icon" "user"}} {{.T "nav.login"}}</a>
+        <a class="tv-btn tv-btn-small tv-signin" data-no-boost href="{{url "/login" "next" .RequestURI}}" {{.Tour "signin"}}>{{template "icon" "user"}} {{.T "nav.login"}}</a>
         {{end}}
       </div>
     </div>
@@ -69,9 +70,13 @@
   </footer>
 
   {{if not .Bare}}
-  <div class="tv-fab" data-fab hidden>
-    <button type="button" class="tv-fab-btn" data-fab-top title="{{.T "fab.top"}}" aria-label="{{.T "fab.top"}}">{{template "icon" "arrow-up"}}</button>
-    <button type="button" class="tv-fab-btn" data-fab-bottom title="{{.T "fab.bottom"}}" aria-label="{{.T "fab.bottom"}}">{{template "icon" "arrow-down"}}</button>
+  <div class="tv-fab" data-fab {{.Tour "fab"}}>
+    <button type="button" class="tv-fab-btn" data-fab-top hidden title="{{.T "fab.top"}}" aria-label="{{.T "fab.top"}}">{{template "icon" "arrow-up"}}</button>
+    <button type="button" class="tv-fab-btn" data-fab-bottom hidden title="{{.T "fab.bottom"}}" aria-label="{{.T "fab.bottom"}}">{{template "icon" "arrow-down"}}</button>
+    <a class="tv-fab-btn" href="{{url "/help"}}" target="_blank" rel="noopener" data-fab-docs title="{{.T "fab.docs"}}" aria-label="{{.T "fab.docs"}}">{{template "icon" "book"}}</a>
+    <button type="button" class="tv-fab-btn" data-tour-start title="{{.T "fab.guide"}}" aria-label="{{.T "fab.guide"}}"
+            data-tour-dialog="{{.T "tour.label"}}" data-tour-next="{{.T "tour.next"}}" data-tour-back="{{.T "tour.back"}}"
+            data-tour-done="{{.T "tour.done"}}" data-tour-close="{{.T "tour.close"}}" data-tour-step="{{.T "tour.step"}}">{{template "icon" "explore"}}</button>
   </div>
   {{end}}
 </body>

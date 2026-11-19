@@ -2,7 +2,7 @@
 {{template "flash" .}}
 {{with .Data}}
 {{if .NoSources}}
-<section class="tv-card tv-empty">
+<section class="tv-card tv-empty" {{$.Tour "empty"}}>
   {{template "icon" "history"}}
   <h2>{{$.T "explorer.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
@@ -12,7 +12,7 @@
 <div class="tv-toolbar">
   <form class="tv-source-form" method="get" action="{{url "/history"}}" data-autosubmit>
     <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
-    <select id="source-select" name="source" class="tv-select">
+    <select id="source-select" name="source" class="tv-select" {{$.Tour "source"}}>
       {{range .Sources}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
     </select>
     <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
@@ -27,7 +27,7 @@
   <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
-<section class="tv-timeline" aria-label="{{$.T "history.timeline"}}">
+<section class="tv-timeline" aria-label="{{$.T "history.timeline"}}" {{$.Tour "history.timeline"}}>
   <div class="tv-timeline-track" data-timeline>
     {{range .Chips}}
     <a class="tv-point{{if .Selected}} is-selected{{end}}{{if not .Point.Restorable}} is-warning{{end}}"
@@ -47,7 +47,7 @@
   </div>
 </section>
 
-<div class="tv-banner tv-banner-history">
+<div class="tv-banner tv-banner-history" {{$.Tour "history.banner"}}>
   {{template "icon" "history"}}
   <span>{{$.T "history.viewing" .Point.Seq ($.Time .Point.CapturedAt)}}</span>
   <span class="tv-chip tv-chip-live" title="{{$.T "history.live_scan_hint"}}">{{$.T "consistency.live_scan"}}</span>
@@ -58,7 +58,7 @@
 </div>
 {{if .Point.Partial}}<p class="tv-alert tv-alert-warn" role="note">{{template "icon" "alert"}} {{$.T "points.partial_hint"}}</p>{{end}}
 
-<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}">
+<nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}" {{$.Tour "crumbs"}}>
   <a class="tv-crumb" href="{{url "/history" "source" .Source.ID "point" .Point.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
   {{range .Crumbs}}
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
@@ -69,7 +69,7 @@
 {{template "location" $}}
 
 {{if or .Listing.Entries .List.Filtered}}
-<div class="tv-listbar">
+<div class="tv-listbar" {{$.Tour "tools"}}>
   {{template "listtools" $}}
   {{template "pager" $}}
 </div>
@@ -83,7 +83,7 @@
   <input type="hidden" name="current_path" value="{{.Rel}}">
 {{else}}<div class="tv-restore-form">{{end}}
 
-  <div class="tv-actionbar">
+  <div class="tv-actionbar" {{$.Tour "history.actions"}}>
     {{if not $.CanRestore}}
     <a class="tv-btn" data-no-boost href="{{url "/login" "next" $.RequestURI}}">{{template "icon" "user"}} {{$.T "history.sign_in_to_restore"}}</a>
     {{else if and .RestoreEnabled .Point.Restorable}}
@@ -94,14 +94,14 @@
     {{end}}
   </div>
 
-  <section class="tv-card">
+  <section class="tv-card" {{$.Tour "history.list"}}>
     {{if .Listing.Entries}}
     <div class="tv-list" role="list">
       <div class="tv-list-head" role="row">
         {{if $.CanRestore}}<label class="c-check"><input type="checkbox" data-select-all aria-label="{{$.T "common.select_all"}}"></label>{{end}}
         <a class="c-name tv-sort" href="{{url .List.Sort.name.URL}}"{{with .List.Sort.name.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.name"}}</a>
         <a class="c-type tv-sort" href="{{url .List.Sort.type.URL}}"{{with .List.Sort.type.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.type"}}</a>
-        <span class="c-status">{{$.T "list.vs_now"}}</span>
+        <span class="c-status" {{$.Tour "history.compare"}}>{{$.T "list.vs_now"}}</span>
         <a class="c-size tv-sort" href="{{url .List.Sort.size.URL}}"{{with .List.Sort.size.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.size"}}</a>
         <a class="c-time tv-sort" href="{{url .List.Sort.mtime.URL}}"{{with .List.Sort.mtime.Aria}} aria-sort="{{.}}"{{end}}>{{$.T "list.modified"}}</a>
       </div>
