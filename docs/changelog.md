@@ -4,6 +4,58 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 1.0.1
+
+Two changes of how TimeVault is built and run, and nothing new in the pages that people use: TimeVault builds its own **NTFS index** instead of asking Everything ([ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)), and the operating settings move from `.env` into the **database**, where only the local administrator edits them on a **Site settings** page ([ADR 0017](./adr/0017-site-settings-in-the-database.md)). The limits of [mvp-status.md](./mvp-status.md) stand otherwise (backups read the live disk, no VSS, no TLS of its own). **This is not a drop-in upgrade:** the settings that were in `.env` are not carried over, and the service has to run with administrator rights for search. Read the upgrade notes before a server is updated. Migration `0006_site_settings` creates one table.
+
+### Added
+
+- **The NTFS index.** `internal/ntfsindex` builds, for every drive letter that has monitored folders, an in-memory tree of the files and folders below them from the file records of the NTFS volume (`FSCTL_ENUM_USN_DATA` for the folders, `FSCTL_QUERY_FILE_LAYOUT` for names, sizes and times; names are decoded only for what is inside the monitored folders), and keeps it current from the change journal (`FSCTL_READ_USN_JOURNAL`, read every 10 seconds and before a question when it was not read in the last 2 seconds). It answers a search below a folder (a name that contains every term, ignoring case; folders first, then by name; pages of at most 200), the folders directly inside a folder with the size of everything below each, and a probe for the scheduler (how many entries are below a folder, and whether anything below it changed since a time, which a time from before the index began to watch counts as). `search.NTFS` makes it the `Provider`, `FolderLister` and `ChangeProber` of the service. A journal that was replaced or overwritten, a folder that was moved into a monitored folder from outside, and a change of the monitored folders of a volume make the volume be built again (the second at most once a minute); a volume that could not be indexed is tried again after 30 seconds. Measured on the development computer: 2.0 million entries in 13 seconds, about 230 bytes of memory per entry, a search below a tree of 1.75 million entries in about 0.13 seconds. See [Search index](./runbook.md#search-index).
+- **Site settings.** A page, `/settings/site` (**Settings → Site settings**), the endpoints `GET` and `PATCH /api/v1/site-settings` and `POST /api/v1/site-settings/restart`, and the command `timevault-server settings list|get|set|reset`. 26 settings in seven groups (address and display, sign-in, performance, scheduler, search index, automatic updates, logging) are stored in the table `site_settings` and read and changed only by the local administrator: anybody else who is signed in is told that there is no such page (`404`) and the attempt is audited. A value that equals its default is not stored. The values are checked together with the settings of `.env` that they depend on before they are saved. A saved setting is used after a restart: the page says which settings are not in use yet and offers **Restart now** (the restart of an automatic update; refused while a job runs). A change is audited as `site.update` and a restart as `site.restart`, with the names of the settings and never their values, and only the local administrator sees those events. See [Site settings](./runbook.md#site-settings).
+- **Why the search is not available.** The Status page and `GET /api/v1/health` say why: the service has no administrator rights, the index of a volume is being built, a volume has no change journal (with the command that creates one), a volume is not NTFS, or another failure that the log names. `search_index` can switch the index off.
+- **Migration `0006_site_settings`:** the table `site_settings` (`key`, `value`, `updated_at`, `updated_by`).
+- **Tests.** `internal/ntfsindex` is tested with a model of a volume (building, searching, sizes, the probe and the journal: create, write, rename, move, delete, a journal that is applied twice, a lost journal, a folder moved in) and, on Windows from an elevated shell, against a real volume (`TestWindowsVolumeMatchesAWalkAndFollowsTheJournal`); `internal/search` tests the provider; `internal/config`, `internal/sitesettings`, `internal/auth` and `internal/server` test the Site settings (the registry, the lookup that ignores the environment, the checks, who may open the page, saving, the API, the restart, the translations); `cmd/timevault-server` tests the command line.
+
+### Changed
+
+- **Search and folder sizes come from the index, not from Everything.** Search is plain text (no operators; `*` and `?` separate terms), the results come folders first and then by name, and the same order on every page. The size of a folder is the sum of the lengths of the files below it. The sizes of folders are cached for 10 seconds as before.
+- **The scheduler's change probe asks the index.** `scheduler_probe` (it was `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE`) is off by default. A folder is also scanned when the index has not been watching the volume since 5 minutes before the last scan, so a start or a rebuild costs one more scan of each folder before skipping resumes (more for an interval under 5 minutes).
+- **`.env` holds only what the service needs before it reaches its database, and the secrets:** the database URL, `TIMEVAULT_AUTO_MIGRATE`, the listen address, the backup and restore folders, `TIMEVAULT_AUTH_DISABLED`, the local administrator, the session key and the Redis of the user directory. Every other setting is a Site setting (the table below). A Site setting that is still in `.env` or in the environment is ignored, and the start-up log names it. `configs/timevault.example.env` and the development scripts follow (`dev-run.ps1` says that the index needs an elevated shell).
+- **The service starts in two steps:** the bootstrap settings, a small database pool, the migrations, the Site settings, the validation of everything together and then the real pool. Stored settings that are not valid together stop it with a message that names the problems.
+- **The Settings page** shows the version (and, for the local administrator, a link to the Site settings page) where it showed the whole running configuration; the configuration moved to the Site settings page. `GET /api/v1/settings` gives everybody the version, `server_host`, `restore_display_root` and `update`, and the rest to the local administrator (`search` is now `search_index`).
+- **`check-config` checks the bootstrap settings only,** so that the check that a service runs before it replaces itself does not depend on the database.
+- **The service runs with administrator rights** for the index. Without them it still runs: search is unavailable, folder sizes show "-" and the scheduler scans as before.
+- **The Status page no longer lists USN as disabled** (the change journal is used now); VSS is still listed as disabled.
+- The version number is 1.0.1 (the footer of every page, the Settings page, `GET /api/v1/settings`, `timevault-server version`). `golang.org/x/sys` became a direct dependency of `go.mod` (it was indirect).
+
+### Removed
+
+- The Everything adapter, its settings `TIMEVAULT_EVERYTHING_URL`, `TIMEVAULT_EVERYTHING_USERNAME`, `TIMEVAULT_EVERYTHING_PASSWORD` and `TIMEVAULT_EVERYTHING_TIMEOUT`, the setting `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE`, `scripts\dev-everything.ps1`, the settings `TIMEVAULT_EVERYTHING_EXE` and `TIMEVAULT_TEST_EVERYTHING_*` of the scripts and live tests, and the live tests against Everything. Nothing of Everything is used or needed any more.
+
+### Upgrade notes
+
+1. **Write down the Site settings of `.env` before you update.** The new program ignores them from its first start, and nothing is copied. These are the old names and the new keys:
+
+   | `.env` of 1.0.0 | Site setting of 1.0.1 |
+   |---|---|
+   | `TIMEVAULT_SERVER_HOST`, `TIMEVAULT_RESTORE_DISPLAY_ROOT`, `TIMEVAULT_AVATAR_URL`, `TIMEVAULT_BASE_PATH`, `TIMEVAULT_TRUSTED_PROXIES` | `server_host`, `restore_display_root`, `avatar_url`, `base_path`, `trusted_proxies` |
+   | `TIMEVAULT_SESSION_TTL`, `TIMEVAULT_COOKIE_SECURE`, `TIMEVAULT_SSO_HOST`, `TIMEVAULT_SSO_REQUIRE_SAME_IP` | `session_ttl`, `cookie_secure`, `sso_host`, `sso_require_same_ip` |
+   | `TIMEVAULT_JOB_WORKERS`, `TIMEVAULT_HASH_WORKERS`, `TIMEVAULT_PROCESS_PRIORITY` | `job_workers`, `hash_workers`, `process_priority` |
+   | `TIMEVAULT_SCHEDULER_PARALLEL`, `_GAP`, `_REST`, `_FULL_SCAN_EVERY` | `scheduler_parallel`, `scheduler_gap`, `scheduler_rest`, `scheduler_full_scan_every` |
+   | `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE` | `scheduler_probe` (needs the index; see note 4) |
+   | `TIMEVAULT_EVERYTHING_URL`, `_USERNAME`, `_PASSWORD`, `_TIMEOUT` | gone; the new `search_index` is `auto` or `off` |
+   | `TIMEVAULT_UPDATE_URL`, `TIMEVAULT_UPDATE_INTERVAL`, `TIMEVAULT_UPDATE_RESTART` | `update_url`, `update_interval`, `update_restart` |
+   | `TIMEVAULT_LOG_LEVEL`, `TIMEVAULT_LOG_FORMAT` | `log_level`, `log_format` |
+   | `TIMEVAULT_WEB_LOG`, `TIMEVAULT_WEB_LOG_KEY`, `TIMEVAULT_WEB_LOG_HOST` | `web_log`, `web_log_key`, `web_log_host` |
+
+   These stay in `.env`: `TIMEVAULT_DATABASE_URL`, `TIMEVAULT_AUTO_MIGRATE`, `TIMEVAULT_LISTEN_ADDR`, `TIMEVAULT_ALLOW_NON_LOOPBACK`, `TIMEVAULT_REPOSITORY_PATH`, `TIMEVAULT_RESTORE_ROOT`, `TIMEVAULT_AUTH_DISABLED`, `TIMEVAULT_ADMIN_USER`, `TIMEVAULT_ADMIN_PASSWORD_HASH`, `TIMEVAULT_SESSION_KEY`, `TIMEVAULT_REDIS_URL`, `TIMEVAULT_REDIS_KEY_PREFIX`, `TIMEVAULT_REDIS_TIMEOUT`.
+2. **After the update, enter the values** on **Settings → Site settings** as the local administrator (`TIMEVAULT_ADMIN_USER` with the password whose hash is in `TIMEVAULT_ADMIN_PASSWORD_HASH`; a server without a local administrator can only be changed with `timevault-server settings`), then press **Restart now** or restart the service. Delete the old lines from `.env`: the start-up log names every one that is still there.
+3. **Two settings matter at once.** A server that updates itself loses `update_url`, so **the update that brings 1.0.1 is the last one it installs by itself until `update_url` is entered again** (and `update_interval` and `update_restart` return to their defaults, 10 minutes and `supervise`). A site that is served under a path behind a reverse proxy (`base_path`, for example `/tv`) has broken links until `base_path` is entered again; open the Site settings page on the server's own address (`http://127.0.0.1:8660/settings/site`, which needs no prefix) or run `timevault-server settings set base_path /tv` and restart. `trusted_proxies`, `sso_host` and `cookie_secure` are lost the same way.
+4. **Run the service with administrator rights for search,** for the sizes of folders and for skipping scans of unchanged folders: from an elevated PowerShell, or, not tried, as a scheduled task that runs with the highest privileges or as the account SYSTEM. Without them the Status page says "The service has no administrator rights, so it cannot read the volumes to index them", search is unavailable, folder sizes show "-", and every due folder is scanned as before. The monitored folders must be on local NTFS drive letters; a folder on a share is not indexed. `scheduler_probe` is off by default: switch it on (and restart) when the index runs. Read [security.md](./security.md): the whole service, its web server included, runs elevated.
+5. **Migration `0006`** is applied at start when `TIMEVAULT_AUTO_MIGRATE=true` (a service that updates itself has it) or by `timevault-server migrate`. It only adds a table. Going back to 1.0.0 on the migrated database should work (the older program looks only for the migrations it knows, and ignores the table; this was not tried), but then its `.env` has to hold the settings again: keep a copy of the old `.env`.
+6. **Everything is no longer needed.** Stop and uninstall the Everything instance if nothing else uses it.
+7. **To release:** the version in `cmd\timevault-server\main.go` is already 1.0.1, so run `.\scripts\release.ps1` and copy `timevault.exe`, then `timevault.json`, to the release folder (the servers that update themselves find it; see note 3 about what they lose).
+
 ## 1.0.0
 
 The first official release. It is still the vertical slice that [mvp-status.md](./mvp-status.md) describes, and its limits stand (the live disk, no VSS or NTFS USN journal, no TLS of its own). Three things are new: the console log names the user and the address of every request; the service writes a **web log** to the Redis list that the company's other applications share, which is the first time TimeVault writes to Redis ([ADR 0016](./adr/0016-web-log-in-the-shared-redis-list.md)); and every page but the sign-in page has a **Documentation** button (the user guide) and a **Guide** button (a step-by-step tour of the page). No migration and no setting is required. Nobody has published 1.0.0 yet: `.\scripts\release.ps1` builds the release, and publishing it to the folder that the servers read is the administrator's decision.
@@ -302,7 +354,7 @@ Lists you can sort, filter and page, a Type column, display folders for the moni
 2. **Settings.** Add `TIMEVAULT_SERVER_HOST` and `TIMEVAULT_RESTORE_DISPLAY_ROOT` to `.env` (see [configs/timevault.example.env](../configs/timevault.example.env)). The service refuses to start when the restore display root is not a network path or is on another host.
 3. **Existing monitored folders have no display folder.** With `TIMEVAULT_SERVER_HOST` set, an administrator has to give each of them one on the Settings page before it can be edited again (the Settings page marks them "No display folder yet"). Browsing, backups, automatic schedules and restores keep working meanwhile. Ordinary accounts see no location for such a folder, and `[<name>]` in texts that quote it.
 4. **API callers.** Anyone who read `root_path` as an ordinary account has to use `display_path`, or an administrator account. `GET /api/v1/files` and `GET /api/v1/history/tree` behave as before unless they are given a new parameter; `files` now also returns `unfiltered`, `types` and a `type` for every entry, and its `total` counts the items that match the filter.
-5. **Search (Everything).** Nothing changed in the service. To turn it on for an Everything you already run, see [runbook.md](./runbook.md#everything-search).
+5. **Search (Everything).** Nothing changed in the service. To turn it on for an Everything you already run, see the section of [runbook.md](./runbook.md) of that version (Everything was removed in 1.0.1; search is described in [Search index](./runbook.md#search-index) now).
 
 ### Known limits
 
@@ -401,6 +453,58 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 1.0.1
+
+TimeVault 的构建和运行方式有两处改变，而人们使用的页面里没有任何新东西：TimeVault 自己建立 **NTFS 索引**，而不再去问 Everything（[ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)）；运行设置从 `.env` 移入**数据库**，只有本地管理员能在**站点设置**页上编辑它们（[ADR 0017](./adr/0017-site-settings-in-the-database.md)）。除此之外，[mvp-status.md](./mvp-status.md) 中的限制依然有效（备份读取在线磁盘、没有 VSS、自身没有 TLS）。**这不是可以直接替换的升级：** 原来在 `.env` 里的设置不会被带过来，而且要使用搜索，服务必须以管理员权限运行。更新服务器之前，请先阅读升级说明。迁移 `0006_site_settings` 会创建一张表。
+
+### 新增
+
+- **NTFS 索引。** `internal/ntfsindex` 为每个有监控文件夹的盘符，由 NTFS 卷的文件记录（文件夹用 `FSCTL_ENUM_USN_DATA`，名称、大小和时间用 `FSCTL_QUERY_FILE_LAYOUT`；只对监控文件夹之内的内容解码名称）建立其下文件和文件夹的内存树，并通过变更日志（`FSCTL_READ_USN_JOURNAL`，每 10 秒读取一次，并且在回答问题之前、如果过去 2 秒内没有读过，也会先读）保持它最新。它回答某个文件夹之下的搜索（名称包含每一个词，不区分大小写；先文件夹、再按名称；每页最多 200 条）、文件夹中直接包含的各个文件夹及其下所有内容的大小，以及供调度器使用的探测（某个文件夹之下有多少条目，以及其下自某个时间以来是否有变化；早于索引开始监视的时间也算作有变化）。`search.NTFS` 让它成为服务的 `Provider`、`FolderLister` 和 `ChangeProber`。日志被替换或被覆盖、有文件夹从外部被移入监控文件夹，以及某个卷上的监控文件夹发生变化，都会让该卷重新建立（第二种最多每分钟一次）；无法建立索引的卷会在 30 秒后重试。在开发电脑上测得：200 万个条目 13 秒建好，每个条目约 230 字节内存，在一棵有 175 万个条目的树之下搜索约 0.13 秒。见[搜索索引](./runbook.md#搜索索引)。
+- **站点设置。** 一个页面 `/settings/site`（**设置 → 站点设置**）、接口 `GET` 和 `PATCH /api/v1/site-settings` 以及 `POST /api/v1/site-settings/restart`，以及命令 `timevault-server settings list|get|set|reset`。分七组（地址与显示、登录、性能、调度器、搜索索引、自动更新、日志）共 26 个设置保存在表 `site_settings` 中，只有本地管理员可以读取和修改：其他已登录的人会被告知没有这个页面（`404`），并且这次尝试会被审计。与默认值相同的值不会被保存。保存之前，各个值会连同它们所依赖的 `.env` 设置一起检查。已保存的设置在重启之后使用：页面会说明哪些设置还没有生效，并提供**立即重启**（自动更新所用的那个重启；有任务在运行时会拒绝）。修改作为 `site.update`、重启作为 `site.restart` 记入审计，只有设置的名称，绝不包含它们的值，并且只有本地管理员能看到这些事件。见[站点设置](./runbook.md#站点设置)。
+- **说明搜索为什么不可用。** 状态页和 `GET /api/v1/health` 会说明原因：服务没有管理员权限、某个卷的索引正在建立、某个卷没有变更日志（并给出创建它的命令）、某个卷不是 NTFS，或日志中点名的其他失败。`search_index` 可以关闭索引。
+- **迁移 `0006_site_settings`：** 表 `site_settings`（`key`、`value`、`updated_at`、`updated_by`）。
+- **测试。** `internal/ntfsindex` 用卷的模型测试（建立、搜索、大小、探测，以及日志：创建、写入、重命名、移动、删除、被应用两次的日志、丢失的日志、被移入的文件夹），并且在 Windows 上从已提升权限的 shell 中对真实的卷测试（`TestWindowsVolumeMatchesAWalkAndFollowsTheJournal`）；`internal/search` 测试提供者；`internal/config`、`internal/sitesettings`、`internal/auth` 和 `internal/server` 测试站点设置（注册表、忽略环境变量的查找、各项检查、谁能打开页面、保存、API、重启、翻译）；`cmd/timevault-server` 测试命令行。
+
+### 变更
+
+- **搜索和文件夹大小来自索引，而不是 Everything。** 搜索是纯文本（没有操作符；`*` 和 `?` 用作词的分隔符），结果先列文件夹、再按名称排序，每一页的顺序都一样。文件夹的大小是其下所有文件长度之和。文件夹大小仍和以前一样缓存 10 秒。
+- **调度器的变更探测询问索引。** `scheduler_probe`（原来是 `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE`）默认关闭。索引自上次扫描前 5 分钟以来没有一直在监视该卷时，文件夹同样会被扫描，所以启动或重新建立之后，每个文件夹要多扫描一次才会恢复跳过（间隔短于 5 分钟时更多）。
+- **`.env` 只放服务在连上数据库之前就需要的内容，以及机密：** 数据库 URL、`TIMEVAULT_AUTO_MIGRATE`、监听地址、备份和恢复文件夹、`TIMEVAULT_AUTH_DISABLED`、本地管理员、会话密钥，以及用户目录的 Redis。其余每个设置都是站点设置（见下表）。仍写在 `.env` 或环境变量里的站点设置会被忽略，启动日志会点名它们。`configs/timevault.example.env` 和开发脚本随之更新（`dev-run.ps1` 会说明索引需要已提升权限的 shell）。
+- **服务分两步启动：** 引导设置、一个小的数据库连接池、迁移、站点设置、把所有内容放在一起校验，然后才是真正的连接池。已保存的设置放在一起无效时，服务会停止并给出点名问题的消息。
+- **设置页**原来显示整个运行配置，现在显示版本（对本地管理员还有一个指向站点设置页的链接）；配置移到了站点设置页。`GET /api/v1/settings` 给每个人 `version`、`server_host`、`restore_display_root` 和 `update`，其余的只给本地管理员（`search` 现在是 `search_index`）。
+- **`check-config` 只检查引导设置，** 这样服务在替换自己之前运行的那项检查就不依赖数据库。
+- **服务以管理员权限运行**，以便使用索引。没有这个权限时它仍能运行：搜索不可用，文件夹大小显示"-"，调度器照旧扫描。
+- **状态页不再把 USN 列为已禁用**（现在使用变更日志了）；VSS 仍被列为已禁用。
+- 版本号为 1.0.1（每个页面的页脚、设置页、`GET /api/v1/settings`、`timevault-server version`）。`golang.org/x/sys` 成为 `go.mod` 的直接依赖（原来是间接依赖）。
+
+### 移除
+
+- Everything 适配器、它的设置 `TIMEVAULT_EVERYTHING_URL`、`TIMEVAULT_EVERYTHING_USERNAME`、`TIMEVAULT_EVERYTHING_PASSWORD` 和 `TIMEVAULT_EVERYTHING_TIMEOUT`、设置 `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE`、`scripts\dev-everything.ps1`、脚本和在线测试所用的设置 `TIMEVAULT_EVERYTHING_EXE` 和 `TIMEVAULT_TEST_EVERYTHING_*`，以及针对 Everything 的在线测试。Everything 的任何东西都不再被使用，也不再需要。
+
+### 升级说明
+
+1. **更新之前，请先把 `.env` 里的站点设置记下来。** 新程序从第一次启动起就会忽略它们，并且不会复制任何东西。旧名称和新的键如下：
+
+   | 1.0.0 的 `.env` | 1.0.1 的站点设置 |
+   |---|---|
+   | `TIMEVAULT_SERVER_HOST`、`TIMEVAULT_RESTORE_DISPLAY_ROOT`、`TIMEVAULT_AVATAR_URL`、`TIMEVAULT_BASE_PATH`、`TIMEVAULT_TRUSTED_PROXIES` | `server_host`、`restore_display_root`、`avatar_url`、`base_path`、`trusted_proxies` |
+   | `TIMEVAULT_SESSION_TTL`、`TIMEVAULT_COOKIE_SECURE`、`TIMEVAULT_SSO_HOST`、`TIMEVAULT_SSO_REQUIRE_SAME_IP` | `session_ttl`、`cookie_secure`、`sso_host`、`sso_require_same_ip` |
+   | `TIMEVAULT_JOB_WORKERS`、`TIMEVAULT_HASH_WORKERS`、`TIMEVAULT_PROCESS_PRIORITY` | `job_workers`、`hash_workers`、`process_priority` |
+   | `TIMEVAULT_SCHEDULER_PARALLEL`、`_GAP`、`_REST`、`_FULL_SCAN_EVERY` | `scheduler_parallel`、`scheduler_gap`、`scheduler_rest`、`scheduler_full_scan_every` |
+   | `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE` | `scheduler_probe`（需要索引；见第 4 条） |
+   | `TIMEVAULT_EVERYTHING_URL`、`_USERNAME`、`_PASSWORD`、`_TIMEOUT` | 已删除；新的 `search_index` 为 `auto` 或 `off` |
+   | `TIMEVAULT_UPDATE_URL`、`TIMEVAULT_UPDATE_INTERVAL`、`TIMEVAULT_UPDATE_RESTART` | `update_url`、`update_interval`、`update_restart` |
+   | `TIMEVAULT_LOG_LEVEL`、`TIMEVAULT_LOG_FORMAT` | `log_level`、`log_format` |
+   | `TIMEVAULT_WEB_LOG`、`TIMEVAULT_WEB_LOG_KEY`、`TIMEVAULT_WEB_LOG_HOST` | `web_log`、`web_log_key`、`web_log_host` |
+
+   这些仍留在 `.env` 中：`TIMEVAULT_DATABASE_URL`、`TIMEVAULT_AUTO_MIGRATE`、`TIMEVAULT_LISTEN_ADDR`、`TIMEVAULT_ALLOW_NON_LOOPBACK`、`TIMEVAULT_REPOSITORY_PATH`、`TIMEVAULT_RESTORE_ROOT`、`TIMEVAULT_AUTH_DISABLED`、`TIMEVAULT_ADMIN_USER`、`TIMEVAULT_ADMIN_PASSWORD_HASH`、`TIMEVAULT_SESSION_KEY`、`TIMEVAULT_REDIS_URL`、`TIMEVAULT_REDIS_KEY_PREFIX`、`TIMEVAULT_REDIS_TIMEOUT`。
+2. **更新之后，请填写这些值：** 以本地管理员身份（`TIMEVAULT_ADMIN_USER`，密码的哈希在 `TIMEVAULT_ADMIN_PASSWORD_HASH` 中；没有本地管理员的服务器只能用 `timevault-server settings` 修改）在**设置 → 站点设置**中填写，然后点击**立即重启**或重启服务。请删除 `.env` 中的旧行：启动日志会点名仍在那里的每一行。
+3. **有两个设置马上就有影响。** 会自己更新的服务器会丢失 `update_url`，所以**带来 1.0.1 的这次更新，就是它在重新填写 `update_url` 之前自己安装的最后一次更新**（`update_interval` 和 `update_restart` 也会回到默认值，即 10 分钟和 `supervise`）。放在反向代理之后某个路径下提供服务的站点（`base_path`，例如 `/tv`），在重新填写 `base_path` 之前链接是坏的；请用服务器自己的地址（`http://127.0.0.1:8660/settings/site`，不需要前缀）打开站点设置页，或运行 `timevault-server settings set base_path /tv` 然后重启。`trusted_proxies`、`sso_host` 和 `cookie_secure` 也会以同样的方式丢失。
+4. **要使用搜索、文件夹大小和跳过未变化文件夹的扫描，请让服务以管理员权限运行：** 从已提升权限的 PowerShell 启动，或者（没有试过）作为以最高权限运行的计划任务，或以 SYSTEM 账号运行。没有这个权限时，状态页会说"服务没有管理员权限，无法读取卷来建立索引。"，搜索不可用，文件夹大小显示"-"，每个到期的文件夹都照旧扫描。监控文件夹必须位于本地 NTFS 盘符上；位于共享上的文件夹不会被建立索引。`scheduler_probe` 默认关闭：索引运行之后请把它打开（并重启）。请阅读 [security.md](./security.md)：整个服务，包括它的 Web 服务器，都在提升权限下运行。
+5. **迁移 `0006`** 在 `TIMEVAULT_AUTO_MIGRATE=true` 时于启动时应用（会自己更新的服务有它），或用 `timevault-server migrate` 应用。它只增加一张表。在已迁移的数据库上回到 1.0.0 应该可行（旧程序只查找它认识的迁移，会忽略这张表；没有试过），但那时它的 `.env` 必须重新写上这些设置：请保留一份旧的 `.env`。
+6. **不再需要 Everything。** 如果没有别的东西在用它，请停止并卸载 Everything 实例。
+7. **发布：** `cmd\timevault-server\main.go` 中的版本已经是 1.0.1，所以运行 `.\scripts\release.ps1`，把 `timevault.exe`，再把 `timevault.json`，复制到发布文件夹（会自己更新的服务器会发现它；它们会丢失什么，见第 3 条）。
 
 ## 1.0.0
 
@@ -700,7 +804,7 @@ TimeVault 现在可以放在多个应用共用的主机名的某个路径下提�
 2. **设置。** 在 `.env` 中添加 `TIMEVAULT_SERVER_HOST` 和 `TIMEVAULT_RESTORE_DISPLAY_ROOT`（见 [configs/timevault.example.env](../configs/timevault.example.env)）。如果恢复显示根路径不是网络路径或位于另一台主机上，服务会拒绝启动。
 3. **已有的监控文件夹没有显示文件夹。** 设置了 `TIMEVAULT_SERVER_HOST` 之后，管理员必须先在设置页给它们每个填上一个，才能再次编辑（设置页会把它们标为"还没有显示文件夹"）。在此期间浏览、备份、自动计划和恢复都照常工作。非管理员账号看不到这类文件夹的位置，引用它的文本中会显示 `[<名称>]`。
 4. **API 调用方。** 以前以普通账号读取 `root_path` 的调用方，现在要改用 `display_path`，或使用管理员账号。`GET /api/v1/files` 和 `GET /api/v1/history/tree` 在没有给出新参数时行为不变；`files` 现在还会返回 `unfiltered`、`types` 以及每个条目的 `type`，它的 `total` 统计的是符合筛选条件的项目数。
-5. **搜索（Everything）。** 服务本身没有变化。要为你已经在运行的 Everything 启用搜索，见 [runbook.md](./runbook.md#everything-搜索)。
+5. **搜索（Everything）。** 服务本身没有变化。要为你已经在运行的 Everything 启用搜索，见该版本的 [runbook.md](./runbook.md)（Everything 在 1.0.1 中已被移除，搜索现在在[搜索索引](./runbook.md#搜索索引)中说明）。
 
 ### 已知限制
 

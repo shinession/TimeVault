@@ -15,7 +15,7 @@ func TestSchedulerAndSSODefaults(t *testing.T) {
 	if c.SSOHost != "" || !c.SSORequireSameIP || len(c.TrustedProxies) != 0 {
 		t.Errorf("single sign-on is off by default and checks the address when it is on: %+v", c)
 	}
-	if c.SchedulerParallel != 1 || !c.SchedulerGapAuto || !c.SchedulerRestAuto || c.SchedulerEverythingProbe ||
+	if c.SchedulerParallel != 1 || !c.SchedulerGapAuto || !c.SchedulerRestAuto || c.SchedulerProbe ||
 		c.SchedulerFullScanEvery != 24*time.Hour || c.ProcessPriority != "below_normal" {
 		t.Errorf("scheduler defaults: %+v", c)
 	}
@@ -81,14 +81,14 @@ func TestTrustedProxies(t *testing.T) {
 func TestSchedulerSettings(t *testing.T) {
 	c, err := Load(lookupFrom(map[string]string{
 		"TIMEVAULT_SCHEDULER_PARALLEL": "2", "TIMEVAULT_SCHEDULER_GAP": "5m", "TIMEVAULT_SCHEDULER_REST": "0s",
-		"TIMEVAULT_SCHEDULER_EVERYTHING_PROBE": "true", "TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY": "12h",
+		"TIMEVAULT_SCHEDULER_PROBE": "true", "TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY": "12h",
 		"TIMEVAULT_PROCESS_PRIORITY": "Background", "TIMEVAULT_SSO_REQUIRE_SAME_IP": "false",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.SchedulerParallel != 2 || c.SchedulerGapAuto || c.SchedulerGap != 5*time.Minute || c.SchedulerRestAuto || c.SchedulerRest != 0 ||
-		!c.SchedulerEverythingProbe || c.SchedulerFullScanEvery != 12*time.Hour || c.ProcessPriority != "background" || c.SSORequireSameIP {
+		!c.SchedulerProbe || c.SchedulerFullScanEvery != 12*time.Hour || c.ProcessPriority != "background" || c.SSORequireSameIP {
 		t.Errorf("settings = %+v", c)
 	}
 	if c, err := Load(lookupFrom(map[string]string{"TIMEVAULT_SCHEDULER_GAP": "AUTO"})); err != nil || !c.SchedulerGapAuto {
@@ -104,7 +104,7 @@ func TestSchedulerSettings(t *testing.T) {
 		"full scan short":   {"TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY": "10m"},
 		"full scan long":    {"TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY": "800h"},
 		"unknown priority":  {"TIMEVAULT_PROCESS_PRIORITY": "high"},
-		"probe not a bool":  {"TIMEVAULT_SCHEDULER_EVERYTHING_PROBE": "sometimes"},
+		"probe not a bool":  {"TIMEVAULT_SCHEDULER_PROBE": "sometimes"},
 	} {
 		if _, err := Load(lookupFrom(env)); err == nil {
 			t.Errorf("%s: Load succeeded, want an error", name)

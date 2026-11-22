@@ -162,23 +162,14 @@
 
 <section class="tv-card" {{$.Tour "settings.service"}}>
   <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "settings.service"}}</h2>
-    <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/status"}}">{{$.T "nav.status"}}</a></div>
+    <div class="tv-actions">
+      {{if $.CanSite}}<a class="tv-btn tv-btn-small" href="{{url "/settings/site"}}">{{template "icon" "settings"}} {{$.T "settings.site_link"}}</a>{{end}}
+      <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/status"}}">{{$.T "nav.status"}}</a>
+    </div></div>
   <dl class="tv-facts">
     <div><dt>{{$.T "settings.version"}}</dt><dd>v{{.Version}}</dd></div>
-    <div><dt>{{$.T "settings.server_host"}}</dt><dd>{{if .Deployment.ServerHost}}<code>{{.Deployment.ServerHost}}</code>{{else}}{{$.T "settings.host_unset"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.listen"}}</dt><dd><code>{{.Deployment.ListenAddr}}</code></dd></div>
-    <div><dt>{{$.T "settings.database"}}</dt><dd><code>{{.Deployment.Database}}</code></dd></div>
-    <div><dt>{{$.T "settings.directory"}}</dt><dd>{{if .Deployment.UserDirectory}}<code>{{.Deployment.UserDirectory}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.web_log"}}</dt><dd>{{if .Deployment.WebLog}}<code>{{.Deployment.WebLogKey}}</code> <span class="tv-muted tv-small">({{$.T "settings.web_log_host"}}: <code>{{.Deployment.WebLogHost}}</code>)</span>{{else}}{{$.T "settings.off"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.sso"}}</dt><dd>{{if .Deployment.SSOHost}}<code>{{.Deployment.SSOHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.base_path"}}</dt><dd>{{if .Deployment.BasePath}}<code>{{.Deployment.BasePath}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.local_admin"}}</dt><dd>{{if .Deployment.LocalAdmin}}{{.Deployment.LocalAdmin}}{{else}}{{$.T "settings.none"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.search"}}</dt><dd>{{if .Deployment.SearchHost}}<code>{{.Deployment.SearchHost}}</code>{{else}}{{$.T "settings.not_configured"}}{{end}}</dd></div>
-    <div><dt>{{$.T "settings.session_ttl"}}</dt><dd>{{.Deployment.SessionTTL}}</dd></div>
-    <div><dt>{{$.T "settings.secure_cookie"}}</dt><dd>{{if .Deployment.CookieSecure}}{{$.T "settings.yes"}}{{else}}{{$.T "settings.no"}}{{end}}</dd></div>
-    {{if $.ShowPhysical}}<div><dt>{{$.T "settings.env_file"}}</dt><dd>{{if .Deployment.EnvFile}}<code>{{.Deployment.EnvFile}}</code>{{else}}{{$.T "settings.none"}}{{end}}</dd></div>{{end}}
   </dl>
-  {{if $.ShowPhysical}}<p class="tv-muted tv-small">{{$.T "settings.env_hint"}}</p>{{end}}
+  {{if $.CanSite}}<p class="tv-muted tv-small">{{$.T "settings.site_hint"}}</p>{{end}}
 </section>
 
 <section class="tv-card" id="updates" {{$.Tour "settings.updates"}}>

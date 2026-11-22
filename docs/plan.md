@@ -10,6 +10,8 @@
 
 # Part I — English
 
+> **Update, version 1.0.1.** This is the kickoff plan and it is kept as it was written. Two decisions in it were replaced: the search integration through **Everything** (§2, §4.1, §5, P0 and P1 in §8, §9) is now an index that TimeVault builds itself from the NTFS volume and keeps current from its change journal ([ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)), so Everything is no longer used or needed; and the settings of the service are no longer all in the environment: the operating settings are in the database and are edited by the local administrator on a Site settings page ([ADR 0017](./adr/0017-site-settings-in-the-database.md)). Where this plan says Everything, read the NTFS index. [mvp-status.md](./mvp-status.md) says what exists.
+
 ## 1. Vision and success definition
 
 Build a Windows Server-oriented file time machine that can rapidly search and browse **approximately 5,000,000 files**, preserve historical file/folder states in an independent backup repository, show available historical versions, and safely restore files or whole folders to an **available recovery point**.
@@ -358,6 +360,8 @@ Tasks:
 ---
 
 # Part II — 中文
+
+> **更新，1.0.1 版。** 这是启动阶段的计划，保持原样。其中有两项决定已被取代：通过 **Everything** 集成搜索（§2、§4.1、§5、§8 中的 P0 和 P1、§9）现在改为 TimeVault 自己由 NTFS 卷建立、并由卷的变更日志保持最新的索引（[ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)），所以不再使用也不再需要 Everything；服务的设置也不再全部放在环境变量中：运行设置保存在数据库中，由本地管理员在站点设置页上编辑（[ADR 0017](./adr/0017-site-settings-in-the-database.md)）。计划中写到 Everything 的地方，请理解为 NTFS 索引。实际已有的内容见 [mvp-status.md](./mvp-status.md)。
 
 ## 1. 项目目标
 

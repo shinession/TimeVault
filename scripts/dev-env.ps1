@@ -15,14 +15,13 @@
     - sets TIMEVAULT_ENV_FILE to <repo>\.env, so a timevault-server that you start by hand, from any
       folder, reads that file;
     - loads what only tests and tools read: TIMEVAULT_TEST_* (for example TIMEVAULT_TEST_DATABASE_URL)
-      and the tool locations TIMEVAULT_GO_ROOT, TIMEVAULT_PG_BIN and TIMEVAULT_EVERYTHING_EXE. A tool
-      location that is already set in the session is kept;
+      and the tool locations TIMEVAULT_GO_ROOT and TIMEVAULT_PG_BIN. A tool location that is already set
+      in the session is kept;
     - puts <GoRoot>\bin on PATH when go is not found. TIMEVAULT_GO_ROOT must then name the Go
       installation folder (the one that contains bin\go.exe); put it into .env to keep it.
 
   The settings of the files older versions used (data\local.env, data\pgdev\db.env,
-  data\dev\server.env, data\everything\everything.env) are moved into .env first; see
-  scripts\dotenv.ps1.
+  data\dev\server.env) are moved into .env first; see scripts\dotenv.ps1.
 #>
 & {
     . (Join-Path $PSScriptRoot 'dotenv.ps1')

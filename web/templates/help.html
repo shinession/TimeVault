@@ -137,7 +137,7 @@
       </ul>
 
       <h3>The file list</h3>
-      <p>Click a folder to open it, or a file to see its versions. The columns are <strong>Name</strong>; <strong>Type</strong> (the extension in capitals, such as PDF; Folder; Link; File for a file without an extension); <strong>Backup</strong>; <strong>Size</strong> (a folder has one only when the search engine knows it, otherwise “-”); and <strong>Modified</strong>. Backup shows:</p>
+      <p>Click a folder to open it, or a file to see its versions. The columns are <strong>Name</strong>; <strong>Type</strong> (the extension in capitals, such as PDF; Folder; Link; File for a file without an extension); <strong>Backup</strong>; <strong>Size</strong> (a folder has one only when the search index knows it, otherwise “-”); and <strong>Modified</strong>. Backup shows:</p>
       <div class="tv-table-wrap">
         <table class="tv-table">
           <thead><tr><th>Label</th><th>Meaning</th></tr></thead>
@@ -163,7 +163,7 @@
         <li>Type words from the name in the search box (press <kbd>/</kbd> to jump there) and press <strong>Search</strong>. A result must match all the words; use double quotes for a phrase; up to 16 words.</li>
         <li>Matches are listed with Name, Type, <strong>Folder</strong>, Size and Modified (100 per page; 50 or 200 can be chosen). Click a folder to open it, a file to see its versions. <strong>Clear search</strong> returns to the folder list.</li>
       </ol>
-      <p>The search covers the whole monitored folder, not only the open folder, and finds what is on the disk now, not deleted files. If the search engine does not answer you see <em>Search is unavailable right now (the search engine did not answer). Browsing and history still work.</em></p>
+      <p>The search covers the whole monitored folder, not only the open folder, and finds what is on the disk now, not deleted files. If the search index is off or not ready yet you see <em>Search is unavailable right now (the search index is off, or not ready yet). Browsing and history still work.</em></p>
 
       <h3>Deleted since the last backup</h3>
       <p>On the first page, a panel lists up to 500 items that are in the newest recovery point but gone from the disk. Open a file and press <strong>Restore…</strong>; open a folder to see it in the Time Machine and press <strong>Restore this folder…</strong> (see <a href="#restore">Restoring files</a>).</p>
@@ -371,7 +371,7 @@
       <h3>Storage, service and updates</h3>
       <ul>
         <li><strong>Backup storage</strong> shows where backups are kept (administrators see <strong>Backup folder (repository)</strong> with the real folder), its state and free space, and the <strong>Restore folder (where restored copies go)</strong> as a network folder, or <strong>not configured</strong>. Both are set in the service settings (<code>TIMEVAULT_REPOSITORY_PATH</code> and <code>TIMEVAULT_RESTORE_ROOT</code> in the <code>.env</code> file) and change only when the service is restarted.</li>
-        <li><strong>Service</strong> is read-only. It shows the <strong>Version</strong> and how the service is set up: <strong>Server host name</strong>, <strong>Listening on</strong>, <strong>Database</strong>, <strong>User accounts (Redis)</strong>, <strong>Web log</strong> (the list that receives a line for every page opened and every action, with the host name used in those lines, or <em>off</em>), <strong>Single sign-on</strong>, <strong>Address prefix</strong>, <strong>Local administrator</strong>, <strong>Search (Everything)</strong>, <strong>Sign-in lasts</strong> and <strong>Secure cookie</strong>. Secrets are never shown. The button <strong>Status</strong> opens the <a href="#status">Status</a> page.</li>
+        <li><strong>Service</strong> shows the <strong>Version</strong>. The button <strong>Status</strong> opens the <a href="#status">Status</a> page. How the service is set up is not shown here: that is for the <strong>Site settings</strong>, a page that only the local administrator can open (the button <strong>Site settings</strong> appears here for that account). It has the settings that are kept in the database (the name of the server in network paths, sign-in, workers, the scheduler, the search index, updates and logging), each with its explanation and its default; a change takes effect after the service restarts, and the page then offers <strong>Restart now</strong> (it refuses while jobs run). At the bottom it lists what the environment and the <code>.env</code> file hold (the database, the listen address, the backup and restore folders, the user accounts in Redis, the local administrator). Secrets are never shown.</li>
         <li><strong>Program updates</strong> says whether TimeVault updates itself: when a different version is released, the service downloads and checks it, waits for the running jobs to finish and restarts itself; jobs requested meanwhile wait in the queue. The status is <span class="tv-chip tv-chip-update-idle">Up to date</span>, <span class="tv-chip tv-chip-update-checking">Checking</span>, <span class="tv-chip tv-chip-update-downloading">Downloading</span>, <span class="tv-chip tv-chip-update-waiting">Waiting for the running jobs</span>, <span class="tv-chip tv-chip-update-applying">Installing</span> or <span class="tv-chip tv-chip-update-error">Problem</span>. Administrators also see the release address and the last problem, and can press <strong>Check now</strong>.</li>
       </ul>
     </section>
@@ -382,10 +382,10 @@
       <ul>
         <li><strong>Database</strong>: OK, or Failed when it does not answer.</li>
         <li><strong>Repository</strong> (the backup storage): a write test and the free space. Degraded below 5% free, Failed when it cannot be written to.</li>
-        <li><strong>Search (Everything)</strong>: OK, Not enabled when none is set up, Degraded when it does not answer properly.</li>
+        <li><strong>Search index (NTFS)</strong>: the index of the monitored folders that gives the Explorer its search and its folder sizes. OK when every volume is indexed (or there is nothing to index), Degraded while a volume is being built or when it cannot be indexed (the Detail says why: for example that the service needs administrator rights to read the volumes, or that a volume has no change journal), Not enabled when it is switched off.</li>
         <li><strong>User accounts (Redis)</strong>: Degraded when it does not answer; browsing and the local administrator still work, but other accounts cannot sign in. Not enabled when it is not configured: only the local administrator can sign in.</li>
         <li><strong>Restore</strong>: OK, or Not enabled without a restore folder. <strong>Job queue</strong>: how many jobs are running and queued in the folders you may browse.</li>
-        <li><strong>VSS snapshots</strong> and <strong>USN journal</strong> are always Not enabled: TimeVault reads the live disk.</li>
+        <li><strong>VSS snapshots</strong> is always Not enabled: TimeVault reads the live disk.</li>
       </ul>
     </section>
 
@@ -408,7 +408,7 @@
       <p>If the browser blocked the sign-in window, allow pop-ups for this site and try again. If Windows could not tell who you are, or has no active account for you here, open TimeVault from your company computer or use your password. Otherwise try again in the same browser on the same computer.</p>
 
       <h3>Search says it is unavailable</h3>
-      <p>The search engine is not answering or is not set up. Everything else keeps working; try again later and tell an administrator if it continues.</p>
+      <p>The search index is off, is still being built (a big volume takes a while after the service starts), or cannot read the volume. Everything else keeps working; try again later and tell an administrator if it continues: the Status page says why.</p>
 
       <h3>A job page says “not found”, or the job has disappeared</h3>
       <p>An automatic backup that finds nothing changed leaves no job. A job of a folder you may not browse is also “not found” for you.</p>
@@ -641,7 +641,7 @@
       </ul>
 
       <h3>文件列表</h3>
-      <p>点击文件夹可打开它，点击文件可查看它的版本。各列依次是<strong>名称</strong>；<strong>类型</strong>（扩展名以大写显示，例如 PDF；文件夹；链接；没有扩展名的文件显示为“文件”）；<strong>备份状态</strong>；<strong>大小</strong>（文件夹只有在搜索引擎知道其大小时才显示，否则显示“-”）；以及<strong>修改时间</strong>。备份状态列显示：</p>
+      <p>点击文件夹可打开它，点击文件可查看它的版本。各列依次是<strong>名称</strong>；<strong>类型</strong>（扩展名以大写显示，例如 PDF；文件夹；链接；没有扩展名的文件显示为“文件”）；<strong>备份状态</strong>；<strong>大小</strong>（文件夹只有在搜索索引知道其大小时才显示，否则显示“-”）；以及<strong>修改时间</strong>。备份状态列显示：</p>
       <div class="tv-table-wrap">
         <table class="tv-table">
           <thead><tr><th>标签</th><th>含义</th></tr></thead>
@@ -667,7 +667,7 @@
         <li>在搜索框中输入名称中的词语（按 <kbd>/</kbd> 可跳到搜索框），然后点击<strong>搜索</strong>。结果必须匹配所有词语；短语请用双引号括起来；最多 16 个词。</li>
         <li>匹配项按名称、类型、<strong>所在文件夹</strong>、大小和修改时间列出（每页 100 项；可改为 50 或 200）。点击文件夹打开它，点击文件查看它的版本。<strong>清除搜索</strong>会回到文件夹列表。</li>
       </ol>
-      <p>搜索覆盖整个监控文件夹，而不只是你打开的那个文件夹，并且查找的是磁盘上现在存在的内容，找不到已删除的文件。如果搜索引擎没有响应，会显示<em>搜索暂时不可用（搜索引擎没有响应）。浏览和历史记录仍可使用。</em></p>
+      <p>搜索覆盖整个监控文件夹，而不只是你打开的那个文件夹，并且查找的是磁盘上现在存在的内容，找不到已删除的文件。如果搜索索引已关闭或还没有就绪，会显示<em>搜索暂时不可用（搜索索引已关闭，或还没有就绪）。浏览和历史记录仍可使用。</em></p>
 
       <h3>自上次备份以来已删除</h3>
       <p>在列表第一页的下方，有一个面板最多列出 500 个存在于最新恢复点、但已从磁盘上消失的项目。打开文件后点击<strong>恢复…</strong>；打开文件夹则在时间机器中查看它，并点击<strong>恢复此文件夹…</strong>（见<a href="#restore">恢复文件</a>）。</p>
@@ -875,7 +875,7 @@
       <h3>存储、服务与更新</h3>
       <ul>
         <li><strong>备份存储</strong>显示备份保存的位置（管理员看到的是带真实文件夹的<strong>备份文件夹（仓库）</strong>）、它的状态和剩余空间，以及以网络文件夹形式显示的<strong>恢复文件夹（恢复出的副本放这里）</strong>，或者显示<strong>未配置</strong>。这两者在服务设置中配置（<code>.env</code> 文件中的 <code>TIMEVAULT_REPOSITORY_PATH</code> 和 <code>TIMEVAULT_RESTORE_ROOT</code>），重启服务后才会生效。</li>
-        <li><strong>服务</strong>卡片是只读的。它显示<strong>版本</strong>以及服务的配置情况：<strong>服务器主机名</strong>、<strong>监听地址</strong>、<strong>数据库</strong>、<strong>用户账号（Redis）</strong>、<strong>Web 日志</strong>（接收每次打开页面和每次操作所生成日志行的列表，以及这些行中使用的主机名；或显示“关闭”）、<strong>单点登录</strong>、<strong>地址前缀</strong>、<strong>本地管理员</strong>、<strong>搜索（Everything）</strong>、<strong>登录有效期</strong>和<strong>安全 Cookie</strong>。机密信息绝不会显示。<strong>状态</strong>按钮会打开<a href="#status">状态</a>页。</li>
+        <li><strong>服务</strong>卡片显示<strong>版本</strong>。<strong>状态</strong>按钮会打开<a href="#status">状态</a>页。服务是如何配置的不在这里显示：那是<strong>站点设置</strong>的内容，只有本地管理员能打开这个页面（该账号会在这里看到<strong>站点设置</strong>按钮）。它列出保存在数据库中的设置（网络路径中的服务器名称、登录、工作线程、调度器、搜索索引、更新和日志），每项都有说明和默认值；修改在服务重启后生效，页面会提供<strong>立即重启</strong>（有任务运行时会拒绝）。页面底部列出环境变量和 <code>.env</code> 文件中的内容（数据库、监听地址、备份和恢复文件夹、Redis 中的用户账号、本地管理员）。机密信息绝不会显示。</li>
         <li><strong>程序更新</strong>说明 TimeVault 是否会自行更新：当发布了不同的版本时，服务会下载并检查它，等待正在运行的任务结束，然后重新启动自己；这期间提交的任务会在队列中等待。状态为<span class="tv-chip tv-chip-update-idle">已是最新</span>、<span class="tv-chip tv-chip-update-checking">正在检查</span>、<span class="tv-chip tv-chip-update-downloading">正在下载</span>、<span class="tv-chip tv-chip-update-waiting">等待正在运行的任务</span>、<span class="tv-chip tv-chip-update-applying">正在安装</span>或<span class="tv-chip tv-chip-update-error">出现问题</span>。管理员还会看到发布地址和最近的问题，并可点击<strong>立即检查</strong>。</li>
       </ul>
     </section>
@@ -886,10 +886,10 @@
       <ul>
         <li><strong>数据库</strong>：正常；没有响应时为故障。</li>
         <li><strong>备份仓库</strong>（备份存储）：写入测试和剩余空间。剩余不足 5% 时为降级，无法写入时为故障。</li>
-        <li><strong>搜索（Everything）</strong>：正常；没有设置时为未启用；没有正常响应时为降级。</li>
+        <li><strong>搜索索引（NTFS）</strong>：监控文件夹的索引，为文件浏览提供搜索和文件夹大小。每个卷都已建好索引（或没有需要索引的内容）时为正常；有卷正在建立索引，或无法建立索引时为降级（详情会说明原因：例如服务需要管理员权限才能读取卷，或某个卷没有变更日志）；被关闭时为未启用。</li>
         <li><strong>用户账号（Redis）</strong>：没有响应时为降级；浏览和本地管理员仍可使用，但其他账号无法登录。没有配置时为未启用：只有本地管理员可以登录。</li>
         <li><strong>恢复</strong>：正常；没有恢复文件夹时为未启用。<strong>任务队列</strong>：在你可以浏览的文件夹中，有多少任务正在运行和排队。</li>
-        <li><strong>VSS 快照</strong>和 <strong>USN 日志</strong>始终为未启用：TimeVault 读取的是实时磁盘。</li>
+        <li><strong>VSS 快照</strong>始终为未启用：TimeVault 读取的是实时磁盘。</li>
       </ul>
     </section>
 
@@ -912,7 +912,7 @@
       <p>如果浏览器拦截了登录窗口，请允许本站弹出窗口后重试。如果 Windows 无法识别你的身份，或者你的 Windows 账号在这里没有可用的账号，请在公司电脑上打开 TimeVault，或使用密码登录。其他情况请在同一台电脑的同一个浏览器中重试。</p>
 
       <h3>搜索提示不可用</h3>
-      <p>搜索引擎没有响应，或者尚未设置。其他功能都不受影响；请稍后再试，如果持续出现，请告知管理员。</p>
+      <p>搜索索引已关闭、还在建立中（服务启动后，较大的卷需要一段时间），或者无法读取该卷。其他功能都不受影响；请稍后再试，如果持续出现，请告知管理员：状态页会说明原因。</p>
 
       <h3>任务页面显示“未找到”，或者任务不见了</h3>
       <p>没有发现变化的自动备份不会留下任务。你无权浏览的文件夹的任务，对你来说同样是“未找到”。</p>

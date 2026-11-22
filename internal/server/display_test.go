@@ -142,7 +142,7 @@ func TestTheDisplayFolderIsOptionalWithoutAServerHost(t *testing.T) {
 		t.Errorf("a rename = %d %v", status, out)
 	}
 	_, body := bob.get("/settings")
-	if !strings.Contains(body, "display folders are optional") || !strings.Contains(body, "No display folder yet") {
+	if !strings.Contains(body, "No display folder yet") {
 		t.Errorf("the settings page without a host name:\n%s", body)
 	}
 }
@@ -275,7 +275,7 @@ func TestOnlyAdministratorsSeeTheFoldersOfTheServer(t *testing.T) {
 	for page, want := range map[string][]string{
 		"/explorer?source=" + src:   {testSourceUNC, h.env.SrcDir},
 		"/backups":                  {testSourceUNC, h.env.SrcDir, testRestoreUNC, h.env.RestoreRoot},
-		"/settings":                 {testSourceUNC, h.env.SrcDir, h.env.Repo.Root(), h.env.RestoreRoot, testRestoreUNC, "test.env"},
+		"/settings":                 {testSourceUNC, h.env.SrcDir, h.env.Repo.Root(), h.env.RestoreRoot, testRestoreUNC},
 		"/jobs/" + itoa(restoreJob): {testRestoreUNC + `\by-alice`, h.env.RestoreRoot + `\by-alice`},
 	} {
 		res, body := bob.get(page)

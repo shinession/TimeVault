@@ -4,28 +4,28 @@
 
 **TimeVault — enterprise file backup, search and time travel** for Windows and NTFS. It keeps point-in-time recovery points of local folders, lets you browse the past state of any folder, search by name, and restore files into a safe folder below a restore root after a preview.
 
-**Status: version 1.0.0, the first official release (vertical slice).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse the folders that let guests browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings, and what an account may do is decided for each monitored folder (Browse, Back up, Full control). It is **not** a production backup system: it reads the live disk (no VSS, no NTFS USN journal), has two roles and the three levels per folder but no rights for a path inside a folder, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
+**Status: version 1.0.1 (vertical slice; 1.0.0 was the first official release).** One path works end to end on a local NTFS folder: browse, back up, keep history, verify, restore. Anyone can browse the folders that let guests browse; company accounts from a Redis user directory (or the company single sign-on) sign in to back up, restore or change settings, and what an account may do is decided for each monitored folder (Browse, Back up, Full control). It is **not** a production backup system: its backups read the live disk (no VSS, and they do not use the NTFS change journal; only the search index does), it has two roles and the three levels per folder but no rights for a path inside a folder, keeps every version of every file unless a limit of versions per file is set, and has no TLS of its own. [docs/mvp-status.md](docs/mvp-status.md) lists exactly what is done, partial and missing against [docs/plan.md](docs/plan.md), and [docs/changelog.md](docs/changelog.md) lists what changed in each version.
 
 ### What works today
 
 - A single Go service, `timevault-server`, with a bilingual (English / 中文) web UI in the OpenList style, light and dark themes, and a JSON API. It listens on `127.0.0.1:8660` by default.
-- **Explorer**: the live folder tree of a monitored folder, marked as protected, changed or new, plus name search through a local Everything instance (optional). Lists have a **Type** column, sort the whole folder by name, type, size or time, filter by type and come in pages (100 by default), with buttons that jump to the top and the bottom of the page and a **Location** line that shows the folder as people open it over the network, with a Copy button. Folder sizes come from the index of Everything.
+- **Explorer**: the live folder tree of a monitored folder, marked as protected, changed or new, plus name search from an NTFS index that the service builds itself (it needs administrator rights, and there is nothing else to install). Lists have a **Type** column, sort the whole folder by name, type, size or time, filter by type and come in pages (100 by default), with buttons that jump to the top and the bottom of the page and a **Location** line that shows the folder as people open it over the network, with a Copy button. Folder sizes come from the same index.
 - **Time Machine**: choose any committed recovery point, browse the folder tree as it was (sorted, filtered and paged like the Explorer), see deleted files, and list every version of a file.
 - **Backups**: full and incremental backups into a content-addressed repository, started by hand or on an automatic schedule per folder (the automatic backups of many folders are spread out so the server stays responsive), with progress, cancel, skipped-file reporting and integrity verification. A limit of versions per file makes the oldest versions roll off. PostgreSQL stores the catalog.
 - **Restore**: preview first, then a confirmed restore of files or folders (up to 500 selected at a time) into a folder below a configured restore root, with SHA-256 verification and skip / rename / overwrite policies.
 - **Open browsing and sign-in**: anyone can browse the folders that let guests browse; every change needs a company account from the Redis user directory (the `app_user_*` hashes of another application), with the roles `user` and `admin`, signed in with the password or with the company single sign-on (Windows account). An optional local administrator is also possible.
 - **Permissions per folder**: each monitored folder says who may **Browse**, **Back up** (back up now, including the full re-read) and has **Full control** of it. A level can be given to guests (not signed in; Browse only), to everybody who is signed in, or to single employee IDs. Administrators have full control of every folder, and a folder that a visitor may not browse is not there for them at all.
-- **Settings**: administrators add and edit the monitored folders (display folder, folder on the server, exclusions, on or off, schedule, versions kept per file, and who may do what) on a page; an account with Full control of a folder edits it too, except for the folder on the server's disk. Deployment settings (database, Redis, backup and restore folders, the server's host name, the sign-on service, the path prefix behind a reverse proxy, the scheduler) live in the environment or the `.env` file.
+- **Settings**: administrators add and edit the monitored folders (display folder, folder on the server, exclusions, on or off, schedule, versions kept per file, and who may do what) on a page; an account with Full control of a folder edits it too, except for the folder on the server's disk. The operating settings (the server's host name, the sign-on service, the path prefix behind a reverse proxy, workers, the scheduler, the index, updates, logging) are **Site settings** in the database, edited by the local administrator only on the **Site settings** page; the `.env` file holds only what the service needs before it reaches its database (database, Redis, backup and restore folders, the local administrator, the session key).
 - **Display folders**: people see the network paths (`\\server\share\folder`) of the monitored folders and of the restore folder; only administrators see the real folders on the server's disk, and texts that quote them are rewritten for everybody else.
-- **Pictures of the accounts**: the header, the audit log, the job pages and the people lists show the picture of an account, which the browser reads from `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/<employee ID>.webp` (the other company applications' employee pictures; `TIMEVAULT_AVATAR_URL`), with the default picture as the fallback.
-- **Releases and automatic updates**: `scripts\release.ps1` writes a release folder (`timevault.exe` and `timevault.json`); a service with `TIMEVAULT_UPDATE_URL` reads it, and when a different version is released it downloads and checks the program, waits for the running jobs to finish, swaps the file and restarts itself (see [Releasing and automatic updates](docs/runbook.md#releasing-and-automatic-updates)).
+- **Pictures of the accounts**: the header, the audit log, the job pages and the people lists show the picture of an account, which the browser reads from `http://<server_host>/api/static/hr/<employee ID>.webp` (the other company applications' employee pictures; the Site settings `server_host` and `avatar_url`), with the default picture as the fallback.
+- **Releases and automatic updates**: `scripts\release.ps1` writes a release folder (`timevault.exe` and `timevault.json`); a service with the Site setting `update_url` reads it, and when a different version is released it downloads and checks the program, waits for the running jobs to finish, swaps the file and restarts itself (see [Releasing and automatic updates](docs/runbook.md#releasing-and-automatic-updates)).
 - **Help in the application**: every page except the sign-in page has two round buttons at the bottom right: **Documentation** opens the user guide (`/help`, English and 中文) in a new tab, and **Guide** starts a step-by-step tour of the page you are on (it dims the page and lights up one part at a time; nothing is clicked or changed).
-- **Web log**: with Redis configured, the service appends the pages that people open, the requests that failed, every audit event and what the scheduler does to the Redis list `web_log` that the company's other applications share, in the format they use (`TIMEVAULT_WEB_LOG`; on by default when `TIMEVAULT_REDIS_URL` is set, best effort, never trimmed by TimeVault; see [Web log](docs/runbook.md#web-log)).
+- **Web log**: with Redis configured, the service appends the pages that people open, the requests that failed, every audit event and what the scheduler does to the Redis list `web_log` that the company's other applications share, in the format they use (the Site setting `web_log`; on by default when `TIMEVAULT_REDIS_URL` is set, best effort, never trimmed by TimeVault; see [Web log](docs/runbook.md#web-log)).
 - CSRF protection, sign-in limits, an append-only audit log (with the duration of every backup, verification and restore), a status page, and a console log that names the user and the address of every request.
 
 ### Quick start (development, Windows PowerShell)
 
-Needs Go 1.25+ and a PostgreSQL server (see [docs/runbook.md](docs/runbook.md)). If Go is not on your `PATH`, first put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env` in the repository folder. **`.env` is the only settings file**: the scripts create and fill it, and the service reads it. The scripts keep their other data under the git-ignored `data\` folder and never touch an existing PostgreSQL service.
+Needs Go 1.25+ and a PostgreSQL server (see [docs/runbook.md](docs/runbook.md)); for search and folder sizes start `dev-run.ps1` from an elevated PowerShell (the NTFS index reads the volume, which needs administrator rights). If Go is not on your `PATH`, first put the line `TIMEVAULT_GO_ROOT=<folder that contains bin\go.exe>` into `.env` in the repository folder. **`.env` is the only settings file**: the scripts create and fill it, and the service reads it. The scripts keep their other data under the git-ignored `data\` folder and never touch an existing PostgreSQL service.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-db.ps1 start    # optional: private PostgreSQL on port 55432 (skip it to use your own server)
@@ -33,9 +33,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-run.ps1         
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        # in a second window: demo data
 ```
 
-To use your own PostgreSQL server, create the database and the role, then put the URL into `.env` (`TIMEVAULT_DATABASE_URL`, and `TIMEVAULT_TEST_DATABASE_URL` for the tests); the scripts then start no private cluster. `dev-run.ps1` creates `.env` with comments and fills in what the service needs. For company sign-in add `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0` there and check it with `data\dev\bin\timevault-server.exe check-redis-users`. That also turns the web log on (see [Web log](docs/runbook.md#web-log)): on a development computer that uses the company's Redis, put `TIMEVAULT_WEB_LOG=off` into `.env` too. A `TIMEVAULT_*` variable in your terminal would override `.env`: the scripts remove such variables, and the service names them in its start-up log.
+To use your own PostgreSQL server, create the database and the role, then put the URL into `.env` (`TIMEVAULT_DATABASE_URL`, and `TIMEVAULT_TEST_DATABASE_URL` for the tests); the scripts then start no private cluster. `dev-run.ps1` creates `.env` with comments and fills in what the service needs. For company sign-in add `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0` there and check it with `data\dev\bin\timevault-server.exe check-redis-users`. That also turns the web log on (see [Web log](docs/runbook.md#web-log)): on a development computer that uses the company's Redis, set the Site setting `web_log` to `off` too (**Settings → Site settings**). A `TIMEVAULT_*` variable in your terminal would override `.env`: the scripts remove such variables, and the service names them in its start-up log.
 
-Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests browse; to back up, restore or change settings, sign in as `admin` (the generated password is in `data\dev\admin-password.txt`) or with a company account that has the level it needs on the folder. An administrator adds the monitored folders on the **Settings** page, and says there who may do what with each. Run the tests with `. .\scripts\dev-env.ps1` followed by `go test ./... -count=1`.
+Open `http://127.0.0.1:8660/`. Anyone can browse the folders that let guests browse; to back up, restore or change settings, sign in as `admin` (the generated password is in `data\dev\admin-password.txt`) or with a company account that has the level it needs on the folder. An administrator adds the monitored folders on the **Settings** page, and says there who may do what with each; the local administrator `admin` also finds the **Site settings** page there (a saved setting is used after a restart; the page has a button for it). Run the tests with `. .\scripts\dev-env.ps1` followed by `go test ./... -count=1`.
 
 ### Documentation
 
@@ -59,7 +59,7 @@ The user guide for the people who use TimeVault is part of the application: open
 | Path | Content |
 |---|---|
 | `cmd/timevault-server/` | Program entry point |
-| `internal/` | Catalog, backup engine, repository, restore, jobs, auth, Redis user directory, audit, web log writer, search adapter, folder-list engine, scheduler, HTTP server |
+| `internal/` | Catalog, backup engine, repository, restore, jobs, auth, Redis user directory, audit, web log writer, NTFS index and search provider, Site settings, folder-list engine, scheduler, HTTP server |
 | `migrations/` | Database schema (embedded in the executable) |
 | `web/` | Templates and static assets (embedded in the executable) |
 | `scripts/` | Development helper scripts |
@@ -75,28 +75,28 @@ The user guide for the people who use TimeVault is part of the application: open
 
 **TimeVault —— 企业文件备份、搜索与时间回溯**，面向 Windows 和 NTFS。它为本地文件夹保存时间点恢复点，可以浏览任意文件夹过去的状态、按名称搜索，并在预览之后把文件恢复到恢复根目录下的安全文件夹中。
 
-**状态：1.0.0 版，第一个正式版本（垂直切片）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览允许访客浏览的文件夹；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置，而账号能做什么是按每个监控文件夹分别决定的（浏览、备份、完全控制）。它**不是**生产级备份系统：它读取在线磁盘（没有 VSS，也没有 NTFS USN journal），有两种角色和每个文件夹三个级别，但没有针对文件夹内某个路径的权限，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
+**状态：1.0.1 版（垂直切片；1.0.0 是第一个正式版本）。** 在本地 NTFS 文件夹上，浏览、备份、保留历史、校验、恢复这一条路径已经完整打通。任何人都可以浏览允许访客浏览的文件夹；来自 Redis 用户目录的公司账号（或公司单点登录）登录后才能备份、恢复或修改设置，而账号能做什么是按每个监控文件夹分别决定的（浏览、备份、完全控制）。它**不是**生产级备份系统：它的备份读取在线磁盘（没有 VSS，也不使用 NTFS 变更日志，只有搜索索引使用），有两种角色和每个文件夹三个级别，但没有针对文件夹内某个路径的权限，除非设置了每个文件的版本数上限，否则会保留每个文件的每个版本，自身也没有 TLS。[docs/mvp-status.md](docs/mvp-status.md) 逐项列出了相对 [docs/plan.md](docs/plan.md) 已完成、部分完成和缺失的内容，[docs/changelog.md](docs/changelog.md) 列出了每个版本的改动。
 
 ### 目前可用的功能
 
 - 一个 Go 服务 `timevault-server`，带有 OpenList 风格的双语（English / 中文）网页界面、浅色和深色主题，以及 JSON API。默认监听 `127.0.0.1:8660`。
-- **文件浏览**：监控文件夹的实时文件夹树，标注为已保护、已变更或新增；另可通过本机的 Everything 实例按名称搜索（可选）。列表有**类型**列，可以按名称、类型、大小或时间对整个文件夹排序，按类型筛选，并分页（默认每页 100 项）；页面上有直达顶部和底部的按钮，还有一行**位置**，显示人们通过网络打开该文件夹时的路径，并带有复制按钮。文件夹的大小来自 Everything 的索引。
+- **文件浏览**：监控文件夹的实时文件夹树，标注为已保护、已变更或新增；另可通过服务自己建立的 NTFS 索引按名称搜索（它需要管理员权限，除此之外没有别的东西要安装）。列表有**类型**列，可以按名称、类型、大小或时间对整个文件夹排序，按类型筛选，并分页（默认每页 100 项）；页面上有直达顶部和底部的按钮，还有一行**位置**，显示人们通过网络打开该文件夹时的路径，并带有复制按钮。文件夹的大小来自同一个索引。
 - **时间机器**：选择任意已提交的恢复点，按当时的样子浏览文件夹树（与文件浏览一样排序、筛选和分页），查看已删除的文件，并列出某个文件的所有版本。
 - **备份**：全量和增量备份到内容寻址的仓库，可以手动启动，也可以为每个文件夹设置自动计划（多个文件夹的自动备份会错开时间，让服务器保持响应），带进度、取消、跳过文件的报告和完整性校验。每个文件的版本数上限会让最旧的版本滚动删除。目录库保存在 PostgreSQL 中。
 - **恢复**：先预览，再经确认把文件或文件夹（一次最多选择 500 项）恢复到所配置恢复根目录下的文件夹，带 SHA-256 校验以及跳过 / 改名 / 覆盖策略。
 - **开放浏览与登录**：任何人都可以浏览允许访客浏览的文件夹；所有改动都需要 Redis 用户目录（另一个应用的 `app_user_*` 哈希）中的公司账号，角色为 `user` 和 `admin`，可以用密码登录，也可以用公司单点登录（Windows 账号）。也可以另设一个可选的本地管理员。
 - **按文件夹的权限**：每个监控文件夹都会说明谁可以**浏览**、**备份**（立即备份，包括完整重读），以及谁拥有它的**完全控制**权。可以把一个级别授予访客（未登录；只能是"浏览"）、所有已登录的人或单个工号。管理员对每个文件夹拥有完全控制权，访问者无权浏览的文件夹，对他们来说根本不存在。
-- **设置**：管理员在页面上添加和编辑监控文件夹（显示文件夹、服务器上的文件夹、排除规则、开关、计划、每个文件保留的版本数，以及谁能做什么）；对某个文件夹拥有完全控制权的账号也可以编辑它，但服务器磁盘上的文件夹除外。部署相关的设置（数据库、Redis、备份和恢复文件夹、服务器的主机名、单点登录服务、反向代理之后的路径前缀、调度器）放在环境变量或 `.env` 文件中。
+- **设置**：管理员在页面上添加和编辑监控文件夹（显示文件夹、服务器上的文件夹、排除规则、开关、计划、每个文件保留的版本数，以及谁能做什么）；对某个文件夹拥有完全控制权的账号也可以编辑它，但服务器磁盘上的文件夹除外。运行设置（服务器的主机名、单点登录服务、反向代理之后的路径前缀、worker、调度器、索引、更新、日志）是保存在数据库中的**站点设置**，只有本地管理员能在**站点设置**页上编辑；`.env` 文件只放服务在连上数据库之前就需要的内容（数据库、Redis、备份和恢复文件夹、本地管理员、会话密钥）。
 - **显示文件夹**：人们看到的是监控文件夹和恢复文件夹的网络路径（`\\server\share\folder`）；只有管理员能看到服务器磁盘上的真实文件夹，引用它们的文本会为其他人改写。
-- **账号头像**：页眉、审计日志、任务页和人员列表会显示账号的头像，由浏览器从 `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/<工号>.webp` 读取（公司其他应用保存的员工照片；`TIMEVAULT_AVATAR_URL`），读不到时回退到默认头像。
-- **发布与自动更新**：`scripts\release.ps1` 生成发布文件夹（`timevault.exe` 和 `timevault.json`）；设置了 `TIMEVAULT_UPDATE_URL` 的服务会读取它，发布了不同版本时，下载并检查程序，等正在运行的任务结束，交换文件并重启自己（见[发布与自动更新](docs/runbook.md#发布与自动更新)）。
+- **账号头像**：页眉、审计日志、任务页和人员列表会显示账号的头像，由浏览器从 `http://<server_host>/api/static/hr/<工号>.webp` 读取（公司其他应用保存的员工照片；站点设置 `server_host` 和 `avatar_url`），读不到时回退到默认头像。
+- **发布与自动更新**：`scripts\release.ps1` 生成发布文件夹（`timevault.exe` 和 `timevault.json`）；设置了站点设置 `update_url` 的服务会读取它，发布了不同版本时，下载并检查程序，等正在运行的任务结束，交换文件并重启自己（见[发布与自动更新](docs/runbook.md#发布与自动更新)）。
 - **应用内的帮助**：除登录页之外，每个页面右下角都有两个圆形按钮：**文档**在新标签页中打开用户手册（`/help`，英文和 中文），**页面导览**开始逐步介绍你当前所在的页面（它让页面变暗，一次点亮一个部分；不会点击或更改任何东西）。
-- **Web 日志**：配置了 Redis 时，服务会把人们打开的页面、失败的请求、每一个审计事件和调度器所做的事，按公司其他应用所用的格式追加到它们共用的 Redis 列表 `web_log`（`TIMEVAULT_WEB_LOG`；设置了 `TIMEVAULT_REDIS_URL` 时默认开启，尽力而为，TimeVault 从不裁剪它；见 [Web 日志](docs/runbook.md#web-日志)）。
+- **Web 日志**：配置了 Redis 时，服务会把人们打开的页面、失败的请求、每一个审计事件和调度器所做的事，按公司其他应用所用的格式追加到它们共用的 Redis 列表 `web_log`（站点设置 `web_log`；设置了 `TIMEVAULT_REDIS_URL` 时默认开启，尽力而为，TimeVault 从不裁剪它；见 [Web 日志](docs/runbook.md#web-日志)）。
 - CSRF 防护、登录限制、只追加的审计日志（含每次备份、校验和恢复的耗时）、状态页，以及会写出每个请求的用户和地址的控制台日志。
 
 ### 快速开始（开发环境，Windows PowerShell）
 
-需要 Go 1.25+ 和一个 PostgreSQL 服务器（见 [docs/runbook.md](docs/runbook.md)）。如果 Go 不在 `PATH` 中，请先把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入仓库文件夹中的 `.env`。**`.env` 是唯一的设置文件**：脚本创建并填写它，服务读取它。脚本把其他数据放在被 git 忽略的 `data\` 文件夹下，不会触碰已有的 PostgreSQL 服务。
+需要 Go 1.25+ 和一个 PostgreSQL 服务器（见 [docs/runbook.md](docs/runbook.md)）；要使用搜索和文件夹大小，请从已提升权限的 PowerShell 启动 `dev-run.ps1`（NTFS 索引要读取卷，这需要管理员权限）。如果 Go 不在 `PATH` 中，请先把 `TIMEVAULT_GO_ROOT=<包含 bin\go.exe 的文件夹>` 这一行写入仓库文件夹中的 `.env`。**`.env` 是唯一的设置文件**：脚本创建并填写它，服务读取它。脚本把其他数据放在被 git 忽略的 `data\` 文件夹下，不会触碰已有的 PostgreSQL 服务。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-db.ps1 start    # optional: private PostgreSQL on port 55432 (skip it to use your own server)
@@ -104,9 +104,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-run.ps1         
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        # in a second window: demo data
 ```
 
-要使用你自己的 PostgreSQL 服务器，先创建好数据库和角色，再把 URL 写入 `.env`（`TIMEVAULT_DATABASE_URL`，测试用的是 `TIMEVAULT_TEST_DATABASE_URL`）；这样脚本就不会启动私有集群。`dev-run.ps1` 会创建带注释的 `.env`，并填入服务需要的内容。要启用公司账号登录，请在其中加入 `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0`，并用 `data\dev\bin\timevault-server.exe check-redis-users` 检查。这也会开启 Web 日志（见 [Web 日志](docs/runbook.md#web-日志)）：在使用公司 Redis 的开发电脑上，请同时在 `.env` 中写入 `TIMEVAULT_WEB_LOG=off`。终端里的 `TIMEVAULT_*` 变量会覆盖 `.env`：脚本会移除这类变量，服务也会在启动日志里点名它们。
+要使用你自己的 PostgreSQL 服务器，先创建好数据库和角色，再把 URL 写入 `.env`（`TIMEVAULT_DATABASE_URL`，测试用的是 `TIMEVAULT_TEST_DATABASE_URL`）；这样脚本就不会启动私有集群。`dev-run.ps1` 会创建带注释的 `.env`，并填入服务需要的内容。要启用公司账号登录，请在其中加入 `TIMEVAULT_REDIS_URL=redis://:<password>@127.0.0.1:6379/0`，并用 `data\dev\bin\timevault-server.exe check-redis-users` 检查。这也会开启 Web 日志（见 [Web 日志](docs/runbook.md#web-日志)）：在使用公司 Redis 的开发电脑上，请同时把站点设置 `web_log` 设为 `off`（**设置 → 站点设置**）。终端里的 `TIMEVAULT_*` 变量会覆盖 `.env`：脚本会移除这类变量，服务也会在启动日志里点名它们。
 
-打开 `http://127.0.0.1:8660/`。任何人都可以浏览允许访客浏览的文件夹；要备份、恢复或修改设置，请以 `admin`（生成的密码在 `data\dev\admin-password.txt` 中）或在该文件夹上拥有所需级别的公司账号登录。管理员在**设置**页添加监控文件夹，并在那里说明谁可以对每个文件夹做什么。运行测试：先执行 `. .\scripts\dev-env.ps1`，再执行 `go test ./... -count=1`。
+打开 `http://127.0.0.1:8660/`。任何人都可以浏览允许访客浏览的文件夹；要备份、恢复或修改设置，请以 `admin`（生成的密码在 `data\dev\admin-password.txt` 中）或在该文件夹上拥有所需级别的公司账号登录。管理员在**设置**页添加监控文件夹，并在那里说明谁可以对每个文件夹做什么；本地管理员 `admin` 还会在那里找到**站点设置**页（已保存的设置在重启之后使用，页面上有重启按钮）。运行测试：先执行 `. .\scripts\dev-env.ps1`，再执行 `go test ./... -count=1`。
 
 ### 文档
 
@@ -130,7 +130,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\dev-demo.ps1        
 | 路径 | 内容 |
 |---|---|
 | `cmd/timevault-server/` | 程序入口 |
-| `internal/` | 目录库、备份引擎、仓库、恢复、任务、认证、Redis 用户目录、审计、Web 日志写入方、搜索适配器、文件夹列表引擎、调度器、HTTP 服务 |
+| `internal/` | 目录库、备份引擎、仓库、恢复、任务、认证、Redis 用户目录、审计、Web 日志写入方、NTFS 索引和搜索提供者、站点设置、文件夹列表引擎、调度器、HTTP 服务 |
 | `migrations/` | 数据库结构（嵌入可执行文件） |
 | `web/` | 模板和静态资源（嵌入可执行文件） |
 | `scripts/` | 开发辅助脚本 |

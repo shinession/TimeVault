@@ -6,6 +6,8 @@
 
 ## English — One-page charter
 
+> **Update, version 1.0.1.** This canvas is the kickoff charter and is kept as it was written. TimeVault no longer uses Everything: the search, the folder sizes and the change detection for the scheduler come from an index that the service builds from the NTFS volume and keeps current from its change journal ([ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)). Where this canvas says Everything, read that index. [mvp-status.md](./mvp-status.md) says what exists.
+
 | Canvas block | Definition |
 |---|---|
 | **Problem** | Finding historical versions of individual files or entire shared folders is inconvenient; users need reliable recovery after accidental changes or deletion. |
@@ -43,6 +45,8 @@
 ---
 
 ## 中文 — 一页式项目启动画布
+
+> **更新，1.0.1 版。** 本画布是启动阶段的章程，保持原样。TimeVault 不再使用 Everything：搜索、文件夹大小和调度器的变化检测，都来自服务由 NTFS 卷建立、并由卷的变更日志保持最新的索引（[ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)）。本画布中写到 Everything 的地方，请理解为这个索引。实际已有的内容见 [mvp-status.md](./mvp-status.md)。
 
 | 画布要素 | 内容 |
 |---|---|

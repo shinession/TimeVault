@@ -29,6 +29,9 @@ func TestExampleFileNamesOnlySettingsTheServerReads(t *testing.T) {
 		if !asked[m[1]] {
 			t.Errorf("the example file names %s, which the service does not read", m[1])
 		}
+		if key, site := siteKeyOfEnv[m[1]]; site {
+			t.Errorf("the example file names %s, but that is the Site setting %s: it is kept in the database, not in .env", m[1], key)
+		}
 	}
 }
 

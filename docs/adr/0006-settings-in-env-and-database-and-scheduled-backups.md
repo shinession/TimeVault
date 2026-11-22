@@ -4,6 +4,8 @@
 
 Accepted for 0.1.1 (2026-11-15). Adds to [0004](./0004-restore-safety-and-privileges.md) (restores stay manual-confirmed) and to [0001](./0001-recovery-point-history-model.md) (a recovery point is only written when something changed, for automatic runs).
 
+**Update, 1.0.1.** Replaced in part by [0017](./0017-site-settings-in-the-database.md): only the bootstrap settings and the secrets are in `.env` or the environment now. The other settings, named here as `TIMEVAULT_*` variables, are Site settings in the database, edited by the local administrator on the Site settings page and used after a restart; their key is the name in lower case without the prefix. The monitored folders and the automatic schedule of this record are unchanged. The record is left as it was written.
+
 ## Context
 
 Three questions came up while testing the MVP:
@@ -56,6 +58,8 @@ Three questions came up while testing the MVP:
 ## 状态
 
 于 2026-11-15 在 0.1.1 中被接受。是对 [0004](./0004-restore-safety-and-privileges.md)（恢复仍然需要人工确认）和 [0001](./0001-recovery-point-history-model.md)（自动运行只有在发生变化时才写入恢复点）的补充。
+
+**更新，1.0.1 版。** 已被 [0017](./0017-site-settings-in-the-database.md) 部分取代：现在只有引导设置和机密仍在 `.env` 或环境变量中。其他设置（本记录中以 `TIMEVAULT_*` 变量命名的那些）是保存在数据库中的站点设置，由本地管理员在站点设置页上编辑，重启之后使用；它们的键是去掉前缀的小写名称。本记录中的监控文件夹和自动备份计划没有变。本记录保持原样。
 
 ## 背景
 

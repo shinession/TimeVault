@@ -555,9 +555,16 @@ func TestAdministratorsEditMonitoredFoldersAndSchedules(t *testing.T) {
 	id := itoa(srcID)
 
 	_, body := bob.get("/settings")
-	for _, want := range []string{"Team Files", h.env.Repo.Root(), h.env.RestoreRoot, "127.0.0.1:8660", "db.test:5432/TimeVault", "directory.test:6379/0", "Manual only"} {
+	for _, want := range []string{"Team Files", h.env.Repo.Root(), h.env.RestoreRoot, "Manual only"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the settings page is missing %q", want)
+		}
+	}
+	// How the service is set up (its listen address, database and user directory) is for the Site settings, which only
+	// the local administrator opens: an administrator of the user directory does not see it here.
+	for _, hidden := range []string{"127.0.0.1:8660", "db.test:5432/TimeVault", "directory.test:6379/0", "/settings/site"} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("the settings page of an administrator of the user directory shows %q", hidden)
 		}
 	}
 	assertCSPClean(t, "/settings", body)

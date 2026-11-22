@@ -67,6 +67,8 @@ type Options struct {
 	// Update tells about the automatic update and takes the request to look for a new version now; nil when the
 	// service does not update itself.
 	Update Updater
+	// Site is what the Site settings page works on; nil means the page and its API endpoints are not there.
+	Site *SiteBackend
 	// WebLog takes the lines for the web log that the company applications share: the pages people open and the
 	// requests that failed. Nil means there is none. What people and the scheduler do reaches it through the audit
 	// trail (see weblog.Audit), not through here.
@@ -200,6 +202,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /settings", s.need(auth.PermAudit, s.handleSettings))
 	m.HandleFunc("POST /settings/sources", s.need(auth.PermManage, s.handleAddSource))
 	m.HandleFunc("POST /settings/update/check", s.need(auth.PermManage, s.handleUpdateCheck))
+	// The Site settings are for the local administrator alone; anybody else is told there is no such page.
+	m.HandleFunc("GET /settings/site", s.needSite(s.handleSite))
+	m.HandleFunc("POST /settings/site", s.needSite(s.handleSiteSave))
+	m.HandleFunc("POST /settings/site/restart", s.needSite(s.handleSiteRestart))
 	// Whoever has full control of a folder may change its settings; the handler checks that.
 	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermAccount, s.handleUpdateSource))
 

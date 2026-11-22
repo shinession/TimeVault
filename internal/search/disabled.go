@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Disabled is the Provider used when no search engine is configured.
+// Disabled is the Provider used when the search index is off.
 type Disabled struct{}
 
 var _ Provider = Disabled{}
@@ -23,5 +23,5 @@ func (Disabled) Search(context.Context, Query) (Page, error) {
 
 // Health implements Provider.
 func (Disabled) Health(context.Context) Health {
-	return Health{State: StateDisabled, Detail: "no search engine configured", CheckedAt: time.Now()}
+	return Health{State: StateDisabled, Detail: "the search index is off", CheckedAt: time.Now()}
 }

@@ -279,12 +279,15 @@ func TestTheAPIAnswersUnderTheBasePath(t *testing.T) {
 		t.Errorf("anonymous audit through the API = %d %v", st, out)
 	}
 
-	// The running configuration names the prefix, on the page and in the API.
-	if _, out := admin.api("GET", "/api/v1/settings", nil); out["base_path"] != tvBase {
-		t.Errorf("settings base_path = %v, want %s", out["base_path"], tvBase)
+	// The running configuration names the prefix in the API, for the local administrator; an administrator of the user
+	// directory does not get it.
+	if _, out := admin.api("GET", "/api/v1/settings", nil); out["base_path"] != nil {
+		t.Errorf("an administrator of the user directory gets base_path %v", out["base_path"])
 	}
-	if _, page := admin.get("/settings"); !strings.Contains(page, "<code>"+tvBase+"</code>") {
-		t.Errorf("the Settings page does not show the base path:\n%s", page)
+	local := h.visitor()
+	local.login()
+	if _, out := local.api("GET", "/api/v1/settings", nil); out["base_path"] != tvBase {
+		t.Errorf("settings base_path = %v, want %s", out["base_path"], tvBase)
 	}
 }
 

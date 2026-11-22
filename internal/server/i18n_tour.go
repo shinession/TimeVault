@@ -149,7 +149,7 @@ var tourEN = map[string]string{
 	"tour.settings.storage.title": "Storage",
 	"tour.settings.storage.text":  "The backup folder, where the contents of the backed-up files are kept, with its free space, and the restore folder, where restored copies go.",
 	"tour.settings.service.title": "The service",
-	"tour.settings.service.text":  "The version and how the service is set up: host name, address, database, user accounts, web log, single sign-on and so on. Passwords and keys are never shown. The Status page shows how each part is doing.",
+	"tour.settings.service.text":  "The version of the service, and the Status page, which shows how each part is doing. The local administrator also finds the button for the Site settings here: how the service is set up.",
 	"tour.settings.updates.title": "Program updates",
 	"tour.settings.updates.text":  "Whether the service updates itself from a release folder, which version is released, when it last looked and its state. Administrators can also ask for a check at any time.",
 
@@ -300,7 +300,7 @@ var tourZH = map[string]string{
 	"tour.settings.storage.title": "存储",
 	"tour.settings.storage.text":  "备份文件夹（保存被备份文件的内容）及其剩余空间，以及恢复文件夹（恢复出的副本放在这里）。",
 	"tour.settings.service.title": "服务",
-	"tour.settings.service.text":  "版本以及服务的配置：主机名、地址、数据库、用户账号、Web 日志、单点登录等等。机密信息从不显示。“状态”页面会显示各个部分运行得怎么样。",
+	"tour.settings.service.text":  "服务的版本，以及“状态”页面，它会显示各个部分运行得怎么样。本地管理员还会在这里看到“站点设置”按钮：服务是如何配置的。",
 	"tour.settings.updates.title": "程序更新",
 	"tour.settings.updates.text":  "服务是否从发布文件夹自动更新自己、已发布的版本、上次检查的时间及当前状态。管理员还可以随时手动发起一次检查。",
 

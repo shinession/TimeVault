@@ -1,10 +1,12 @@
-// Package config loads TimeVault's settings from environment variables, with a
-// .env file as a fallback (see LoadEnv).
+// Package config loads TimeVault's settings.
 //
-// Every setting has the TIMEVAULT_ prefix. Secrets (database URL, Redis URL,
-// password hash, session key, Everything credentials) are only ever read from
-// the environment or the .env file and are redacted when the configuration is
-// logged or shown.
+// There are two kinds. The settings that the service needs before it can reach its database, and the secrets
+// (database URL, Redis URL, password hash, session key), are read from environment variables, with a .env file as a
+// fallback (see LoadEnv); they are redacted when the configuration is logged or shown. Everything else is a Site
+// setting, kept in the database and edited by the local administrator on the Site settings page (see site.go).
+// Load reads both through one Lookup, so the Site settings are checked by the same code as the others.
+//
+// Every setting is named with the TIMEVAULT_ prefix here; a Site setting is stored without it, in lower case.
 package config
 
 import (
@@ -56,10 +58,9 @@ type Config struct {
 	RedisKeyPrefix string
 	RedisTimeout   time.Duration
 
-	EverythingURL      string
-	EverythingUsername string
-	EverythingPassword string
-	EverythingTimeout  time.Duration
+	// SearchIndex is auto (the NTFS index runs when the service is allowed to read the volumes) or off
+	// (TIMEVAULT_SEARCH_INDEX, a Site setting).
+	SearchIndex string
 
 	JobWorkers  int
 	HashWorkers int
@@ -100,8 +101,8 @@ type Config struct {
 	// SchedulerRest is that pause.
 	SchedulerRestAuto bool
 	SchedulerRest     time.Duration
-	// SchedulerEverythingProbe lets the scheduler ask Everything whether a folder changed before it scans it.
-	SchedulerEverythingProbe bool
+	// SchedulerProbe lets the scheduler ask the NTFS index whether a folder changed before it scans it.
+	SchedulerProbe bool
 	// SchedulerFullScanEvery is the longest a folder goes without a complete scan when the probe is on.
 	SchedulerFullScanEvery time.Duration
 	// ProcessPriority is normal, below_normal or background (TIMEVAULT_PROCESS_PRIORITY).
@@ -152,20 +153,22 @@ func Load(lookup Lookup) (Config, error) {
 		RedisURL:           l.str("TIMEVAULT_REDIS_URL", ""),
 		RedisKeyPrefix:     l.str("TIMEVAULT_REDIS_KEY_PREFIX", "app_user_"),
 		RedisTimeout:       l.duration("TIMEVAULT_REDIS_TIMEOUT", 3*time.Second),
-		EverythingURL:      l.str("TIMEVAULT_EVERYTHING_URL", ""),
-		EverythingUsername: l.str("TIMEVAULT_EVERYTHING_USERNAME", ""),
-		EverythingPassword: l.str("TIMEVAULT_EVERYTHING_PASSWORD", ""),
-		EverythingTimeout:  l.duration("TIMEVAULT_EVERYTHING_TIMEOUT", 5*time.Second),
 		JobWorkers:         l.integer("TIMEVAULT_JOB_WORKERS", 2, 1, 16),
-		HashWorkers:        l.integer("TIMEVAULT_HASH_WORKERS", min(4, runtime.NumCPU()), 1, 32),
+		HashWorkers:        l.integer("TIMEVAULT_HASH_WORKERS", defaultHashWorkers(), 1, 32),
 
-		SSORequireSameIP:         l.boolean("TIMEVAULT_SSO_REQUIRE_SAME_IP", true),
-		SchedulerParallel:        l.integer("TIMEVAULT_SCHEDULER_PARALLEL", 1, 1, 4),
-		SchedulerEverythingProbe: l.boolean("TIMEVAULT_SCHEDULER_EVERYTHING_PROBE", false),
-		SchedulerFullScanEvery:   l.duration("TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY", 24*time.Hour),
-		UpdateInterval:           l.duration("TIMEVAULT_UPDATE_INTERVAL", 10*time.Minute),
+		SSORequireSameIP:       l.boolean("TIMEVAULT_SSO_REQUIRE_SAME_IP", true),
+		SchedulerParallel:      l.integer("TIMEVAULT_SCHEDULER_PARALLEL", 1, 1, 4),
+		SchedulerProbe:         l.boolean("TIMEVAULT_SCHEDULER_PROBE", false),
+		SchedulerFullScanEvery: l.duration("TIMEVAULT_SCHEDULER_FULL_SCAN_EVERY", 24*time.Hour),
+		UpdateInterval:         l.duration("TIMEVAULT_UPDATE_INTERVAL", 10*time.Minute),
 	}
 	var err error
+	switch m := strings.ToLower(l.str("TIMEVAULT_SEARCH_INDEX", "auto")); m {
+	case "auto", "off":
+		c.SearchIndex = m
+	default:
+		l.errs = append(l.errs, errors.New("TIMEVAULT_SEARCH_INDEX must be auto or off"))
+	}
 	if c.SSOHost, err = parseSSOHost(l.str("TIMEVAULT_SSO_HOST", "")); err != nil {
 		l.errs = append(l.errs, fmt.Errorf("TIMEVAULT_SSO_HOST: %w", err))
 	}
@@ -236,9 +239,6 @@ func Load(lookup Lookup) (Config, error) {
 	if c.SessionTTL < 5*time.Minute || c.SessionTTL > 30*24*time.Hour {
 		l.errs = append(l.errs, errors.New("TIMEVAULT_SESSION_TTL must be between 5m and 720h"))
 	}
-	if c.EverythingTimeout < 100*time.Millisecond || c.EverythingTimeout > 30*time.Second {
-		l.errs = append(l.errs, errors.New("TIMEVAULT_EVERYTHING_TIMEOUT must be between 100ms and 30s"))
-	}
 	if c.RedisTimeout < 100*time.Millisecond || c.RedisTimeout > 30*time.Second {
 		l.errs = append(l.errs, errors.New("TIMEVAULT_REDIS_TIMEOUT must be between 100ms and 30s"))
 	}
@@ -257,8 +257,9 @@ func Load(lookup Lookup) (Config, error) {
 	return c, nil
 }
 
-// ValidateServe checks the settings the long-running server cannot start without.
-func (c Config) ValidateServe() error {
+// ValidateBootstrap checks the settings of the environment and the .env file that the long-running server cannot
+// start without: the ones it needs before it can read the Site settings from its database.
+func (c Config) ValidateBootstrap() error {
 	var errs []error
 	if c.DatabaseURL == "" {
 		errs = append(errs, errors.New("TIMEVAULT_DATABASE_URL is required"))
@@ -269,15 +270,18 @@ func (c Config) ValidateServe() error {
 	if !c.AuthDisabled && c.AdminPasswordHash == "" && c.RedisURL == "" {
 		errs = append(errs, errors.New("no way to sign in: set TIMEVAULT_REDIS_URL (company accounts) and/or TIMEVAULT_ADMIN_PASSWORD_HASH (local administrator, create one with: timevault-server hash-password)"))
 	}
-	if c.UpdateURL != "" && !c.AutoMigrate {
-		errs = append(errs, errors.New("TIMEVAULT_UPDATE_URL needs TIMEVAULT_AUTO_MIGRATE=true: a new version may change the database, and nobody runs the migrate command when the service updates itself"))
-	}
 	if c.RepositoryPath != "" && c.RestoreRoot != "" {
 		if err := checkApart(c.RepositoryPath, c.RestoreRoot); err != nil {
 			errs = append(errs, fmt.Errorf("TIMEVAULT_RESTORE_ROOT: %w", err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// ValidateServe checks the settings the long-running server cannot start without, Site settings included. The
+// configuration must have been loaded with the Site settings of the database (see SiteLookup).
+func (c Config) ValidateServe() error {
+	return errors.Join(c.ValidateBootstrap(), c.validateSiteCross())
 }
 
 // ValidateDatabase checks the settings the migrate command needs.
@@ -372,7 +376,7 @@ func (c Config) LogAttrs() []any {
 		"local_admin", d.LocalAdmin,
 		"session_ttl", c.SessionTTL.String(),
 		"cookie_secure", c.CookieSecure,
-		"everything_configured", c.EverythingURL != "",
+		"search_index", c.SearchIndex,
 		"job_workers", c.JobWorkers,
 		"hash_workers", c.HashWorkers,
 		"sso_host", c.SSOHost,
@@ -386,7 +390,7 @@ func (c Config) LogAttrs() []any {
 		"scheduler_parallel", c.SchedulerParallel,
 		"scheduler_gap", autoText(c.SchedulerGapAuto, c.SchedulerGap),
 		"scheduler_rest", autoText(c.SchedulerRestAuto, c.SchedulerRest),
-		"scheduler_everything_probe", c.SchedulerEverythingProbe,
+		"scheduler_probe", c.SchedulerProbe,
 		"process_priority", c.ProcessPriority,
 		"web_log", c.WebLog,
 		"web_log_key", c.WebLogKey,
@@ -411,7 +415,7 @@ type Deployment struct {
 	ServerHost         string // name of this server in \\server\share paths, empty when not set
 	RestoreDisplayRoot string // network path of the restore folder as users see it, empty when not set
 	EnvFile            string
-	SearchHost         string // host:port of the Everything server, empty when search is off
+	SearchIndex        string // auto or off: whether the NTFS index may run
 	SSOHost            string // address of the single sign-on service, empty when single sign-on is off
 	BasePath           string // path prefix the site is served under behind a reverse proxy, empty when there is none
 	AvatarURL          string // where the picture of an account is, {id} for the account name, empty when there are no pictures
@@ -438,6 +442,7 @@ func (c Config) Describe() Deployment {
 		ServerHost:         c.ServerHost,
 		RestoreDisplayRoot: c.RestoreDisplayRoot,
 		EnvFile:            c.EnvFile,
+		SearchIndex:        c.SearchIndex,
 		SSOHost:            c.SSOHost,
 		BasePath:           c.BasePath,
 		AuthDisabled:       c.AuthDisabled,
@@ -454,11 +459,11 @@ func (c Config) Describe() Deployment {
 	if c.AdminPasswordHash != "" {
 		d.LocalAdmin = c.AdminUser
 	}
-	if u, err := url.Parse(c.EverythingURL); err == nil && c.EverythingURL != "" {
-		d.SearchHost = u.Host
-	}
 	return d
 }
+
+// defaultHashWorkers is how many files are hashed at the same time when nothing says otherwise.
+func defaultHashWorkers() int { return min(4, runtime.NumCPU()) }
 
 // describeURL names the server and database of a connection URL for display,
 // without the user, the password or any setting.

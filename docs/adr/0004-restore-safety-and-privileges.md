@@ -4,6 +4,8 @@
 
 Accepted for the MVP (2026-11-15). Covers the "service privilege boundary" item of plan.md P0 and the restore safety rules of plan.md §7.
 
+**Update, 1.0.1.** The service now runs with administrator rights, because reading an NTFS volume needs them ([0018](./0018-native-ntfs-index-replaces-everything.md)), so "a single unprivileged process" no longer holds; the restore safety rules of this record are unchanged. The record is left as it was written.
+
 ## Context
 
 A restore writes to a computer's file system, from a catalog whose names came from another file system. A mistake there overwrites a user's good data, and a crafted name or a junction in the destination can point a write outside the intended folder. plan.md also recommends isolating highly privileged VSS and restore functions in a controlled interface.
@@ -40,6 +42,8 @@ A restore writes to a computer's file system, from a catalog whose names came fr
 ## 状态
 
 已接受，用于 MVP（2026-11-15）。对应 plan.md P0 中的"服务权限边界"一项以及 plan.md §7 的恢复安全规则。
+
+**更新，1.0.1 版。** 服务现在以管理员权限运行，因为读取 NTFS 卷需要它（[0018](./0018-native-ntfs-index-replaces-everything.md)），所以"单一的非特权进程"不再成立；本记录中的恢复安全规则没有变。本记录保持原样。
 
 ## 背景
 

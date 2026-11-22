@@ -4,6 +4,8 @@
 
 Accepted for 0.1.1 (2026-11-15). Replaces the "one administrator, everything behind sign-in" model of the MVP (see [0004](./0004-restore-safety-and-privileges.md), last bullet). plan.md says not to add Redis; this decision makes one deliberate exception, for the user directory only (see "Decision").
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (such as `TIMEVAULT_COOKIE_SECURE`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): they are kept in the database and edited by the local administrator, and the key is the name in lower case without the prefix (`cookie_secure`). A new permission, `site`, belongs to the local administrator only, not to the `admin` accounts of the user directory. The record is left as it was written.
+
 ## Context
 
 The MVP had one local administrator and put every page behind sign-in. The project owner asked for the opposite default: **anyone can browse; only an operation that touches data needs an account**, and the accounts are the company accounts that another application of the same company (the "dash" application) already keeps in Redis, in hashes named `app_user_<ee_code>_<name>_<email>`. TimeVault must not create a second set of passwords.
@@ -60,6 +62,8 @@ The MVP had one local administrator and put every page behind sign-in. The proje
 ## 状态
 
 于 2026-11-15 在 0.1.1 中被接受。取代 MVP 中"一个管理员、所有页面都需登录"的模型（见 [0004](./0004-restore-safety-and-privileges.md) 的最后一条）。plan.md 说明不要引入 Redis；本决定仅为用户目录这一项做了有意的例外（见"决定"）。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（例如 `TIMEVAULT_COOKIE_SECURE`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：它们保存在数据库中，由本地管理员编辑，键是去掉前缀的小写名称（`cookie_secure`）。新增的权限 `site` 只属于本地管理员，不属于用户目录中的 `admin` 账号。本记录保持原样。
 
 ## 背景
 

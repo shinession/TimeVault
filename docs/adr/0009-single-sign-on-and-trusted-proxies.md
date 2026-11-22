@@ -4,6 +4,8 @@
 
 Accepted for 0.1.4 (2026-11-16). Extends the sign-in of [0005](./0005-redis-user-directory-and-open-browsing.md); the accounts, the roles and open browsing are unchanged. Updated in 0.1.6 (2026-11-17): two proxies in a row, and what a refused address check records (see [Update for 0.1.6](#update-for-016-two-proxies-in-a-row)).
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (`TIMEVAULT_SSO_HOST`, `TIMEVAULT_SSO_REQUIRE_SAME_IP`, `TIMEVAULT_TRUSTED_PROXIES`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `sso_host`, `sso_require_same_ip` and `trusted_proxies`, edited by the local administrator. The record is left as it was written.
+
 ## Context
 
 - Up to 0.1.3 a person signed in with an account (employee ID, name or e-mail) and the password stored in the Redis user directory.
@@ -66,6 +68,8 @@ Accepted for 0.1.4 (2026-11-16). Extends the sign-in of [0005](./0005-redis-user
 ## 状态
 
 于 2026-11-16 在 0.1.4 中被接受。扩展 [0005](./0005-redis-user-directory-and-open-browsing.md) 的登录；账号、角色和开放浏览保持不变。于 0.1.6（2026-11-17）更新：两层代理，以及被拒绝的地址检查会记录什么（见 [0.1.6 的更新](#016-的更新两层代理)）。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（`TIMEVAULT_SSO_HOST`、`TIMEVAULT_SSO_REQUIRE_SAME_IP`、`TIMEVAULT_TRUSTED_PROXIES`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`sso_host`、`sso_require_same_ip` 和 `trusted_proxies`，由本地管理员编辑。本记录保持原样。
 
 ## 背景
 

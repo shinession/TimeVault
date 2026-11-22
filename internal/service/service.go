@@ -956,11 +956,15 @@ func (s *Service) Health(ctx context.Context) HealthReport {
 	sh := s.search.Health(ctx)
 	switch sh.State {
 	case search.StateOK:
-		add("search", "ok", fmt.Sprintf("%s, %d ms", s.search.Name(), sh.Latency.Milliseconds()), "")
+		detail := sh.Detail
+		if detail == "" {
+			detail = s.search.Name()
+		}
+		add("search", "ok", detail, sh.Key, sh.Args...)
 	case search.StateDisabled:
 		add("search", "disabled", sh.Detail, "search_disabled")
 	default:
-		add("search", "degraded", sh.Detail, "")
+		add("search", "degraded", sh.Detail, sh.Key, sh.Args...)
 	}
 
 	// Browsing and the local administrator work without the directory, so a silent
@@ -984,7 +988,6 @@ func (s *Service) Health(ctx context.Context) HealthReport {
 		add("restore", "disabled", "no restore folder configured", "restore_disabled")
 	}
 	add("vss", "disabled", "not implemented in the MVP: recovery points are live scans of the file system", "vss_disabled")
-	add("usn", "disabled", "not implemented in the MVP: every backup walks the whole source", "usn_disabled")
 
 	var queued, running int
 	_ = s.pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state = 'queued'), count(*) FILTER (WHERE state = 'running') FROM jobs`).Scan(&queued, &running)

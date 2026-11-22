@@ -1,0 +1,62 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<h1 class="tv-page-title">{{template "icon" "settings"}} {{$.T "site.title"}}</h1>
+
+<section class="tv-card" {{$.Tour "site.intro"}}>
+  <p class="tv-muted">{{$.T "site.intro"}}</p>
+  {{if .Pending}}
+  <div class="tv-alert tv-alert-info" role="status">
+    <p>{{$.T "site.pending"}}</p>
+    {{if .CanRestart}}
+    <form method="post" action="{{url "/settings/site/restart"}}" class="tv-inline-form" data-no-boost>
+      {{template "csrf" $}}
+      <button class="tv-btn tv-btn-small" type="submit">{{template "icon" "refresh"}} {{$.T "site.restart"}}</button>
+    </form>
+    {{end}}
+  </div>
+  {{end}}
+  {{with .Errors}}
+  <div class="tv-alert tv-alert-error" role="alert">
+    <p>{{$.T "site.rejected"}}</p>
+    <ul>{{range .}}<li>{{.}}</li>{{end}}</ul>
+  </div>
+  {{end}}
+</section>
+
+<form method="post" action="{{url "/settings/site"}}" class="tv-form">
+  {{template "csrf" $}}
+  {{range $i, $g := .Groups}}
+  <section class="tv-card"{{if eq $i 0}} {{$.Tour "site.form"}}{{end}}>
+    <div class="tv-card-head"><h2>{{$g.Title}}</h2></div>
+    <p class="tv-muted tv-small">{{$g.Hint}}</p>
+    <div class="tv-form-grid">
+      {{range $g.Fields}}
+      <label class="tv-field"><span>{{.Label}}</span>
+        {{if or (eq .Kind "choice") (eq .Kind "bool")}}
+        <select name="{{.Name}}">{{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>{{end}}</select>
+        {{else if eq .Kind "number"}}
+        <input type="number" name="{{.Name}}" value="{{.Value}}" step="1" inputmode="numeric">
+        {{else}}
+        <input name="{{.Name}}" value="{{.Value}}" maxlength="2000" autocomplete="off" spellcheck="false"{{if .Default}} placeholder="{{.Default}}"{{end}}>
+        {{end}}
+        <small class="tv-muted">{{.Help}}{{if .Default}} {{$.T "site.default" .Default}}{{end}}</small></label>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+  <div class="tv-form-actions"><button class="tv-btn tv-btn-primary" type="submit">{{$.T "settings.save"}}</button>
+    <a class="tv-btn tv-btn-ghost" href="{{url "/settings"}}">{{$.T "common.cancel"}}</a></div>
+</form>
+
+<section class="tv-card" {{$.Tour "site.env"}}>
+  <div class="tv-card-head"><h2>{{template "icon" "check"}} {{$.T "site.env_title"}}</h2>
+    <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/status"}}">{{$.T "nav.status"}}</a></div>
+  <p class="tv-muted tv-small">{{$.T "site.env_hint"}}</p>
+  <dl class="tv-facts">
+    {{range .Facts}}<div><dt>{{.Label}}</dt><dd>{{if .Code}}<code>{{.Value}}</code>{{else}}{{.Value}}{{end}}</dd></div>
+    {{end}}
+  </dl>
+</section>
+{{end}}
+{{end}}

@@ -89,43 +89,6 @@ func repeatTerm(s string, n int) []string {
 	return out
 }
 
-func TestBuildSearch(t *testing.T) {
-	tests := []struct {
-		name  string
-		root  string
-		terms []string
-		want  string
-	}{
-		{"plain", `D:\data\src`, []string{"a", "b"}, `path:"D:\data\src\" "a" "b"`},
-		{"trailing backslash", `D:\data\src\`, []string{"a"}, `path:"D:\data\src\" "a"`},
-		{"forward slashes", `D:/data/src/`, []string{"a"}, `path:"D:\data\src\" "a"`},
-		{"lower-case drive", `d:\data`, []string{"a"}, `path:"D:\data\" "a"`},
-		{"spaces and unicode", `D:\数据 files\报告 café`, []string{"x y"}, `path:"D:\数据 files\报告 café\" "x y"`},
-		{"odd but legal characters", `D:\odd !;,'^&()[]{}$#@+=~ %TEMP%`, []string{"a"}, `path:"D:\odd !;,'^&()[]{}$#@+=~ %TEMP%\" "a"`},
-		{"drive root", `D:\`, []string{"a"}, `path:"D:\" "a"`},
-		{"unc", `\\srv\share\dir`, []string{"a"}, `path:"\\srv\share\dir\" "a"`},
-		{"unc share root", `\\srv\share`, []string{"a"}, `path:"\\srv\share\" "a"`},
-		{"quotes cannot close a term", `D:\r`, []string{`a" "b`, `"`}, `path:"D:\r\" "a b"`},
-		{"every term is quoted", `D:\r`, []string{"a|b", "!x", "<a", "b>", "regex:.", "size:>1", `..\..`, `D:\`, "x:"}, `path:"D:\r\" "a|b" "!x" "<a" "b>" "regex:." "size:>1" "..\.." "D:\" "x:"`},
-		{"term ending in a backslash", `D:\r`, []string{`docs\`, "n"}, `path:"D:\r\" "docs\" "n"`},
-		{"no terms", `D:\r`, nil, `path:"D:\r\"`},
-		{"empty root matches nothing", ``, []string{"a"}, `path:"|" "a"`},
-		{"relative root matches nothing", `data\src`, []string{"a"}, `path:"|" "a"`},
-		{"bare drive matches nothing", `D:`, []string{"a"}, `path:"|" "a"`},
-		{"traversal root matches nothing", `D:\a\..\b`, []string{"a"}, `path:"|" "a"`},
-		{"quote in root matches nothing", `D:\a"b`, []string{"a"}, `path:"|" "a"`},
-		{"wildcard in root matches nothing", `D:\a*`, []string{"a"}, `path:"|" "a"`},
-		{"device prefix matches nothing", `\\?\D:\a`, []string{"a"}, `path:"|" "a"`},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := BuildSearch(tt.root, tt.terms); got != tt.want {
-				t.Errorf("BuildSearch(%q, %q)\n got  %s\n want %s", tt.root, tt.terms, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseRoot(t *testing.T) {
 	valid := map[string]string{
 		`D:\data\src`:                          `D:\data\src\`,
@@ -247,7 +210,8 @@ func TestNewRequestLimits(t *testing.T) {
 	}
 }
 
-func FuzzQueryStaysQuoted(f *testing.F) {
+// Whatever is typed becomes plain terms: no quote, no wildcard and no control character reaches the index.
+func FuzzSanitizeGivesPlainTerms(f *testing.F) {
 	for _, seed := range []string{`a|b`, `!x`, `<a b>`, `regex:.*`, `size:>1`, `..\..`, `D:\`, `"a" "b`, `a"b`, `x\" "y`, "报告 \"phrase here\" *", `%TEMP% ;,'`} {
 		f.Add(seed)
 	}
@@ -271,13 +235,6 @@ func FuzzQueryStaysQuoted(f *testing.F) {
 					t.Fatalf("Sanitize(%q) returned a control character in %q", text, term)
 				}
 			}
-		}
-		search := BuildSearch(`D:\root`, terms)
-		if !strings.HasPrefix(search, `path:"D:\root\" "`) {
-			t.Fatalf("search %q is not confined to the root", search)
-		}
-		if got, want := strings.Count(search, `"`), 2*(1+len(terms)); got != want {
-			t.Fatalf("search %q has %d quotes, want %d: a term escaped its quotes", search, got, want)
 		}
 	})
 }

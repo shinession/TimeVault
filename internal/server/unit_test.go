@@ -133,7 +133,7 @@ func TestVocabulariesAreTranslated(t *testing.T) {
 		"policy.":       {"skip", "rename", "overwrite"},
 		"item.":         {"ok", "skipped", "failed"},
 		"auditresult.":  {audit.ResultOK, audit.ResultDenied, audit.ResultFailed},
-		"component.":    {"database", "repository", "search", "directory", "restore", "jobs", "vss", "usn"},
+		"component.":    {"database", "repository", "search", "directory", "restore", "jobs", "vss"},
 		"cstate.":       {"ok", "degraded", "disabled", "failed"},
 		"live.":         {"protected", "changed", "new", "not_captured", "deleted"},
 		"now.":          {"same", "modified", "deleted"},
@@ -206,10 +206,16 @@ func TestStatusDetailsAreTranslatedWhenTheServiceGivesAKey(t *testing.T) {
 	keyed := []service.Component{
 		{Name: "database", State: "failed", Detail: "the database does not answer", Key: "db_down"},
 		{Name: "repository", State: "ok", Detail: `D:\repo — 40% free`, Key: "repo_free", Args: []any{`D:\repo`, 40}},
-		{Name: "search", State: "disabled", Detail: "no search engine configured", Key: "search_disabled"},
+		{Name: "search", State: "disabled", Detail: "the search index is off", Key: "search_disabled"},
+		{Name: "search", State: "ok", Detail: "10 entries on D:", Key: "index_ok", Args: []any{10, "D:"}},
+		{Name: "search", State: "ok", Detail: "there are no folders to index", Key: "index_idle"},
+		{Name: "search", State: "degraded", Detail: "the index of D: is being built", Key: "index_building", Args: []any{"D:"}},
+		{Name: "search", State: "degraded", Detail: "needs administrator rights", Key: "index_no_admin"},
+		{Name: "search", State: "degraded", Detail: "D: has no change journal", Key: "index_journal_off", Args: []any{"D:"}},
+		{Name: "search", State: "degraded", Detail: "D: is not NTFS", Key: "index_unsupported", Args: []any{"D:"}},
+		{Name: "search", State: "degraded", Detail: "D: could not be indexed", Key: "index_failed", Args: []any{"D:"}},
 		{Name: "restore", State: "disabled", Detail: "no restore folder configured", Key: "restore_disabled"},
 		{Name: "vss", State: "disabled", Detail: "not implemented in the MVP: x", Key: "vss_disabled"},
-		{Name: "usn", State: "disabled", Detail: "not implemented in the MVP: y", Key: "usn_disabled"},
 		{Name: "jobs", State: "ok", Detail: "2 running, 1 queued", Key: "jobs_detail", Args: []any{2, 1}},
 	}
 	for _, c := range keyed {

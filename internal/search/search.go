@@ -1,5 +1,5 @@
 // Package search defines the boundary between TimeVault and a current-file
-// search engine (Everything in the MVP).
+// search engine: the NTFS index of internal/ntfsindex, in the service.
 //
 // The search engine only ever answers "what exists on disk right now". It is
 // not a history store and not an authorization layer: callers must confine
@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -36,7 +37,7 @@ var (
 
 // Provider searches the files that currently exist under a root directory.
 type Provider interface {
-	// Name is a short, stable identifier such as "everything".
+	// Name is a short, stable identifier such as "ntfs".
 	Name() string
 	// Search runs one bounded, root-confined search.
 	Search(ctx context.Context, q Query) (Page, error)
@@ -119,10 +120,18 @@ const (
 	StateDisabled State = "disabled"
 )
 
-// Health is a point-in-time provider status. Detail never contains secrets.
+// Health is a point-in-time provider status. Detail never contains secrets, and is English; Key and Args name the
+// message of the interface that says the same in the language of the visitor, when there is one.
 type Health struct {
 	State     State
 	Detail    string
+	Key       string
+	Args      []any
 	Latency   time.Duration
 	CheckedAt time.Time
+}
+
+// unavailable is the error of an engine that is configured but cannot answer.
+func unavailable(msg string) error {
+	return fmt.Errorf("%w: %s", ErrUnavailable, msg)
 }

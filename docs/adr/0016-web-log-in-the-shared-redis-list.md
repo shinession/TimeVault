@@ -4,6 +4,8 @@
 
 Accepted for 1.0.0 (2026-11-18). It adds the first write that TimeVault makes to Redis, and so amends two statements: "TimeVault only reads Redis" in [0005](./0005-redis-user-directory-and-open-browsing.md) and "The Redis account of TimeVault is read-only on purpose" in [0009](./0009-single-sign-on-and-trusted-proxies.md). The accounts and the single sign-on results are still only read, and the Redis account still must not delete keys; what changes is that it has to be allowed to append to one list. The routes, the accounts, the permissions and the data are unchanged.
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (`TIMEVAULT_WEB_LOG`, `TIMEVAULT_WEB_LOG_KEY`, `TIMEVAULT_WEB_LOG_HOST`, `TIMEVAULT_LOG_LEVEL`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `web_log`, `web_log_key`, `web_log_host` and `log_level`. The Redis settings (`TIMEVAULT_REDIS_URL`, `TIMEVAULT_REDIS_KEY_PREFIX`, `TIMEVAULT_REDIS_TIMEOUT`) stay in `.env`. The record is left as it was written.
+
 ## Context
 
 - The company's applications share one web log: the Redis list `web_log`. Each application appends lines about what it does, and a log page reads the list. TimeVault wrote nothing to it, so the pages people open in TimeVault and what they do there were not in the log that the company reads.
@@ -57,6 +59,8 @@ Accepted for 1.0.0 (2026-11-18). It adds the first write that TimeVault makes to
 ## 状态
 
 于 2026-11-18 在 1.0.0 中被接受。它加入了 TimeVault 对 Redis 的第一次写入，因此修订了两处表述：[0005](./0005-redis-user-directory-and-open-browsing.md) 中的"TimeVault 只读取 Redis"，以及 [0009](./0009-single-sign-on-and-trusted-proxies.md) 中的"TimeVault 的 Redis 账号有意设为只读"。账号和单点登录结果仍然只读取，Redis 账号仍然不能删除键；变化在于，它现在必须被允许向一个列表追加内容。路由、账号、权限和数据都不变。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（`TIMEVAULT_WEB_LOG`、`TIMEVAULT_WEB_LOG_KEY`、`TIMEVAULT_WEB_LOG_HOST`、`TIMEVAULT_LOG_LEVEL`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`web_log`、`web_log_key`、`web_log_host` 和 `log_level`。Redis 设置（`TIMEVAULT_REDIS_URL`、`TIMEVAULT_REDIS_KEY_PREFIX`、`TIMEVAULT_REDIS_TIMEOUT`）仍留在 `.env` 中。本记录保持原样。
 
 ## 背景
 

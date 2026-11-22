@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 )
 
-// maxRootLength keeps the engine request far below any URL length limit.
+// maxRootLength bounds the length of the folder of a request.
 const maxRootLength = 4096
 
 func badQuery(msg string) error {
@@ -20,9 +20,9 @@ func badQuery(msg string) error {
 //
 // Terms are separated by whitespace; a double-quoted phrase is one term. Double
 // quotes are never part of a term. '*' and '?' cannot occur in a Windows file
-// name but Everything keeps treating them as wildcards inside quotes, so they
-// separate terms instead of reaching the engine. Everything else (| ! < > :
-// regex:, size: and so on) is left alone because BuildSearch quotes every term.
+// name, so they separate terms instead of being searched for. Everything else
+// (| ! < > : regex:, size: and so on) is part of the term: names are matched as
+// plain text, there are no operators.
 func Sanitize(text string) ([]string, error) {
 	if len(text) > MaxTextLength {
 		return nil, badQuery("text is longer than " + strconv.Itoa(MaxTextLength) + " bytes")
@@ -64,38 +64,6 @@ func Sanitize(text string) ([]string, error) {
 		return nil, badQuery("text has more than " + strconv.Itoa(MaxTerms) + " search terms")
 	}
 	return terms, nil
-}
-
-// BuildSearch returns the Everything search expression that finds the terms
-// below root, including sub-folders.
-//
-// Verified on Everything 1.4.1.1024: infolder: and parent: only match direct
-// children, and path: is a plain substring match on the full path, so root gets
-// a trailing backslash to stop "D:\src" from also matching "D:\src2". Inside
-// double quotes | ! < > regex: size: and similar stay literal, with default and
-// with unusual Everything search settings; only the wildcards * and ? stay
-// active, which Sanitize keeps out of the terms. Quotes are removed from the
-// root and the terms so nothing can close its own quotes.
-func BuildSearch(root string, terms []string) string {
-	// No path contains a pipe, so an unusable root matches nothing instead of everything.
-	scope := "|"
-	if r, err := parseRoot(root); err == nil {
-		scope = r.scope()
-	}
-	return buildSearch(scope, terms)
-}
-
-func buildSearch(scope string, terms []string) string {
-	var b strings.Builder
-	b.WriteString(`path:"` + scope + `"`)
-	for _, term := range terms {
-		term = strings.ReplaceAll(term, `"`, "")
-		if strings.TrimSpace(term) == "" {
-			continue
-		}
-		b.WriteString(` "` + term + `"`)
-	}
-	return b.String()
 }
 
 // rootPath is an absolute Windows directory split for case-insensitive,

@@ -1,0 +1,9 @@
+{{define "content"}}
+<meta http-equiv="refresh" content="10;url={{url "/settings/site"}}">
+<h1 class="tv-page-title">{{template "icon" "refresh"}} {{$.T "site.restarting_title"}}</h1>
+<section class="tv-card">
+  <p>{{$.T "site.restarting_text"}}</p>
+  <p class="tv-muted tv-small">{{$.T "site.restarting_hint"}}</p>
+  <div class="tv-form-actions"><a class="tv-btn" href="{{url "/settings/site"}}" data-no-boost>{{$.T "site.reload"}}</a></div>
+</section>
+{{end}}

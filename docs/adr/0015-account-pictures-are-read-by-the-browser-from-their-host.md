@@ -4,6 +4,8 @@
 
 Accepted for 0.1.9 (2026-11-18). It replaces how 0.1.8 read the pictures of the accounts (a `fetch` to the host of the site that only took `image/*`); the rest of 0.1.8 stands. It also records that the address of the update manifest stays an explicit setting.
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (`TIMEVAULT_AVATAR_URL`, `TIMEVAULT_SERVER_HOST`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `avatar_url` and `server_host`. The record is left as it was written.
+
 ## Context
 
 - The wish: show the picture of an account next to its name, read from the employee pictures that the other company applications keep, `http://<TIMEVAULT_SERVER_HOST>/api/static/hr/<employee ID>.webp`, and show the default picture when there is none.
@@ -41,6 +43,8 @@ Accepted for 0.1.9 (2026-11-18). It replaces how 0.1.8 read the pictures of the 
 ## 状态
 
 于 2026-11-18 在 0.1.9 中被接受。它替代了 0.1.8 读取账号头像的方式（对站点所在主机使用 `fetch`，并且只接受 `image/*`）；0.1.8 的其余部分保持不变。它也记录了更新清单的地址仍然是显式设置。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（`TIMEVAULT_AVATAR_URL`、`TIMEVAULT_SERVER_HOST`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`avatar_url` 和 `server_host`。本记录保持原样。
 
 ## 背景
 

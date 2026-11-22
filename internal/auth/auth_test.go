@@ -410,6 +410,28 @@ func TestPermissions(t *testing.T) {
 	}
 }
 
+// The Site settings are for the local administrator alone: an administrator of the user directory, which is found
+// again by its Ref, may manage the folders but may not open them.
+func TestOnlyTheLocalAdministratorHasSitePermission(t *testing.T) {
+	cases := map[string]struct {
+		s    Session
+		want bool
+	}{
+		"visitor":                 {Session{}, false},
+		"user":                    {Session{User: "MES10001", Role: RoleUser}, false},
+		"local administrator":     {Session{User: "admin", Role: RoleAdmin}, true},
+		"directory administrator": {Session{User: "MES10002", Role: RoleAdmin, Ref: "app_user_7"}, false},
+		"directory user":          {Session{User: "MES10003", Role: RoleUser, Ref: "app_user_8"}, false},
+		"sign-in disabled":        {Session{User: "local-admin", Role: RoleAdmin, AuthDisabled: true}, true},
+		"unknown role":            {Session{User: "admin", Role: "superuser"}, false},
+	}
+	for name, c := range cases {
+		if got := c.s.Can(PermSite); got != c.want {
+			t.Errorf("%s: Can(PermSite) = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
 // A cookie of the layout of v0.1.0 (no version, no role names) must not be honoured.
 func TestOldCookieLayoutIsRejected(t *testing.T) {
 	clock := &fakeClock{now: time.Now()}

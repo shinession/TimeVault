@@ -116,12 +116,9 @@ func TestSSOIsOfferedOnlyWhenItIsConfigured(t *testing.T) {
 		t.Error("the password form is gone")
 	}
 
-	// The running configuration names the sign-on service, on the page and in the API.
+	// The running configuration names the sign-on service in the API, for the local administrator.
 	adm := on.visitor()
 	adm.login()
-	if _, page := adm.get("/settings"); !strings.Contains(page, ssoHost) {
-		t.Errorf("the Settings page does not show the sign-on service:\n%s", page)
-	}
 	if _, out := adm.api("GET", "/api/v1/settings", nil); out["sso_host"] != ssoHost {
 		t.Errorf("settings sso_host = %v, want %q", out["sso_host"], ssoHost)
 	}

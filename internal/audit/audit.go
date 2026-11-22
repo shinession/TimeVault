@@ -32,6 +32,10 @@ const (
 	// ActionAppUpdate is a step of the replacement of the program by a newer one; the detail names the stage
 	// (staged, restart, done, cancelled or failed).
 	ActionAppUpdate = "app.update"
+	// ActionSiteUpdate is a change of the Site settings by the local administrator, and ActionSiteRestart a restart
+	// that was asked for on the Site settings page. The detail of a change names the settings, never their values.
+	ActionSiteUpdate  = "site.update"
+	ActionSiteRestart = "site.restart"
 )
 
 // ActorUpdater is the actor of what the service does to itself: the replacement of its program by a newer one.
@@ -142,6 +146,9 @@ type Filter struct {
 	// cannot be placed, and it is left out.
 	OnlySources bool
 	SourceIDs   []int64
+	// WithoutSite leaves out the events about the Site settings (target type "site"), which only the local
+	// administrator may see.
+	WithoutSite bool
 }
 
 // List returns events newest first.
@@ -161,7 +168,8 @@ func (l *Logger) List(ctx context.Context, f Filter) ([]Event, error) {
 		   AND (NOT $5::boolean
 		        OR COALESCE(e.source_id, j.source_id) = ANY($6::bigint[])
 		        OR (e.source_id IS NULL AND e.target_type <> 'job'))
-		 ORDER BY e.id DESC LIMIT $4`, f.Action, f.Actor, f.BeforeID, f.Limit, f.OnlySources, f.SourceIDs)
+		   AND (NOT $7::boolean OR e.target_type <> 'site')
+		 ORDER BY e.id DESC LIMIT $4`, f.Action, f.Actor, f.BeforeID, f.Limit, f.OnlySources, f.SourceIDs, f.WithoutSite)
 	if err != nil {
 		return nil, fmt.Errorf("audit: list: %w", err)
 	}

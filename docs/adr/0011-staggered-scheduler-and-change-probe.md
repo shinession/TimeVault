@@ -4,6 +4,8 @@
 
 Accepted for 0.1.4 (2026-11-16). Extends the scheduling of [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md); the schedule of a folder is still "every N minutes, counted from the end of the previous run, and nothing is recorded when nothing changed".
 
+**Update, 1.0.1.** The change probe asks the NTFS index of the service instead of Everything ([0018](./0018-native-ntfs-index-replaces-everything.md)), so "read the NTFS change journal (USN) ourselves" is no longer a non-goal: the index does it. The settings are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `TIMEVAULT_SCHEDULER_PARALLEL`, `_GAP`, `_REST`, `_FULL_SCAN_EVERY` and `TIMEVAULT_PROCESS_PRIORITY` are `scheduler_parallel`, `scheduler_gap`, `scheduler_rest`, `scheduler_full_scan_every` and `process_priority`, and `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE` became `scheduler_probe`. The rules of the probe stand, with one addition: a folder is also scanned when the index has not been watching the volume since 5 minutes before the last scan. The record is left as it was written.
+
 ## Context
 
 - A server can have around 10 monitored folders. In 0.1.3 every folder whose interval had passed was queued at the next tick, so folders with the same interval (60 minutes, say) were all scanned at the same moment, one after the other, and the file shares of the same computer felt slow.
@@ -43,6 +45,8 @@ Accepted for 0.1.4 (2026-11-16). Extends the scheduling of [0006](./0006-setting
 ## 状态
 
 于 2026-11-16 在 0.1.4 中被接受。扩展 [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) 的计划任务；文件夹的计划仍然是"每 N 分钟，从上一次运行结束时开始计算，没有变化时不记录任何内容"。
+
+**更新，1.0.1 版。** 变更探测现在询问服务的 NTFS 索引，而不是 Everything（[0018](./0018-native-ntfs-index-replaces-everything.md)），所以"自己读取 NTFS 变更日志（USN）"不再是非目标：索引就在做这件事。这些设置现在是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`TIMEVAULT_SCHEDULER_PARALLEL`、`_GAP`、`_REST`、`_FULL_SCAN_EVERY` 和 `TIMEVAULT_PROCESS_PRIORITY` 分别是 `scheduler_parallel`、`scheduler_gap`、`scheduler_rest`、`scheduler_full_scan_every` 和 `process_priority`，而 `TIMEVAULT_SCHEDULER_EVERYTHING_PROBE` 变成了 `scheduler_probe`。探测的规则依然成立，只增加了一条：索引自上次扫描前 5 分钟以来没有一直在监视该卷时，文件夹同样会被扫描。本记录保持原样。
 
 ## 背景
 

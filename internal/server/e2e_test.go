@@ -743,12 +743,12 @@ func TestStatusPageIsFullyTranslated(t *testing.T) {
 		t.Fatalf("language switch = %d", res.StatusCode)
 	}
 	_, zh := h.get("/status")
-	for _, want := range []string{"MVP 未实现", "未配置搜索引擎", "个运行中"} {
+	for _, want := range []string{"MVP 未实现", "搜索索引已关闭", "个运行中"} {
 		if !strings.Contains(zh, want) {
 			t.Errorf("the Chinese status page lacks %q", want)
 		}
 	}
-	for _, english := range []string{"not implemented in the MVP", "no search engine configured", "running,"} {
+	for _, english := range []string{"not implemented in the MVP", "the search index is off", "running,"} {
 		if strings.Contains(zh, english) {
 			t.Errorf("the Chinese status page still shows the English text %q", english)
 		}

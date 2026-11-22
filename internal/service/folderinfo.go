@@ -56,9 +56,9 @@ func (f *folderInfos) lookup(ctx context.Context, provider search.Provider, dir 
 	defer cancel()
 	folders, _, err := lister.Subfolders(askCtx, dir, 0)
 	if err != nil {
-		// A caller that gave up, a folder that is no good and an engine that is switched off say nothing about an
-		// outage of the engine.
-		if ctx.Err() == nil && !errors.Is(err, search.ErrBadQuery) && !errors.Is(err, search.ErrDisabled) {
+		// A caller that gave up, a folder that is no good, a folder that the index does not hold and an engine that is
+		// switched off say nothing about an outage of the engine.
+		if ctx.Err() == nil && !errors.Is(err, search.ErrBadQuery) && !errors.Is(err, search.ErrDisabled) && !errors.Is(err, search.ErrNotIndexed) {
 			f.downUntil.Store(now.Add(folderInfoBackoff).UnixNano())
 		}
 		return nil

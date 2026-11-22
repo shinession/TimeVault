@@ -10,7 +10,7 @@ import (
 )
 
 // Mock is an in-memory Provider for tests of other packages. It applies the
-// same query validation, root confinement and paging rules as Everything:
+// same query validation, root confinement and paging rules as the NTFS provider:
 // entries must be strictly inside Query.Root and every sanitized term must be
 // contained, case-insensitively, in Result.Name. Matches are ordered like the
 // real engine's name sort: folders first, then by name.

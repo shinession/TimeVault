@@ -107,6 +107,10 @@ const (
 	// PermManage is the administrator: it adds monitored folders, sees the folders on the server's disk, and has
 	// full control of every monitored folder.
 	PermManage Permission = "manage"
+	// PermSite is the local administrator alone: the account of TIMEVAULT_ADMIN_USER, or the synthetic session of a
+	// service whose sign-in is switched off. It opens the Site settings, which decide who may sign in and what runs on the
+	// server, so an account of the user directory does not have it, whatever its role.
+	PermSite Permission = "site"
 )
 
 // Session is the identity behind a request. The zero value is an anonymous visitor.
@@ -137,6 +141,9 @@ func (s Session) Can(p Permission) bool {
 		return s.SignedIn()
 	case PermManage:
 		return s.SignedIn() && s.Role == RoleAdmin
+	case PermSite:
+		// Only the local administrator has no Ref: the accounts of the user directory are found again by it.
+		return s.SignedIn() && s.Role == RoleAdmin && s.Ref == ""
 	}
 	return false
 }

@@ -11,8 +11,9 @@
 
   <repo>\.env is the file the service reads (scripts\dev-run.ps1 points it there) and the file the
   dev-* scripts take their settings from. Older versions kept settings in data\local.env,
-  data\pgdev\db.env, data\dev\server.env and data\everything\everything.env; Move-LegacyEnvFiles moves
-  them into .env and deletes them.
+  data\pgdev\db.env and data\dev\server.env; Move-LegacyEnvFiles moves them into .env and deletes them.
+  The file holds what the service needs before it can reach its database, and its secrets. Everything
+  else is a Site setting, which the local administrator edits on the Site settings page of the service.
 
   The file is read and written as UTF-8 without a BOM, with the syntax the service parses: one
   KEY=VALUE per line, # comments, the value taken literally to the end of the line (one pair of
@@ -33,7 +34,7 @@ function Write-DotEnvInfo([string]$Message) { Write-Host $Message }
 # Variables that say where a tool is installed. The service never reads them, so a value in the
 # terminal is not a setting that could contradict .env and is left alone, as are TIMEVAULT_TEST_*
 # (read by go test only).
-$DotEnvToolVariables = @('TIMEVAULT_GO_ROOT', 'TIMEVAULT_PG_BIN', 'TIMEVAULT_EVERYTHING_EXE')
+$DotEnvToolVariables = @('TIMEVAULT_GO_ROOT', 'TIMEVAULT_PG_BIN')
 
 # The comment that goes above a key when a script adds it, so the file explains itself.
 $DotEnvNotes = @{
@@ -46,13 +47,7 @@ $DotEnvNotes = @{
     'TIMEVAULT_SESSION_KEY'         = @('Signs the session cookies (base64 of 32 random bytes). With it, sessions survive a restart.')
     'TIMEVAULT_REDIS_URL'           = @('User directory of the company accounts (the app_user_* hashes in Redis).')
     'TIMEVAULT_LISTEN_ADDR'         = @('Listen address. Other computers need a TLS reverse proxy and TIMEVAULT_ALLOW_NON_LOOPBACK=true as well.')
-    'TIMEVAULT_SERVER_HOST'         = @('Name of this server as users type it in network paths (\\server\share\...). With it, every monitored folder needs a', 'display folder on this host, and users never see the real folders of the server.')
-    'TIMEVAULT_RESTORE_DISPLAY_ROOT' = @('The restore folder as users reach it over the network (\\server\share\...), so they can pick up restored files.')
-    'TIMEVAULT_SSO_HOST'            = @('Single sign-on with the Windows account (optional): the address of the company sign-on service.')
-    'TIMEVAULT_BASE_PATH'           = @('Path the site is served under behind a reverse proxy (for example /tv for http://host/tv/). Empty: at the root.')
-    'TIMEVAULT_EVERYTHING_URL'      = @('Search: the Everything instance of scripts\dev-everything.ps1 (its reset removes these lines).')
-    'TIMEVAULT_TEST_EVERYTHING_URL' = @('Live search tests (go test ./internal/search/...), written by scripts\dev-everything.ps1.')
-    'TIMEVAULT_GO_ROOT'             = @('Development scripts only: the folder that contains bin\go.exe.')
+    'TIMEVAULT_GO_ROOT'            = @('Development scripts only: the folder that contains bin\go.exe.')
     'TIMEVAULT_PG_BIN'              = @('Development scripts only: the PostgreSQL bin folder (pg_ctl.exe, psql.exe).')
 }
 
@@ -121,19 +116,9 @@ function Initialize-DotEnv {
         '# TIMEVAULT_ALLOW_NON_LOOPBACK=true as well.',
         '# TIMEVAULT_LISTEN_ADDR=127.0.0.1:8660',
         '#',
-        '# Name of this server as users type it in network paths (\\server\share\...). Set it to make the display',
-        '# folder of every monitored folder mandatory and checked: users see \\server\share paths, never the real',
-        '# folders of the server. The restore folder gets a display path of its own.',
-        '# TIMEVAULT_SERVER_HOST=server.example.local',
-        '# TIMEVAULT_RESTORE_DISPLAY_ROOT=\\server.example.local\share\restore',
-        '#',
-        '# Single sign-on with the Windows account (optional): the address of the company sign-on service. Behind a',
-        '# reverse proxy also list the proxies in TIMEVAULT_TRUSTED_PROXIES (see configs\timevault.example.env).',
-        '# TIMEVAULT_SSO_HOST=sso.example.local',
-        '#',
-        '# Behind a reverse proxy that serves the site under a path of a shared host name (http://host/tv/), set that',
-        '# path (see "Behind a reverse proxy under a path" in docs\runbook.md).',
-        '# TIMEVAULT_BASE_PATH=/tv'
+        '# The other settings (the server name users see in network paths, single sign-on, the path behind a reverse',
+        '# proxy, the scheduler, the NTFS index, updates, logging) are Site settings: sign in as the local administrator',
+        '# and open Settings > Site settings. Search and folder sizes need the service to run as an administrator.'
     )
     if (-not (Test-Path -LiteralPath $DotEnvFile -PathType Leaf)) {
         Write-DotEnvLines ($header + $rest)
@@ -207,7 +192,7 @@ function Remove-DotEnvValue([string]$Key) {
 # is in .env, and a file with lines that are not KEY=VALUE is left alone.
 function Move-LegacyEnvFiles {
     $root = Split-Path -Parent $DotEnvFile
-    foreach ($relative in @('data\local.env', 'data\pgdev\db.env', 'data\dev\server.env', 'data\everything\everything.env')) {
+    foreach ($relative in @('data\local.env', 'data\pgdev\db.env', 'data\dev\server.env')) {
         $path = Join-Path $root $relative
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
         $odd = 0

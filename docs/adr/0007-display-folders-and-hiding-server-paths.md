@@ -4,6 +4,8 @@
 
 Accepted for 0.1.3 (2026-11-16). Builds on [0005](./0005-redis-user-directory-and-open-browsing.md) (anyone can browse, an account does the rest) and [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) (where settings live).
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (`TIMEVAULT_SERVER_HOST`, `TIMEVAULT_RESTORE_DISPLAY_ROOT`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `server_host` and `restore_display_root`. Where this record says that the search (Everything) only works with the folders of this server, the NTFS index ([0018](./0018-native-ntfs-index-replaces-everything.md)) does that work now, and a folder that is not on a local NTFS drive letter has no search. The record is left as it was written.
+
 ## Context
 
 - People open a monitored folder over the network (SMB), as `\\sgmeslt595.co.murata.local\TimeVault\monitor`, not as the `D:\TimeVault\monitor` it is on the server. They do not know the server's own layout and have no use for it.
@@ -42,7 +44,7 @@ Accepted for 0.1.3 (2026-11-16). Builds on [0005](./0005-redis-user-directory-an
 - The service checks the host, **not** that the share leads to the monitored folder (that would need the share list). A wrong share name shows people a path that does not exist.
 - Hiding works on decoded text. A folder written in an unusual way (an 8.3 short name, a drive letter that is another name for the same disk) is not recognised. Masked JSON is never produced from raw JSON text, only from structured values.
 - Anonymous visitors see the host name inside display folders; they need it to open the files.
-- `root_path` of `GET /api/v1/sources` and `repository`, `restore_root` and `env_file` of `GET /api/v1/settings` are for administrators only, which breaks ordinary accounts that read them (see [changelog.md](./changelog.md)).
+- `root_path` of `GET /api/v1/sources` and `repository`, `restore_root` and `env_file` of `GET /api/v1/settings` are for administrators only, which breaks ordinary accounts that read them (see [changelog.md](../changelog.md)).
 - A page that shows texts that may quote a folder reads the `sources` table once more (once per request, only when there is such a text).
 
 ---
@@ -52,6 +54,8 @@ Accepted for 0.1.3 (2026-11-16). Builds on [0005](./0005-redis-user-directory-an
 ## 状态
 
 于 2026-11-16 在 0.1.3 中被接受。以 [0005](./0005-redis-user-directory-and-open-browsing.md)（任何人都可以浏览，其余操作需要账号）和 [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md)（设置放在哪里）为基础。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（`TIMEVAULT_SERVER_HOST`、`TIMEVAULT_RESTORE_DISPLAY_ROOT`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`server_host` 和 `restore_display_root`。本记录中说搜索（Everything）只能处理本服务器上的文件夹的地方，现在由 NTFS 索引（[0018](./0018-native-ntfs-index-replaces-everything.md)）承担这项工作，而不在本地 NTFS 盘符上的文件夹没有搜索。本记录保持原样。
 
 ## 背景
 
@@ -91,5 +95,5 @@ Accepted for 0.1.3 (2026-11-16). Builds on [0005](./0005-redis-user-directory-an
 - 服务检查主机，**不**检查共享是否通向该监控文件夹（那需要共享列表）。共享名写错时，人们看到的是一个不存在的路径。
 - 隐藏是基于已解码的文本进行的。以不寻常的方式书写的文件夹（8.3 短名称、同一磁盘的另一个盘符别名）无法被识别。隐藏后的 JSON 从来不是由原始 JSON 文本生成的，只来自结构化的值。
 - 匿名访问者可以在显示文件夹中看到主机名；他们需要它才能打开文件。
-- `GET /api/v1/sources` 的 `root_path` 以及 `GET /api/v1/settings` 的 `repository`、`restore_root` 和 `env_file` 只给管理员，这会影响读取它们的普通账号（见 [changelog.md](./changelog.md)）。
+- `GET /api/v1/sources` 的 `root_path` 以及 `GET /api/v1/settings` 的 `repository`、`restore_root` 和 `env_file` 只给管理员，这会影响读取它们的普通账号（见 [changelog.md](../changelog.md)）。
 - 显示可能引用文件夹的文本的页面，会多读一次 `sources` 表（每个请求一次，并且只在有这类文本时）。

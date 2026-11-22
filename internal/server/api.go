@@ -37,6 +37,10 @@ func (s *Server) apiRoutes() {
 	m.HandleFunc("GET /api/v1/health", s.need(auth.PermAudit, s.apiHealth))
 	m.HandleFunc("GET /api/v1/settings", s.need(auth.PermAudit, s.apiSettings))
 	m.HandleFunc("POST /api/v1/update/check", s.need(auth.PermManage, s.apiUpdateCheck))
+	// The Site settings are for the local administrator alone; anybody else is told there is no such endpoint.
+	m.HandleFunc("GET /api/v1/site-settings", s.needSite(s.apiSite))
+	m.HandleFunc("PATCH /api/v1/site-settings", s.needSite(s.apiSiteUpdate))
+	m.HandleFunc("POST /api/v1/site-settings/restart", s.needSite(s.apiSiteRestart))
 	m.HandleFunc("GET /api/v1/audit", s.need(auth.PermAudit, s.apiAudit))
 	m.HandleFunc("POST /api/v1/backups", s.need(auth.PermAccount, s.apiStartBackup))
 	m.HandleFunc("POST /api/v1/restores/preview", s.need(auth.PermAccount, s.apiRestorePreview))
@@ -269,19 +273,20 @@ func (s *Server) apiSession(w http.ResponseWriter, r *http.Request, sess auth.Se
 	})
 }
 
-// apiSettings describes the running configuration. It holds no secret. The folders on the server's disk and the
-// settings file are for administrators; everybody gets the display root of the restore folder.
+// apiSettings describes the running configuration. It holds no secret. Everybody gets the version, the name of the
+// server and the display root of the restore folder; the folders on the server's disk and the settings file are for
+// administrators, and the rest, which is what the Site settings page shows, for the local administrator.
 func (s *Server) apiSettings(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	d := s.opts.Deployment
-	out := map[string]any{
-		"version": s.opts.Version, "listen": d.ListenAddr, "database": d.Database, "user_directory": d.UserDirectory, "sso_host": d.SSOHost,
-		"base_path":   d.BasePath,
-		"server_host": d.ServerHost, "restore_display_root": d.RestoreDisplayRoot, "search": d.SearchHost,
-		"local_admin": d.LocalAdmin != "", "sign_in_disabled": d.AuthDisabled, "session_ttl": d.SessionTTL.String(), "cookie_secure": d.CookieSecure,
-		"web_log": map[string]any{"enabled": d.WebLog, "key": d.WebLogKey, "host": d.WebLogHost},
-	}
+	out := map[string]any{"version": s.opts.Version, "server_host": d.ServerHost, "restore_display_root": d.RestoreDisplayRoot}
 	if sess.Can(auth.PermManage) {
 		out["repository"], out["restore_root"], out["env_file"] = d.RepositoryPath, d.RestoreRoot, d.EnvFile
+	}
+	if sess.Can(auth.PermSite) {
+		out["listen"], out["database"], out["user_directory"], out["sso_host"] = d.ListenAddr, d.Database, d.UserDirectory, d.SSOHost
+		out["base_path"], out["search_index"] = d.BasePath, d.SearchIndex
+		out["local_admin"], out["sign_in_disabled"], out["session_ttl"], out["cookie_secure"] = d.LocalAdmin != "", d.AuthDisabled, d.SessionTTL.String(), d.CookieSecure
+		out["web_log"] = map[string]any{"enabled": d.WebLog, "key": d.WebLogKey, "host": d.WebLogHost}
 	}
 	out["update"] = s.apiUpdate(sess)
 	writeJSON(w, http.StatusOK, out)
@@ -575,7 +580,7 @@ func (s *Server) apiSearch(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	page, err := s.svc.Search(r.Context(), src, r.FormValue("q"), intParamDefault(r, "offset", 0, 0, 1<<30), intParamDefault(r, "limit", 50, 1, 200))
 	if errors.Is(err, service.ErrSearchUnavailable) {
-		writeJSONError(w, http.StatusServiceUnavailable, "search_unavailable", "the search engine is not available; browsing and history still work")
+		writeJSONError(w, http.StatusServiceUnavailable, "search_unavailable", "the search index is off or not ready; browsing and history still work")
 		return
 	}
 	if err != nil {
@@ -866,6 +871,7 @@ func (s *Server) apiRestoreStart(w http.ResponseWriter, r *http.Request, sess au
 func (s *Server) apiAudit(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	filter := audit.Filter{
 		Action: r.FormValue("action"), Actor: r.FormValue("actor"), BeforeID: intParam(r, "before"), Limit: intParamDefault(r, "limit", 50, 1, 500),
+		WithoutSite: !sess.Can(auth.PermSite),
 	}
 	if !isAdmin(sess) {
 		// The events of a folder are for the people who may see the folder, like on the Audit page.

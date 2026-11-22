@@ -123,10 +123,23 @@ var auditActions = []string{
 	audit.ActionRetentionPrune, audit.ActionAppUpdate,
 }
 
+// siteAuditActions are the actions about the Site settings, which only the local administrator sees.
+var siteAuditActions = []string{audit.ActionSiteUpdate, audit.ActionSiteRestart}
+
+// auditActionsFor lists the actions the Audit page offers to filter by: the Site settings are only mentioned to the
+// local administrator.
+func auditActionsFor(sess auth.Session) []string {
+	if !sess.Can(auth.PermSite) {
+		return auditActions
+	}
+	return append(append([]string{}, auditActions...), siteAuditActions...)
+}
+
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.Session) {
 	action := r.FormValue("action")
 	known := false
-	for _, a := range auditActions {
+	actions := auditActionsFor(sess)
+	for _, a := range actions {
 		if a == action {
 			known = true
 		}
@@ -136,7 +149,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	before := intParam(r, "before")
 	const pageSize = 50
-	filter := audit.Filter{Action: action, BeforeID: before, Limit: pageSize}
+	filter := audit.Filter{Action: action, BeforeID: before, Limit: pageSize, WithoutSite: !sess.Can(auth.PermSite)}
 	if !isAdmin(sess) {
 		// What happened to a folder is for the people who may see the folder; events that belong to no folder
 		// (sign-ins and the like) are for every account, as they always were.
@@ -153,7 +166,7 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.S
 		return
 	}
 	events = s.viewerFor(r.Context(), sess).audit(events)
-	d := &auditData{Events: events, Action: action, Actions: auditActions}
+	d := &auditData{Events: events, Action: action, Actions: actions}
 	if len(events) == pageSize {
 		d.NextURL = buildURL("/audit", "action", action, "before", events[len(events)-1].ID)
 	}

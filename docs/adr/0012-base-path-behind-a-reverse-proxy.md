@@ -4,6 +4,8 @@
 
 Accepted for 0.1.5 (2026-11-16). Extends the web layer of [0005](./0005-redis-user-directory-and-open-browsing.md) and the client address of [0009](./0009-single-sign-on-and-trusted-proxies.md); the routes, the accounts and the data are unchanged.
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (`TIMEVAULT_BASE_PATH`, `TIMEVAULT_TRUSTED_PROXIES`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `base_path` and `trusted_proxies`, edited by the local administrator and used after a restart. The record is left as it was written.
+
 ## Context
 
 - One host name of the company serves several applications through one nginx, each under its own path: `/qdb/`, `/mer/`, `/gitea/` and, for TimeVault, `/tv/` (for example `http://prod_eng.co.murata.local/tv/`).
@@ -50,6 +52,8 @@ Accepted for 0.1.5 (2026-11-16). Extends the web layer of [0005](./0005-redis-us
 ## 状态
 
 于 2026-11-16 在 0.1.5 中被接受。扩展 [0005](./0005-redis-user-directory-and-open-browsing.md) 的 Web 层和 [0009](./0009-single-sign-on-and-trusted-proxies.md) 的客户端地址；路由、账号和数据保持不变。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（`TIMEVAULT_BASE_PATH`、`TIMEVAULT_TRUSTED_PROXIES`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`base_path` 和 `trusted_proxies`，由本地管理员编辑，重启之后使用。本记录保持原样。
 
 ## 背景
 

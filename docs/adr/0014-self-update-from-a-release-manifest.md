@@ -4,6 +4,8 @@
 
 Accepted for 0.1.8 (2026-11-18). Adds a way to deploy and to start the program; the routes, the accounts, the permissions and the data are unchanged. Relies on [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md) for where settings live and on [0010](./0010-version-limit-and-garbage-collection.md) and [0011](./0011-staggered-scheduler-and-change-probe.md) for how jobs and the scheduler behave.
 
+**Update, 1.0.1.** The settings that this record names as `TIMEVAULT_*` variables (`TIMEVAULT_UPDATE_URL`, `TIMEVAULT_UPDATE_INTERVAL`, `TIMEVAULT_UPDATE_RESTART`, `TIMEVAULT_SERVER_HOST`) are Site settings now ([0017](./0017-site-settings-in-the-database.md)): `update_url`, `update_interval`, `update_restart` and `server_host`. `TIMEVAULT_AUTO_MIGRATE` stays in `.env`. The restart of the update is also what a restart for the Site settings uses, and `check-config` checks the bootstrap settings only. A server that updates itself from 1.0.0 to 1.0.1 has no `update_url` afterwards until the administrator enters it. The record is left as it was written.
+
 ## Context
 
 - Up to 0.1.7 a new version was deployed by hand: build `timevault-server.exe`, stop the service, copy the file to the server, start it. There was no continuous delivery, and nobody said when a copy had gone wrong (a half-copied file, an old number, the wrong file).
@@ -66,6 +68,8 @@ Accepted for 0.1.8 (2026-11-18). Adds a way to deploy and to start the program; 
 ## 状态
 
 于 2026-11-18 在 0.1.8 中被接受。增加了一种部署和启动程序的方式；路由、账号、权限和数据保持不变。设置放在哪里依赖 [0006](./0006-settings-in-env-and-database-and-scheduled-backups.md)，任务和调度器的行为依赖 [0010](./0010-version-limit-and-garbage-collection.md) 和 [0011](./0011-staggered-scheduler-and-change-probe.md)。
+
+**更新，1.0.1 版。** 本记录中以 `TIMEVAULT_*` 变量命名的设置（`TIMEVAULT_UPDATE_URL`、`TIMEVAULT_UPDATE_INTERVAL`、`TIMEVAULT_UPDATE_RESTART`、`TIMEVAULT_SERVER_HOST`），现在都是站点设置（[0017](./0017-site-settings-in-the-database.md)）：`update_url`、`update_interval`、`update_restart` 和 `server_host`。`TIMEVAULT_AUTO_MIGRATE` 仍留在 `.env` 中。更新所用的重启，也是为站点设置而重启时所用的那个，而 `check-config` 只检查引导设置。从 1.0.0 自己更新到 1.0.1 的服务器，之后没有 `update_url`，直到管理员重新填写它。本记录保持原样。
 
 ## 背景
 

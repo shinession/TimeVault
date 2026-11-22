@@ -7,8 +7,7 @@
   scripts\dotenv.ps1). This script
 
   1. creates .env from a commented template when it is missing, and moves the settings of the files
-     older versions used (data\local.env, data\pgdev\db.env, data\dev\server.env,
-     data\everything\everything.env) into it;
+     older versions used (data\local.env, data\pgdev\db.env, data\dev\server.env) into it;
   2. starts the private PostgreSQL cluster (scripts\dev-db.ps1 start), unless TIMEVAULT_DATABASE_URL
      in .env points to another PostgreSQL server, such as the one installed on this computer. In that
      case nothing is started: the database must already be running;
@@ -25,8 +24,11 @@
   Anyone can browse; backing up, restoring, the audit log and the settings need an account: the
   local administrator, or a company account from the Redis user directory (TIMEVAULT_REDIS_URL).
 
-  If the Everything instance from scripts\dev-everything.ps1 was started, it wrote its settings into
-  .env as well, so search works without further steps.
+  .env holds what the service needs before it can reach its database, and its secrets. The other
+  settings are Site settings, stored in the database: sign in as 'admin' and open Settings > Site settings.
+  Search, folder sizes and skipping unchanged folders come from the NTFS index, which reads the volumes and
+  therefore needs the service to run as an administrator: start this script from an elevated PowerShell.
+  Without it the Status page says that the index needs administrator rights, and everything else works.
 
   The Go toolchain must be on PATH, or TIMEVAULT_GO_ROOT (in .env) must name the Go installation
   folder (the one that contains bin\go.exe).

@@ -4,7 +4,8 @@
 //	timevault-server migrate        apply database migrations and exit
 //	timevault-server hash-password  create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
 //	timevault-server check-redis-users  check that the user accounts in Redis can be read
-//	timevault-server check-config   check that the settings are valid for the service and exit
+//	timevault-server check-config   check that the settings of the environment and .env are valid for the service and exit
+//	timevault-server settings       list, get, set or reset the Site settings stored in the database
 //	timevault-server version
 package main
 
@@ -33,6 +34,7 @@ import (
 	"timevault/internal/config"
 	"timevault/internal/db"
 	"timevault/internal/jobs"
+	"timevault/internal/ntfsindex"
 	"timevault/internal/platform"
 	"timevault/internal/redisuser"
 	"timevault/internal/repository"
@@ -40,6 +42,7 @@ import (
 	"timevault/internal/search"
 	"timevault/internal/server"
 	"timevault/internal/service"
+	"timevault/internal/sitesettings"
 	"timevault/internal/update"
 	"timevault/internal/weblog"
 	"timevault/migrations"
@@ -48,7 +51,7 @@ import (
 
 // version is the one place the program version is written. The build command in docs/runbook.md does not
 // set it: -ldflags "-X main.version=..." would replace it, and an old copy of that command stamps an old number.
-var version = "1.0.0"
+var version = "1.0.1"
 
 func main() {
 	cmd := "serve"
@@ -67,6 +70,8 @@ func main() {
 		err = runCheckRedisUsers()
 	case "check-config":
 		err = runCheckConfig()
+	case "settings":
+		err = runSettings(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println("timevault-server", version)
 	case "help", "-h", "--help":
@@ -88,28 +93,68 @@ commands:
   migrate             apply database migrations and exit
   hash-password       create a value for TIMEVAULT_ADMIN_PASSWORD_HASH
   check-redis-users   check that the user accounts in Redis can be read (prints counts, never names or passwords)
-  check-config        check that the settings are valid for the service, without connecting to anything
+  check-config        check that the settings of the environment and the .env file are valid for the service,
+                      without connecting to anything
+  settings            list | get <key> | set <key> <value> | reset <key>: the Site settings, which are stored in
+                      the database and are normally edited on the Site settings page (a way back when the
+                      page cannot be reached)
   version             print the version
 
-Settings are read from TIMEVAULT_* environment variables and from a .env file: the one named by
-TIMEVAULT_ENV_FILE, else .env in the working directory, else .env next to the executable.
-A variable that is set in the environment wins over the file; the startup log names the ones
-that do. See docs/runbook.md.
+The settings that the service needs before it can reach its database, and its secrets, are read from
+TIMEVAULT_* environment variables and from a .env file: the one named by TIMEVAULT_ENV_FILE, else .env
+in the working directory, else .env next to the executable. A variable that is set in the environment
+wins over the file; the startup log names the ones that do. Everything else is a Site setting, stored in
+the database. See docs/runbook.md.
 `
 
-// loadConfig reads the settings from the environment and the .env file.
-func loadConfig() (config.Config, error) {
-	lookup, envPath, err := config.LoadEnv(config.OSLookup)
+// loadBootstrap reads the settings of the environment and the .env file: what the service needs before it can reach its
+// database, and its secrets. The Site settings are in the database; they keep their defaults in the result, and the
+// returned lookup is what they are checked against together with the settings of the environment.
+func loadBootstrap() (config.Config, config.Lookup, error) {
+	base, envPath, err := config.LoadEnv(config.OSLookup)
 	if err != nil {
-		return config.Config{}, err
+		return config.Config{}, nil, err
 	}
-	cfg, err := config.Load(lookup)
+	cfg, err := config.Load(config.SiteLookup(base, nil))
 	if err != nil {
-		return config.Config{}, err
+		return config.Config{}, nil, err
 	}
 	cfg.EnvFile = envPath
 	cfg.EnvOverrides = config.EnvOverrides(config.OSLookup, envPath)
-	return cfg, nil
+	return cfg, base, nil
+}
+
+// loadSite reads the Site settings from the database and returns the complete configuration with them, and the
+// values that were stored. It connects with a small pool of its own and applies the migrations (or checks that they
+// were applied) first, because the table of the Site settings is one of them; the pool of the service is sized by a
+// Site setting (job workers), so it can only be made afterwards.
+func loadSite(ctx context.Context, boot config.Config, base config.Lookup, log *slog.Logger) (config.Config, map[string]string, error) {
+	pool, err := db.Connect(ctx, boot.DatabaseURL, db.Options{MaxConns: 2})
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	defer pool.Close()
+	if boot.AutoMigrate {
+		applied, err := db.Migrate(ctx, pool, migrations.FS)
+		if err != nil {
+			return config.Config{}, nil, err
+		}
+		for _, name := range applied {
+			log.Info("applied migration", "name", name)
+		}
+	} else if err := db.CheckSchema(ctx, pool, migrations.FS); err != nil {
+		return config.Config{}, nil, err
+	}
+	stored, err := sitesettings.New(pool).Load(ctx)
+	if err != nil {
+		return config.Config{}, nil, err
+	}
+	cfg, err := config.Load(config.SiteLookup(base, stored))
+	if err != nil {
+		return config.Config{}, nil, fmt.Errorf("the Site settings in the database are not valid; correct them with \"timevault-server settings\": %w", err)
+	}
+	cfg.EnvFile, cfg.EnvOverrides = boot.EnvFile, boot.EnvOverrides
+	return cfg, stored, nil
 }
 
 func newLogger(cfg config.Config) *slog.Logger {
@@ -121,7 +166,7 @@ func newLogger(cfg config.Config) *slog.Logger {
 }
 
 func runMigrate() error {
-	cfg, err := loadConfig()
+	cfg, _, err := loadBootstrap()
 	if err != nil {
 		return err
 	}
@@ -165,7 +210,7 @@ func runHashPassword() error {
 // runCheckRedisUsers reads the whole user directory once and reports how much of
 // it can be used. The report holds counts only: no name, e-mail address or password.
 func runCheckRedisUsers() error {
-	cfg, err := loadConfig()
+	cfg, _, err := loadBootstrap()
 	if err != nil {
 		return err
 	}
@@ -202,44 +247,57 @@ func runCheckRedisUsers() error {
 	return nil
 }
 
-// runCheckConfig says whether the settings are valid for the service. It connects to nothing: a running service uses it
-// to find out whether a new program would start with the settings it has, before it replaces itself with it.
+// runCheckConfig says whether the settings of the environment and the .env file are valid for the service. It connects
+// to nothing: a running service uses it to find out whether a new program would start with the settings it has, before
+// it replaces itself with it. The Site settings are not checked here: they are checked when they are saved, and they
+// are in the database.
 func runCheckConfig() error {
-	cfg, err := loadConfig()
+	cfg, _, err := loadBootstrap()
 	if err != nil {
 		return err
 	}
-	if err := cfg.ValidateServe(); err != nil {
+	if err := cfg.ValidateBootstrap(); err != nil {
 		return err
 	}
 	fmt.Println("the settings are valid")
 	return nil
 }
 
-// restart says that the service stopped to be replaced by a new program; runServe fills it in.
+// restart says that the service stopped to be started again: because it put a newer program in its place, or because the
+// local administrator asked for a restart to apply the Site settings. runServe fills it in.
 type restart struct {
+	// update is set when a newer program is in place.
 	update *update.Update
-	mode   string
-	log    *slog.Logger
+	// site is set when the program is the same and only has to read its Site settings again.
+	site bool
+	mode string
+	log  *slog.Logger
 }
 
-// serveAndRestart runs the service. When it stopped because it put a newer program in its place, it starts that
-// program: it stays alive as a small launcher (the default, which works from a console window and from a scheduled
-// task), or it exits with the code a service manager restarts a program on.
+// wanted reports whether the service has to be started again.
+func (r restart) wanted() bool { return r.update != nil || r.site }
+
+// serveAndRestart runs the service. When it stopped because it put a newer program in its place, or because it was
+// asked to restart, it starts the program: it stays alive as a small launcher (the default, which works from a console
+// window and from a scheduled task), or it exits with the code a service manager restarts a program on.
 func serveAndRestart() error {
 	exe, err := os.Executable()
 	if err != nil {
 		exe = ""
 	}
 	var again restart
-	if err := runServe(exe, &again); err != nil || again.update == nil {
+	if err := runServe(exe, &again); err != nil || !again.wanted() {
 		return err
 	}
+	what := "the same program"
+	if again.update != nil {
+		what = "version " + again.update.To
+	}
 	if update.Decide(again.mode, update.Supervised()) == update.RestartExit {
-		again.log.Info("exiting so that the new program is started", "version", again.update.To, "exit_code", update.ExitRestart)
+		again.log.Info("exiting so that the program is started again", "program", what, "exit_code", update.ExitRestart)
 		os.Exit(update.ExitRestart)
 	}
-	again.log.Info("starting the new program", "version", again.update.To)
+	again.log.Info("starting the program again", "program", what)
 	os.Exit(update.Supervise(exe, os.Args[1:], nil, again.log))
 	return nil
 }
@@ -291,7 +349,20 @@ func warnIfNotWritable(log *slog.Logger, exe string) {
 }
 
 func runServe(exe string, again *restart) error {
-	cfg, err := loadConfig()
+	boot, base, err := loadBootstrap()
+	if err != nil {
+		return err
+	}
+	if err := boot.ValidateBootstrap(); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// The Site settings are in the database, so they are read before anything else is built.
+	cfg, stored, err := loadSite(ctx, boot, base, newLogger(boot))
 	if err != nil {
 		return err
 	}
@@ -299,12 +370,13 @@ func runServe(exe string, again *restart) error {
 		return err
 	}
 	if cfg.UpdateURL != "" && exe == "" {
-		return errors.New("TIMEVAULT_UPDATE_URL is set, but the location of the program is not known, so it could not be replaced")
+		return errors.New("the update address (update_url) is set, but the location of the program is not known, so it could not be replaced")
 	}
 	log := newLogger(cfg)
 	log.Info("starting TimeVault", append([]any{"version", version}, cfg.LogAttrs()...)...)
 	if update.Supervised() {
 		log.Info("started by the launcher of an earlier program, which starts the next one after an update", "launcher_pid", os.Getenv(update.EnvSupervised))
+		go update.StopWithLauncher(os.Stdin, cancel, log)
 	}
 	if prio, err := platform.ParsePriority(cfg.ProcessPriority); err == nil && prio != platform.PriorityNormal {
 		if err := platform.SetPriority(prio); err != nil {
@@ -321,13 +393,12 @@ func runServe(exe string, again *restart) error {
 		log.Warn("the service is reachable from other computers: anyone who can reach it can browse the names, sizes and history of the monitored folders without signing in, and account passwords are typed into this site, so serve it over HTTPS through a TLS reverse proxy",
 			"cookie_secure", cfg.CookieSecure)
 	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if update.Supervised() {
-		go update.StopWithLauncher(os.Stdin, cancel, log)
+	if legacy := config.LegacySettings(base); len(legacy) > 0 {
+		log.Warn("these settings are in the environment or the .env file, but nothing reads them any more: the Site settings are in the database now (enter them on the Site settings page), and the Everything settings are gone with the Everything search",
+			"settings", strings.Join(legacy, ","), "env_file", cfg.EnvFile)
+	}
+	if cfg.AdminPasswordHash == "" && !cfg.AuthDisabled {
+		log.Warn("there is no local administrator (TIMEVAULT_ADMIN_PASSWORD_HASH), and only that account may open the Site settings page: change the Site settings with \"timevault-server settings\" instead")
 	}
 
 	pool, err := db.Connect(ctx, cfg.DatabaseURL, db.Options{MaxConns: poolSize(cfg.JobWorkers)})
@@ -335,17 +406,6 @@ func runServe(exe string, again *restart) error {
 		return err
 	}
 	defer pool.Close()
-	if cfg.AutoMigrate {
-		applied, err := db.Migrate(ctx, pool, migrations.FS)
-		if err != nil {
-			return err
-		}
-		for _, name := range applied {
-			log.Info("applied migration", "name", name)
-		}
-	} else if err := db.CheckSchema(ctx, pool, migrations.FS); err != nil {
-		return err
-	}
 	// Recovery below marks running jobs as failed; that is only right when no other
 	// service is working on this database.
 	instance, err := db.AcquireInstanceLock(ctx, pool)
@@ -359,16 +419,6 @@ func runServe(exe string, again *restart) error {
 		return err
 	}
 	log.Info("repository ready", "path", repo.Root(), "id", repo.ID())
-
-	var provider search.Provider = search.NewDisabled()
-	if cfg.EverythingURL != "" {
-		provider, err = search.NewEverything(search.EverythingOptions{
-			BaseURL: cfg.EverythingURL, Username: cfg.EverythingUsername, Password: cfg.EverythingPassword, Timeout: cfg.EverythingTimeout,
-		})
-		if err != nil {
-			return fmt.Errorf("search: %w", err)
-		}
-	}
 
 	sessionKey := cfg.SessionKey
 	if len(sessionKey) == 0 {
@@ -406,6 +456,22 @@ func runServe(exe string, again *restart) error {
 	}
 
 	cat := catalog.NewStore(pool)
+	// The NTFS index holds the monitored folders: it gives the Explorer its search and its folder sizes, and tells the
+	// scheduler which folders did not change. Reading a volume needs administrator rights; without them the index says
+	// so on the status page and the rest of the service works as before.
+	var provider search.Provider = search.NewDisabled()
+	var indexDone chan struct{}
+	if cfg.SearchIndex == "auto" {
+		index := ntfsindex.New(ntfsindex.Config{Roots: sourceRoots(cat), Log: log})
+		provider = search.NewNTFS(index)
+		indexDone = make(chan struct{})
+		go func() {
+			defer close(indexDone)
+			index.Run(ctx)
+		}()
+	} else {
+		log.Info("the NTFS index is off (the Site setting search_index): there is no search, no folder size and no skipping of folders that did not change")
+	}
 	restoreRoot := cfg.RestoreRoot
 	engine := backup.New(backup.Config{
 		Catalog: cat, Repository: repo, Logger: log, HashWorkers: cfg.HashWorkers, Protected: []string{repo.Root(), restoreRoot},
@@ -495,22 +561,39 @@ func runServe(exe string, again *restart) error {
 		Scheduler: service.SchedulerOptions{
 			Parallel: cfg.SchedulerParallel, GapAuto: cfg.SchedulerGapAuto, Gap: cfg.SchedulerGap,
 			RestAuto: cfg.SchedulerRestAuto, Rest: cfg.SchedulerRest,
-			Probe: cfg.SchedulerEverythingProbe, FullScanEvery: cfg.SchedulerFullScanEvery,
+			Probe: cfg.SchedulerProbe, FullScanEvery: cfg.SchedulerFullScanEvery,
 		},
-	}
-	if cfg.SchedulerEverythingProbe && cfg.EverythingURL == "" {
-		log.Warn("TIMEVAULT_SCHEDULER_EVERYTHING_PROBE is on but TIMEVAULT_EVERYTHING_URL is not set: every scheduled run scans its folder")
 	}
 	if directory != nil {
 		serviceConfig.Directory = directory
 	}
 	svc := service.New(serviceConfig)
 
+	// A restart that the local administrator asks for on the Site settings page: it is only done while no job runs.
+	// Drain stops the runner from taking another job, so once it has returned the number of running jobs can only fall.
+	restartSite := make(chan struct{}, 1)
+	siteStore := sitesettings.New(pool)
+	site := &server.SiteBackend{
+		Base: base, Stored: siteStore.Load, Save: siteStore.Save, Running: config.SiteEffective(stored),
+		Restart: func() error {
+			runner.Drain()
+			if runner.Running() > 0 {
+				runner.Resume()
+				return server.ErrJobsRunning
+			}
+			select {
+			case restartSite <- struct{}{}:
+			default:
+			}
+			return nil
+		},
+	}
+
 	// Everything that can fail to build comes before the workers start, so that a failure leaves nothing running.
 	handler, err := server.New(svc, am, web.FS, server.Options{
 		Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure, Deployment: cfg.Describe(),
 		SSOHost: cfg.SSOHost, SSORequireSameIP: cfg.SSORequireSameIP, TrustedProxies: cfg.TrustedProxies, BasePath: cfg.BasePath,
-		AvatarURL: cfg.AvatarURL, Update: updates, WebLog: webSink,
+		AvatarURL: cfg.AvatarURL, Update: updates, Site: site, WebLog: webSink,
 	}, log)
 	if err != nil {
 		return err
@@ -520,10 +603,10 @@ func runServe(exe string, again *restart) error {
 			"note", "pages, redirects and cookies use the prefix; requests with or without it are accepted")
 	}
 	if cfg.SSOHost != "" && directory == nil {
-		log.Warn("TIMEVAULT_SSO_HOST is set but TIMEVAULT_REDIS_URL is not: single sign-on needs the user directory, so the login page offers none")
+		log.Warn("the Site setting sso_host is set but TIMEVAULT_REDIS_URL is not: single sign-on needs the user directory, so the login page offers none")
 	}
 	if cfg.SSOHost != "" && !cfg.SSORequireSameIP {
-		log.Warn("single sign-on does not check that the browser has the address the sign-on service saw (TIMEVAULT_SSO_REQUIRE_SAME_IP=false): someone who can make a colleague open a sign-on link could sign in as that colleague; configure TIMEVAULT_TRUSTED_PROXIES and turn the check on")
+		log.Warn("single sign-on does not check that the browser has the address the sign-on service saw (the Site setting sso_require_same_ip is false): someone who can make a colleague open a sign-on link could sign in as that colleague; set trusted_proxies and turn the check on")
 	}
 	srv := &http.Server{
 		Addr: cfg.ListenAddr, Handler: handler.Handler(),
@@ -571,6 +654,11 @@ func runServe(exe string, again *restart) error {
 			log.Info("shutting down to start the new version", "from", up.From, "to", up.To)
 			stop()
 		}
+	case <-restartSite:
+		// No job runs, and none was taken since: the Site settings were saved and the local administrator asked for a restart.
+		*again = restart{site: true, mode: cfg.UpdateRestart, log: log}
+		log.Info("shutting down to start again with the Site settings in the database")
+		stop()
 	case <-ctx.Done():
 	}
 	log.Info("shutting down")
@@ -582,8 +670,29 @@ func runServe(exe string, again *restart) error {
 	// No backup may be queued once the runner starts to shut down.
 	scheduler.Wait()
 	runner.Shutdown(shutdownCtx)
+	if indexDone != nil {
+		select {
+		case <-indexDone:
+		case <-shutdownCtx.Done():
+		}
+	}
 	log.Info("stopped")
 	return nil
+}
+
+// sourceRoots lists the folders of the monitored folders, the switched-off ones too, for the NTFS index.
+func sourceRoots(cat *catalog.Store) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		sources, err := cat.Sources(ctx)
+		if err != nil {
+			return nil, err
+		}
+		roots := make([]string, 0, len(sources))
+		for _, s := range sources {
+			roots = append(roots, s.RootPath)
+		}
+		return roots, nil
+	}
 }
 
 // poolSize leaves room for the busiest case: every job worker running a backup,

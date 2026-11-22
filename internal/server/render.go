@@ -70,6 +70,9 @@ func (p *Page) CanRestore() bool { return p.sess.SignedIn() }
 func (p *Page) CanAudit() bool   { return p.sess.Can(auth.PermAudit) }
 func (p *Page) CanManage() bool  { return p.sess.Can(auth.PermManage) }
 
+// CanSite reports whether the visitor is the local administrator, who alone may open the Site settings.
+func (p *Page) CanSite() bool { return p.sess.Can(auth.PermSite) }
+
 // ShowPhysical reports whether the visitor may see the folders of the server's own disk. Everybody else sees the
 // display folders, the paths people use over the network.
 func (p *Page) ShowPhysical() bool { return p.sess.Can(auth.PermManage) }

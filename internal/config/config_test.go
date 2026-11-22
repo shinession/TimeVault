@@ -48,7 +48,7 @@ func TestLoadRejectsInvalidValues(t *testing.T) {
 		"non base64 key":      {"TIMEVAULT_SESSION_KEY": "!!!"},
 		"bad level":           {"TIMEVAULT_LOG_LEVEL": "loud"},
 		"bad format":          {"TIMEVAULT_LOG_FORMAT": "xml"},
-		"everything timeout":  {"TIMEVAULT_EVERYTHING_TIMEOUT": "5m"},
+		"search index":        {"TIMEVAULT_SEARCH_INDEX": "always"},
 		"redis wrong scheme":  {"TIMEVAULT_REDIS_URL": "http://127.0.0.1:6379/0"},
 		"redis without host":  {"TIMEVAULT_REDIS_URL": "redis:///0"},
 		"redis timeout":       {"TIMEVAULT_REDIS_TIMEOUT": "5m"},
@@ -116,8 +116,6 @@ func TestSessionKeyAndRedaction(t *testing.T) {
 		"TIMEVAULT_SESSION_KEY":         key,
 		"TIMEVAULT_DATABASE_URL":        "postgres://tv:supersecret@127.0.0.1:5432/tv",
 		"TIMEVAULT_REDIS_URL":           "rediss://dash:redis-secret@10.1.2.3:6379/2",
-		"TIMEVAULT_EVERYTHING_URL":      "http://127.0.0.1:38480/",
-		"TIMEVAULT_EVERYTHING_PASSWORD": "everything-secret",
 		"TIMEVAULT_ADMIN_PASSWORD_HASH": "hash-secret",
 	}))
 	if err != nil {
@@ -127,13 +125,13 @@ func TestSessionKeyAndRedaction(t *testing.T) {
 		t.Fatalf("session key has %d bytes", len(c.SessionKey))
 	}
 	shown := fmt.Sprintf("%v %+v", c.LogAttrs(), c.Describe())
-	for _, secret := range []string{"supersecret", "redis-secret", "everything-secret", "hash-secret", key, "dash:"} {
+	for _, secret := range []string{"supersecret", "redis-secret", "hash-secret", key, "dash:"} {
 		if strings.Contains(shown, secret) {
 			t.Errorf("the log or the Settings page would leak %q: %s", secret, shown)
 		}
 	}
 	d := c.Describe()
-	if d.Database != "127.0.0.1:5432/tv" || d.UserDirectory != "10.1.2.3:6379/2 (tls)" || d.SearchHost != "127.0.0.1:38480" || d.LocalAdmin != "admin" {
+	if d.Database != "127.0.0.1:5432/tv" || d.UserDirectory != "10.1.2.3:6379/2 (tls)" || d.SearchIndex != "auto" || d.LocalAdmin != "admin" {
 		t.Errorf("Describe = %+v", d)
 	}
 	if c, _ := Load(lookupFrom(nil)); c.Describe().LocalAdmin != "" || c.Describe().UserDirectory != "" {

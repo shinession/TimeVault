@@ -4,6 +4,8 @@
 
 Accepted for the MVP (2026-11-15). This deliberately **deviates from plan.md** §4–§5, which use VSS for consistent reads and the NTFS USN journal for change detection. It replaces the "snapshot semantics" spike of P0 for now; the spikes remain to be done.
 
+**Update, 1.0.1.** The NTFS change journal is now read, by the index that serves search, folder sizes and the scheduler's change probe ([0018](./0018-native-ntfs-index-replaces-everything.md)). Backups are unchanged: they still walk the source, and use neither VSS nor the journal. The record is left as it was written.
+
 ## Context
 
 VSS and USN both need elevated privileges, a test volume, and a study of their error paths (writer failures, journal wrap and reset) before they can be trusted. The first goal of the MVP was a complete vertical slice (browse, back up, keep history, restore) with correct semantics, and the project owner chose to build that slice first and leave VSS and USN out.
@@ -35,6 +37,8 @@ VSS and USN both need elevated privileges, a test volume, and a study of their e
 ## 状态
 
 已接受，用于 MVP（2026-11-15）。这是有意对 plan.md §4–§5 的**偏离**：plan.md 使用 VSS 做一致性读取，使用 NTFS USN journal 做变更检测。它暂时取代 P0 中的"快照语义"验证；这些验证仍有待完成。
+
+**更新，1.0.1 版。** 现在已经会读取 NTFS 变更日志了，由为搜索、文件夹大小和调度器的变更探测服务的索引来读（[0018](./0018-native-ntfs-index-replaces-everything.md)）。备份没有变：它们仍然遍历备份源，既不使用 VSS，也不使用 journal。本记录保持原样。
 
 ## 背景
 
