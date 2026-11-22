@@ -106,12 +106,19 @@ type backupsData struct {
 	// RestoreReal is the folder on the server's disk, for administrators.
 	RestoreRoot string
 	RestoreReal string
+	// Server is the other server whose backups the page shows; empty for this server. Tabs switch the page between the
+	// servers of a group (nil for a server on its own) and TabsPath is the path of the page.
+	Server   string
+	Tabs     []scopeTab
+	TabsPath string
 }
 
-func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, error) {
+// backupsData reads the backups page for the server of a reach. The folders of another server are shown as they are
+// recorded in its schema, and nothing on the page can start anything there in this version.
+func (s *Server) backupsData(r *http.Request, sess auth.Session, rc reach) (*backupsData, error) {
 	ctx := r.Context()
-	signedIn, view := sess.SignedIn(), s.viewerFor(ctx, sess)
-	sources, err := s.visibleSources(ctx, sess)
+	signedIn, view := sess.SignedIn(), s.viewerAt(ctx, sess, rc)
+	sources, err := s.visibleSourcesAt(ctx, sess, rc)
 	if err != nil {
 		return nil, err
 	}
@@ -120,13 +127,15 @@ func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, 
 		names[src.ID] = src.Name
 	}
 	filter := jobs.Filter{Limit: 25}
-	filter.OnlySources, filter.SourceIDs = restrictTo(sess, sources)
-	recent, err := s.svc.Jobs(ctx, filter)
+	filter.OnlySources, filter.SourceIDs = restrictTo(physicalAt(sess, rc), sources)
+	recent, err := rc.rd.Jobs(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	d := &backupsData{RestoreEnabled: s.svc.RestoreEnabled()}
-	d.RestoreRoot, d.RestoreReal = view.restoreRoot()
+	d := &backupsData{RestoreEnabled: rc.local() && s.svc.RestoreEnabled(), Server: rc.name}
+	if rc.local() {
+		d.RestoreRoot, d.RestoreReal = view.restoreRoot()
+	}
 	active := map[int64]*jobView{}
 	for _, j := range recent {
 		// Restores are for accounts to see, like their job pages.
@@ -144,7 +153,7 @@ func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, 
 	}
 	now := time.Now()
 	for _, src := range sources {
-		attempts, err := s.svc.Attempts(ctx, src.ID, 12)
+		attempts, err := rc.rd.Attempts(ctx, src.ID, 12)
 		if err != nil {
 			return nil, err
 		}
@@ -152,9 +161,10 @@ func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, 
 			attempts[i] = view.point(attempts[i])
 		}
 		card := sourceCard{SourceSummary: src, Active: active[src.ID], Attempts: attempts, NextRun: nextRun(src.Source, now)}
-		card.Level = levelOn(sess, src.Source)
-		card.CanBackup = card.Level >= access.Backup
-		card.SignInToBackup = !signedIn && src.Access.OffersAccounts(access.Backup)
+		card.Level = levelAt(sess, rc, src.Source)
+		// Nothing is started on another server from here in this version.
+		card.CanBackup = rc.local() && card.Level >= access.Backup
+		card.SignInToBackup = rc.local() && !signedIn && src.Access.OffersAccounts(access.Backup)
 		if src.ScheduleMinutes != nil {
 			card.Minutes = *src.ScheduleMinutes
 		}
@@ -164,12 +174,19 @@ func (s *Server) backupsData(r *http.Request, sess auth.Session) (*backupsData, 
 }
 
 func (s *Server) handleBackups(w http.ResponseWriter, r *http.Request, sess auth.Session) {
-	d, err := s.backupsData(r, sess)
+	rc, err := s.reachOfRequest(r)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
+	d, err := s.backupsData(r, sess, rc)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	d.Tabs, d.TabsPath = s.scopeTabs(r.Context(), rc), "/backups"
 	p := s.newPage(r, sess, "backups.title", "backups")
+	p.Scope = rc.name
 	p.Data = d
 	s.render(w, r, "backups", http.StatusOK, p)
 }
@@ -226,6 +243,8 @@ func (s *Server) handleVerify(w http.ResponseWriter, r *http.Request, sess auth.
 type jobData struct {
 	View   jobView
 	Source *catalog.Source
+	// Server is the other server the job ran on; empty for a job of this server.
+	Server string
 	// CanCancel says that the visitor may stop the job: the job is still running and they may back the folder up,
 	// or it is their own restore.
 	CanCancel bool
@@ -247,13 +266,18 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		return
 	}
 	ctx := r.Context()
-	job, err := s.svc.Job(ctx, id)
+	rc, err := s.reachOfRequest(r)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
+	job, err := rc.rd.Job(ctx, id)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
 	// The job of a folder the visitor may not browse is not there for them.
-	src, err := s.jobSource(ctx, sess, job, access.Browse)
+	src, err := s.jobSourceAt(ctx, sess, rc, job, access.Browse)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
@@ -268,27 +292,28 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 	}
 	// Error texts and the log can name folders and settings of the server; only accounts see them, and only
 	// administrators see the folders on the server's disk in them.
-	view := s.viewerFor(ctx, sess)
+	view := s.viewerAt(ctx, sess, rc)
 	if !sess.SignedIn() {
 		job.Error = ""
 	}
 	job = view.job(job)
-	d := &jobData{Source: src}
+	d := &jobData{Source: src, Server: rc.name}
 	names := map[int64]string{}
+	// A job of another server is not stopped from here in this version.
 	if src != nil {
 		names[src.ID] = src.Name
-		d.CanCancel = job.Active() && mayCancel(sess, levelOn(sess, *src), job)
+		d.CanCancel = rc.local() && job.Active() && mayCancel(sess, levelOn(sess, *src), job)
 	} else if isAdmin(sess) {
-		d.CanCancel = job.Active()
+		d.CanCancel = rc.local() && job.Active()
 	}
 	if job.PointID != nil {
-		if pt, err := s.cat().GetPoint(ctx, *job.PointID); err == nil {
+		if pt, err := rc.rd.PointByID(ctx, *job.PointID); err == nil {
 			d.Point = &pt
 		}
 	}
 	d.View = s.viewJob(job, names)
 	if sess.SignedIn() {
-		events, err := s.svc.JobEvents(ctx, id, 0, 300)
+		events, err := rc.rd.JobEvents(ctx, id, 0, 300)
 		if err != nil {
 			s.handleErr(w, r, err)
 			return
@@ -301,7 +326,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 			d.Status = ""
 		}
 		after := intParam(r, "after")
-		items, err := s.svc.RestoreItems(ctx, id, d.Status, after, 200)
+		items, err := rc.rd.RestoreItems(ctx, id, d.Status, after, 200)
 		if err != nil {
 			s.handleErr(w, r, err)
 			return
@@ -315,6 +340,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request, sess auth.Ses
 		}
 	}
 	p := s.newPage(r, sess, "job.title", "backups")
+	p.Scope = rc.name
 	p.Data = d
 	s.render(w, r, "job", http.StatusOK, p)
 }

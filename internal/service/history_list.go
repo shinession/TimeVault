@@ -28,16 +28,16 @@ type HistoryList struct {
 // ListHistory lists a folder as it existed at a recovery point, filtered,
 // sorted and cut into a page as o says. Unlike BrowseHistory it reads the whole
 // folder, because a sort by size or type cannot be paged by name.
-func (s *Service) ListHistory(ctx context.Context, src catalog.Source, point catalog.Point, rel string, o listing.Options) (HistoryList, error) {
+func (r *Reader) ListHistory(ctx context.Context, src catalog.Source, point catalog.Point, rel string, o listing.Options) (HistoryList, error) {
 	rel, err := pathutil.CleanRel(rel)
 	if err != nil {
 		return HistoryList{}, err
 	}
-	latest, err := s.cat.LatestCommitted(ctx, src.ID)
+	latest, err := r.cat.LatestCommitted(ctx, src.ID)
 	if err != nil {
 		return HistoryList{}, ErrNotFound
 	}
-	dir, err := s.cat.ResolveAt(ctx, src.ID, point.Seq, rel)
+	dir, err := r.cat.ResolveAt(ctx, src.ID, point.Seq, rel)
 	if errors.Is(err, catalog.ErrNotFound) {
 		return HistoryList{}, ErrNotFound
 	}
@@ -47,7 +47,7 @@ func (s *Service) ListHistory(ctx context.Context, src catalog.Source, point cat
 	if !dir.IsDir {
 		return HistoryList{}, ErrNotFound
 	}
-	all, err := s.cat.ListAllChildren(ctx, catalog.ListParams{Parent: dir.NodeID, Seq: point.Seq, LatestSeq: latest.Seq})
+	all, err := r.cat.ListAllChildren(ctx, catalog.ListParams{Parent: dir.NodeID, Seq: point.Seq, LatestSeq: latest.Seq})
 	if err != nil {
 		return HistoryList{}, err
 	}

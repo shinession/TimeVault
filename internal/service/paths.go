@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -363,31 +362,4 @@ func (m *PathMap) MaskValue(v any) any {
 		return out
 	}
 	return v
-}
-
-// PathMap builds the mapper from the sources as they are now, one query. Build it per request instead of
-// keeping it: a source may be added or get another display path at any time.
-func (s *Service) PathMap(ctx context.Context) (*PathMap, error) {
-	return s.PathMapFor(ctx, nil)
-}
-
-// PathMapFor is PathMap for a visitor who may see only some of the monitored folders: the others are left out, so
-// nothing of them (their names, their display folders) can come out of the mapper, and a text that quotes the real
-// folder of one of them is left as it is. Such texts are not shown to that visitor: what belongs to a folder they
-// may not see is not shown at all. keep says which folders are in; nil keeps them all.
-func (s *Service) PathMapFor(ctx context.Context, keep func(catalog.Source) bool) (*PathMap, error) {
-	sources, err := s.cat.Sources(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if keep != nil {
-		kept := make([]catalog.Source, 0, len(sources))
-		for _, src := range sources {
-			if keep(src) {
-				kept = append(kept, src)
-			}
-		}
-		sources = kept
-	}
-	return NewPathMap(sources, s.repo.Root(), s.restore.Root(), s.restoreDisplayRoot), nil
 }

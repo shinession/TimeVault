@@ -2,7 +2,7 @@
 
 ## Overview
 
-How to set up, configure, run, operate and troubleshoot TimeVault (version 1.0.1). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application (the same Redis takes the service's web log, see [Web log](#web-log)). For search, folder sizes and skipping unchanged folders the service reads the NTFS volumes of the monitored folders itself, which needs administrator rights (see [Search index](#search-index)); there is nothing else to install. The `.env` file holds only what the service needs before it can reach its database, and its secrets; every other setting is a **Site setting**, kept in the database and edited by the local administrator on the **Site settings** page (see [Where settings live](#where-settings-live)). There is no installer and no Windows service wrapper yet.
+How to set up, configure, run, operate and troubleshoot TimeVault (version 1.1.0). It describes what exists today; the service is a single Go program, `timevault-server`, that needs PostgreSQL and a repository folder, and, for company sign-in, the Redis user directory of another application (the same Redis takes the service's web log, see [Web log](#web-log)). For search, folder sizes and skipping unchanged folders the service reads the NTFS volumes of the monitored folders itself, which needs administrator rights (see [Search index](#search-index)); there is nothing else to install. The `.env` file holds only what the service needs before it can reach its database, and its secrets; every other setting is a **Site setting**, kept in the database and edited by the local administrator on the **Site settings** page (see [Where settings live](#where-settings-live)). There is no installer and no Windows service wrapper yet.
 
 ## Prerequisites
 
@@ -39,6 +39,8 @@ The scripts keep their data under the git-ignored `data\` folder and **all setti
 | `timevault-server version` | Print the version. |
 | `timevault-server check-config` | Check that the settings of the environment and the `.env` file are valid for the service, print `the settings are valid` or the reasons they are not (exit code 1). It connects to nothing, so it does not look at the Site settings: those are in the database and are checked when they are saved. A service that updates itself runs it with the new program before it replaces itself (see [Releasing and automatic updates](#releasing-and-automatic-updates)). |
 | `timevault-server settings list`, `get <key>`, `set <key> <value>`, `reset <key>` | The Site settings from the command line, on the database that `TIMEVAULT_DATABASE_URL` names (run it from the folder that holds `.env`, or set `TIMEVAULT_ENV_FILE`). `list` shows every Site setting with the value in effect, a `*` marking a stored value; `set` stores a value after checking it like the page does (a value that equals the default is not stored); `reset` forgets the stored value so the default applies. It is the way back when the Site settings page cannot be reached, for example because a setting locked everybody out. The service has to be restarted to use what was changed. See [Where settings live](#where-settings-live). |
+| `timevault-server cluster register <name>`, `list`, `remove <name>` | The register of the servers that share the database, each in a schema of its own (see [Several servers on one database](#several-servers-on-one-database)): put this server in it under a short name, list the servers with how they look and when they were last heard of, take one out. They work on the database that `TIMEVAULT_DATABASE_URL` names. |
+| `timevault-server move-schema --to <schema> [--from <schema>] [--apply]` | Move the tables of this server into another schema of the database, in one transaction and in milliseconds; without `--apply` it only says what it would do. The service must be stopped. See [Moving the first server out of `public`](#moving-the-first-server-out-of-public). |
 
 ## Building the executable
 
@@ -476,6 +478,66 @@ print(pickle.loads(zlib.decompress(element)))   # element: the bytes of one list
 
 **Not verified.** The web log was not written to the company's Redis: it was tested with an in-process Redis and with pickles that Python printed. That the Redis account may `RPUSH` there, and that the log page of the other application shows these lines, is to be looked at after the first start.
 
+## Several servers on one database
+
+Several servers that run TimeVault can share one PostgreSQL database and one Redis user directory, each in a schema of its own, and show each other's history in their pages ([ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md)). Version 1.1.0 is step 1 of 3, the read-only part.
+
+**What a group does.** Each server keeps its repository and its backups on its own disk and goes on running its own backups, restores, Site settings and permissions; no file content ever goes from one server to another. In its own pages a server also shows, for the folders of the other servers that the visitor may browse: the **Time Machine** (the folder selector lists the folders of every server, grouped by server), the **versions** of a file, the **Backups** page and the job pages (tabs switch between the servers), the **Audit** log (tabs too) and the **Servers** page. The history is read from the schema of the other server in the database, so it is there while that server is offline.
+
+**What a group does not do yet.** The live view (Explorer), the search of current files, back up now, verify, cancel, restore and the settings of a folder are done on the server that owns the folder. Asked for another server's folder they answer `501` (`other_server`); the pages say so with a note, never with a link, and the history pages of another server offer no restore button. A restore always runs on the owner, into its own restore folder: there is no restore to another server.
+
+**Who sees what.** The grants of a folder are the ones stored in the schema of its server, and the visitor is the account that they are in the user directory: a folder that may not be browsed is not there ("not found"). An `admin` account of the user directory has full reach on the folders of the other servers and sees their real folders; everybody else sees the display folders in every text. The local administrator of a server is not known on another server: it may read the history of every folder there (browse), sees no real folder of it, and does nothing else.
+
+**Setting up a group.**
+
+1. Choose a short, lower-case **name** for each server (`alpha`, `beta`) and a **schema** (`tv_alpha`, `tv_beta`). An account of its own for each server is recommended (see below).
+2. **The first server** can stay in the schema it has now (`public`). To give it a schema of its own, see [Moving the first server out of `public`](#moving-the-first-server-out-of-public).
+3. **Another server** has a schema of its own, made once by the database administrator (`CREATE SCHEMA tv_beta AUTHORIZATION <its account>;`), and `search_path=tv_beta` in the query string of its `TIMEVAULT_DATABASE_URL` (for example `postgres://account:<password>@host/database?sslmode=disable&search_path=tv_beta`). A search path that names a schema that does not exist stops the migrations with "no schema has been selected to create in"; **a schema that exists but is empty is filled with a new, empty catalog**, so check the name. Run `timevault-server migrate` (or start the service with `TIMEVAULT_AUTO_MIGRATE=true`).
+4. On every server, from the folder of its `.env`: `timevault-server cluster register alpha`. The first call makes the register, the schema `timevault_cluster`, which needs the right to create a schema (where the account has not got it, the database administrator makes it once: `CREATE SCHEMA timevault_cluster AUTHORIZATION <account>;`). **Restart the service**: it joins the group when it starts.
+5. Check with `timevault-server cluster list`, or on the **Servers** page. A server is `waiting` until it has reported, which it does when it starts and then every 30 seconds.
+
+**Accounts and rights (recommended).** The group works with one database account for all the servers, but then any server can change the tables of the others. With an account for each server, each may write its own schema and only read what the pages need of the others:
+
+```sql
+-- once, as the database administrator; tv_alpha and tv_beta are the accounts of the servers alpha and beta
+CREATE ROLE tv_alpha LOGIN PASSWORD '<password>';   -- the password goes to TIMEVAULT_DATABASE_URL in .env, not into scripts
+CREATE ROLE tv_beta  LOGIN PASSWORD '<password>';
+CREATE SCHEMA tv_alpha AUTHORIZATION tv_alpha;
+CREATE SCHEMA tv_beta  AUTHORIZATION tv_beta;
+-- alpha reads what the pages need of beta (and the same the other way round, with the names swapped)
+GRANT USAGE ON SCHEMA tv_beta TO tv_alpha;
+GRANT SELECT ON tv_beta.sources, tv_beta.source_access, tv_beta.recovery_points, tv_beta.nodes, tv_beta.node_versions,
+                tv_beta.jobs, tv_beta.job_events, tv_beta.restore_items, tv_beta.audit_events TO tv_alpha;
+-- after the first "timevault-server cluster register" (run by tv_alpha, who then owns the register): the others report in it
+GRANT USAGE ON SCHEMA timevault_cluster TO tv_beta;
+GRANT SELECT ON timevault_cluster.servers TO tv_beta;
+GRANT UPDATE (version, contract, repository_id, repository_root, restore_root, restore_display_root, last_seen)
+      ON timevault_cluster.servers TO tv_beta;
+```
+
+Those nine tables are exactly what the pages of another server read; the Site settings (`site_settings`), the objects and the migrations of a server are not readable by the others (a test checks that these grants are enough for every read, and that they give nothing more). A later version that reads another table says so in its upgrade notes, and the grant has to be added then. The grants on the register let a server change the report columns of every row, not only its own: PostgreSQL cannot say otherwise without row-level security, and nothing in the register is a key or a secret in this version.
+
+### Moving the first server out of `public`
+
+The first server can stay in `public`: the register holds the name of its schema, so it is a server like any other. To give it a schema of its own, `timevault-server move-schema` moves its tables (the 12 tables of the migrations with their indexes, identity sequences, constraints and the trigger of the audit log, and the function of the audit log) in one transaction with `ALTER TABLE ... SET SCHEMA`. Only entries of the system catalog change, so it takes milliseconds whatever the size of the tables, a failure leaves everything where it was, and the same command with the two names swapped moves everything back. It is a command and not a step of the start-up on purpose: a service that migrates against a schema that exists but is empty makes a new, empty catalog there.
+
+1. **Stop the service.** The command refuses to run while a service holds the lock of the schema.
+2. **Preview:** `timevault-server move-schema --to tv_alpha` says what would be moved and changes nothing.
+3. **Move:** `timevault-server move-schema --to tv_alpha --apply`. `--from` is the schema the URL selects, `public` when it has no `search_path`. The schema is made when it does not exist and the account may make schemas; otherwise the database administrator makes it once (`CREATE SCHEMA tv_alpha AUTHORIZATION <owner of the tables>;`). It also refuses when the schema moved from does not hold a whole catalog, when the target already holds a table of TimeVault, when the account does not own the tables, and when the owner of the tables could not use the target afterwards (PostgreSQL checks the foreign keys with the rights of the owner of a table); the message says what to run. If the server is in the register, the register is changed to name the new schema.
+4. **Add `search_path=tv_alpha`** to the query string of `TIMEVAULT_DATABASE_URL` (in `.env` or the environment) and start the service. The command prints the line to add and never prints the URL.
+5. **What the move leaves to you:** anything outside TimeVault that reads the tables as `public.<table>` (reports, scripts) has to be changed, and grants on the tables moved with them, but a role that has them needs `USAGE` on the new schema too.
+
+**How a server looks.** *Online:* it reported in the last 2 minutes. *Offline:* it did not; its history is still read from the database, and its live view, search and actions are not offered from here in any case. *Not reported yet:* it is registered but has never reported (it has not been started since), so its history is not read. *Version not compatible:* it reports another read contract (this program speaks contract 1), so its schema is not read; update the servers to the same version. The time of a report is the clock of the database, so the clocks of the servers do not have to agree for this.
+
+**Load.** A page that lists the folders of other servers reads the schema of each server (several queries for each folder) through a read-only pool of at most 3 connections per server, with a statement timeout of 15 seconds; a server that does not answer is left out of the folder selector and named in a note. The pool of each server has at least 16 connections, and `max_connections` of the database has to allow all of them and the 3 for each other server.
+
+**Troubleshooting a group.**
+
+- **`/servers` is "not found".** This server is not in the register, or the register could not be read: run `timevault-server cluster list` and look at the log at the start (`this server is in a group of servers that share the database`, or a warning that the register cannot be read). Register it and restart.
+- **A server stays `waiting`.** It has not reported: start it, and look for `this server could not report to the register of the servers` in its log (its account needs the `GRANT UPDATE (...)` above, and the register's schema name has to be the same on every server).
+- **`503` or "The history of that server cannot be read right now".** The account of this server may not read that schema (the grants above), or the server reports a read contract that this program does not know (`Version not compatible` on the Servers page).
+- **Pages of this server show a note that a server's folders could not be listed.** That server's schema did not answer in 15 seconds or the read failed; the log has the reason.
+
 ## Operating
 
 - **Who may do what.** Anyone can browse (Explorer, Time Machine, file versions, the state of the Backups page and of backup jobs) the folders that let guests browse, without signing in; a folder that does not is not there for a visitor at all. Everything else needs an active account, and what an account may do with a folder is decided for each folder: **Browse** (also restoring, and the jobs and audit events of the folder), **Back up** (back up now, full re-read, verify, stop jobs) and **Full control** (change the folder's settings and who may do what with it); see [Folder permissions](#folder-permissions). The audit log (events of the folders the account may browse, and the sign-ins and other events that belong to no folder), the status page and the settings page are for every signed-in account. Only an `admin` account (Redis `Type` is `admin`, or the local administrator) adds monitored folders and has full control of all of them, and only an administrator sees the folders on the server's disk; everybody else sees display folders. See [ADR 0005](./adr/0005-redis-user-directory-and-open-browsing.md), [ADR 0007](./adr/0007-display-folders-and-hiding-server-paths.md), [ADR 0013](./adr/0013-per-folder-access-levels.md) and [api.md](./api.md#who-may-call-what).
@@ -563,7 +625,7 @@ print(pickle.loads(zlib.decompress(element)))   # element: the bytes of one list
 
 ## 概述
 
-介绍如何安装、配置、运行、运维和排查 TimeVault（1.0.1 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录（同一个 Redis 也接收服务的 Web 日志，见 [Web 日志](#web-日志)）。为了搜索、文件夹大小和跳过未变化的文件夹，服务会自己读取监控文件夹所在的 NTFS 卷，这需要管理员权限（见[搜索索引](#搜索索引)）；除此之外没有别的东西要安装。`.env` 文件只放服务在能连上数据库之前就需要的设置，以及机密；其余所有设置都是**站点设置**，保存在数据库中，由本地管理员在**站点设置**页编辑（见[设置放在哪里](#设置放在哪里)）。目前没有安装程序，也没有 Windows 服务封装。
+介绍如何安装、配置、运行、运维和排查 TimeVault（1.1.0 版）。它描述的是目前实际存在的内容：服务是一个 Go 程序 `timevault-server`，需要 PostgreSQL 和一个仓库文件夹；公司账号登录还需要另一个应用的 Redis 用户目录（同一个 Redis 也接收服务的 Web 日志，见 [Web 日志](#web-日志)）。为了搜索、文件夹大小和跳过未变化的文件夹，服务会自己读取监控文件夹所在的 NTFS 卷，这需要管理员权限（见[搜索索引](#搜索索引)）；除此之外没有别的东西要安装。`.env` 文件只放服务在能连上数据库之前就需要的设置，以及机密；其余所有设置都是**站点设置**，保存在数据库中，由本地管理员在**站点设置**页编辑（见[设置放在哪里](#设置放在哪里)）。目前没有安装程序，也没有 Windows 服务封装。
 
 ## 前置条件
 
@@ -600,6 +662,8 @@ print(pickle.loads(zlib.decompress(element)))   # element: the bytes of one list
 | `timevault-server version` | 输出版本号。 |
 | `timevault-server check-config` | 检查环境变量和 `.env` 文件中的设置对服务是否有效，输出 `the settings are valid`，或输出无效的原因（退出码为 1）。它不连接任何东西，所以不检查站点设置：站点设置在数据库中，保存时就会检查。会自己更新的服务在替换自己之前，会用新程序运行它（见[发布与自动更新](#发布与自动更新)）。 |
 | `timevault-server settings list`、`get <key>`、`set <key> <value>`、`reset <key>` | 在命令行上操作站点设置，针对 `TIMEVAULT_DATABASE_URL` 所指的数据库（请在包含 `.env` 的文件夹中运行，或设置 `TIMEVAULT_ENV_FILE`）。`list` 显示每个站点设置当前生效的值，已保存的值前面标 `*`；`set` 像页面一样先检查再保存一个值（与默认值相同的值不会被保存）；`reset` 忘掉已保存的值，使默认值生效。当站点设置页无法访问时（例如某个设置把所有人都锁在了外面），这是回头的路。修改之后必须重启服务才会使用。见[设置放在哪里](#设置放在哪里)。 |
+| `timevault-server cluster register <名称>`、`list`、`remove <名称>` | 共用同一个数据库、各用一个 schema 的服务器的登记表（见[几台服务器共用一个数据库](#几台服务器共用一个数据库)）：用一个简短的名称把这台服务器登记进去，列出各服务器及其状态和最近一次有它们消息的时间，或者去掉一台。它们针对 `TIMEVAULT_DATABASE_URL` 所指的数据库。 |
+| `timevault-server move-schema --to <schema> [--from <schema>] [--apply]` | 在一个事务里把这台服务器的表搬进数据库的另一个 schema，只要几毫秒；不带 `--apply` 时只说明它会做什么。必须先停止服务。见[把第一台服务器搬出 `public`](#把第一台服务器搬出-public)。 |
 
 ## 构建可执行文件
 
@@ -1036,6 +1100,66 @@ print(pickle.loads(zlib.decompress(element)))   # element: the bytes of one list
 **如何检查。** 打开一个页面，再看一次 `LLEN web_log`：它会在片刻之内增加。如果没有增加，见[故障排查](#故障排查)。
 
 **未验证。** Web 日志没有写入过公司的 Redis：它是针对进程内的 Redis 和 Python 打印出的 pickle 测试的。该 Redis 账号是否可以在那里执行 `RPUSH`，以及另一个应用的日志页面是否会显示这些行，需要在首次启动之后去查看。
+
+## 几台服务器共用一个数据库
+
+几台运行 TimeVault 的服务器可以共用一个 PostgreSQL 数据库和一个 Redis 用户目录，各用一个 schema，并在页面里互相显示对方的历史（[ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md)）。1.1.0 版是三步中的第 1 步，即只读的部分。
+
+**组能做什么。** 每台服务器把它的仓库和备份保存在它自己的磁盘上，继续运行它自己的备份、恢复、站点设置和权限；文件内容绝不会从一台服务器传到另一台。一台服务器在它自己的页面里，还会为访问者有权浏览的其他服务器的文件夹显示：**时间机器**（文件夹选择器按服务器分组，列出每台服务器的文件夹）、文件的**版本**、**备份**页和任务页（用标签在各服务器之间切换）、**审计**日志（同样有标签）以及**服务器**页。历史是在数据库里从那台服务器的 schema 读取的，所以它离线时也看得到。
+
+**组暂时还不能做什么。** 实时视图（文件浏览）、当前文件的搜索、立即备份、校验、取消、恢复和文件夹设置，都在拥有该文件夹的服务器上进行。对另一台服务器的文件夹提出这些请求，会得到 `501`（`other_server`）；页面用一条说明（绝不用链接）告知这一点，其他服务器的历史页不提供恢复按钮。恢复总是在拥有者上运行，写入它自己的恢复文件夹：不支持恢复到另一台服务器。
+
+**谁能看到什么。** 文件夹的授权是保存在它所在服务器的 schema 中的那一份，访问者就是他们在用户目录中的账号：不能浏览的文件夹不在那里（"未找到"）。用户目录中的 `admin` 账号对其他服务器的文件夹拥有完全的权限，并能看到它们的真实文件夹；其他人在所有文本里看到的都是显示文件夹。一台服务器的本地管理员在另一台服务器上是不被认识的：它可以读取那里每个文件夹的历史（浏览），看不到那里的任何真实文件夹，也不能做别的事。
+
+**建立一个组。**
+
+1. 给每台服务器选一个简短的小写**名称**（`alpha`、`beta`）和一个 **schema**（`tv_alpha`、`tv_beta`）。建议每台服务器用它自己的账号（见下）。
+2. **第一台服务器**可以留在它现在的 schema（`public`）里。要给它一个自己的 schema，见[把第一台服务器搬出 `public`](#把第一台服务器搬出-public)。
+3. **其他服务器**有各自的 schema，由数据库管理员一次性建立（`CREATE SCHEMA tv_beta AUTHORIZATION <它的账号>;`），并在它的 `TIMEVAULT_DATABASE_URL` 的查询字符串里加上 `search_path=tv_beta`（例如 `postgres://账号:<密码>@主机/数据库?sslmode=disable&search_path=tv_beta`）。搜索路径所指的 schema 不存在时，迁移会以"no schema has been selected to create in"停止；**一个已存在但为空的 schema 会被建立一个新的空目录库**，所以请检查名称。运行 `timevault-server migrate`（或设置 `TIMEVAULT_AUTO_MIGRATE=true` 后启动服务）。
+4. 在每台服务器上，在其 `.env` 所在的文件夹里运行：`timevault-server cluster register alpha`。第一次调用会建立登记表，也就是 schema `timevault_cluster`，这需要建立 schema 的权限（账号没有这个权限时，由数据库管理员一次性建立：`CREATE SCHEMA timevault_cluster AUTHORIZATION <账号>;`）。**重启服务**：它在启动时加入组。
+5. 用 `timevault-server cluster list` 或在**服务器**页上检查。一台服务器在报告之前是 `waiting`，它在启动时报告，之后每 30 秒报告一次。
+
+**账号和权限（建议）。** 所有服务器用同一个数据库账号，组也能工作，但这样任何一台服务器都能修改其他服务器的表。每台服务器各用一个账号时，每台都可以写它自己的 schema，对其他服务器只读取页面需要的部分：
+
+```sql
+-- 由数据库管理员一次性执行；tv_alpha 和 tv_beta 是服务器 alpha 和 beta 的账号
+CREATE ROLE tv_alpha LOGIN PASSWORD '<密码>';   -- 密码写进 .env 里的 TIMEVAULT_DATABASE_URL，不要写进脚本
+CREATE ROLE tv_beta  LOGIN PASSWORD '<密码>';
+CREATE SCHEMA tv_alpha AUTHORIZATION tv_alpha;
+CREATE SCHEMA tv_beta  AUTHORIZATION tv_beta;
+-- alpha 读取页面需要的 beta 的部分（名称对调后，反过来也一样）
+GRANT USAGE ON SCHEMA tv_beta TO tv_alpha;
+GRANT SELECT ON tv_beta.sources, tv_beta.source_access, tv_beta.recovery_points, tv_beta.nodes, tv_beta.node_versions,
+                tv_beta.jobs, tv_beta.job_events, tv_beta.restore_items, tv_beta.audit_events TO tv_alpha;
+-- 第一次 "timevault-server cluster register" 之后（由 tv_alpha 运行，登记表因此属于它）：其他服务器在登记表里报告
+GRANT USAGE ON SCHEMA timevault_cluster TO tv_beta;
+GRANT SELECT ON timevault_cluster.servers TO tv_beta;
+GRANT UPDATE (version, contract, repository_id, repository_root, restore_root, restore_display_root, last_seen)
+      ON timevault_cluster.servers TO tv_beta;
+```
+
+这九张表正是其他服务器的页面所读取的全部内容；一台服务器的站点设置（`site_settings`）、对象和迁移记录，其他服务器是读不到的（有一个测试检查这些授权足够支持每一次读取，并且不多给任何权限）。以后的版本如果要读取另一张表，会在升级说明里写明，那时需要补上授权。登记表上的授权，让一台服务器能修改每一行的报告列，而不只是它自己那一行：没有行级安全，PostgreSQL 做不到别的；这个版本里登记表里没有任何密钥或机密。
+
+### 把第一台服务器搬出 `public`
+
+第一台服务器可以留在 `public` 里：登记表里记着它的 schema 名，所以它和其他服务器没有区别。要给它一个自己的 schema，`timevault-server move-schema` 会在一个事务里用 `ALTER TABLE ... SET SCHEMA` 搬动它的表（迁移所建立的 12 张表及其索引、自增序列、约束和审计日志的触发器，以及审计日志的那个函数）。只有系统目录里的条目会变，所以无论表有多大，只要几毫秒；失败时一切留在原处；同一个命令把两个名字对调，就能把一切搬回去。它特意做成一个命令，而不是启动时的一个步骤：服务对一个已存在但为空的 schema 执行迁移，会在那里建立一个新的空目录库。
+
+1. **停止服务。** 有服务持有该 schema 的锁时，命令会拒绝运行。
+2. **预览：** `timevault-server move-schema --to tv_alpha` 说明会搬动什么，不改变任何东西。
+3. **搬动：** `timevault-server move-schema --to tv_alpha --apply`。`--from` 是 URL 所选的 schema，URL 里没有 `search_path` 时就是 `public`。schema 不存在而账号可以建立 schema 时，会自动建立；否则由数据库管理员一次性建立（`CREATE SCHEMA tv_alpha AUTHORIZATION <这些表的拥有者>;`）。被搬出的 schema 里没有完整的目录库、目标里已经有 TimeVault 的表、账号不拥有这些表、以及这些表的拥有者在搬动后无法使用目标 schema（PostgreSQL 以表拥有者的权限检查外键）时，命令也会拒绝；提示信息会说明要执行什么。如果这台服务器在登记表里，登记表会改为记录新的 schema。
+4. **把 `search_path=tv_alpha`** 加到 `TIMEVAULT_DATABASE_URL` 的查询字符串里（在 `.env` 或环境变量中），然后启动服务。命令会打印要加的那一部分，从不打印 URL。
+5. **搬动之后要你自己处理的：** TimeVault 之外任何以 `public.<表名>` 读取这些表的东西（报表、脚本）都要修改；表上的授权会跟着表走，但拥有授权的角色也需要新 schema 的 `USAGE`。
+
+**服务器的状态。** *在线：* 它在最近 2 分钟内报告过。*离线：* 没有；它的历史仍然从数据库读取，而无论如何，它的实时视图、搜索和操作都不会从这里提供。*尚未报告：* 它已登记，但从未报告过（登记之后没有启动过），所以不读取它的历史。*版本不兼容：* 它报告了另一个读取契约（这个程序所用的是契约 1），所以不读取它的 schema；请把各服务器更新到同一个版本。报告的时间是数据库的时钟，所以各服务器的时钟不必为此保持一致。
+
+**负载。** 列出其他服务器文件夹的页面，会通过每台服务器最多 3 个连接的只读连接池读取每台服务器的 schema（每个文件夹几次查询），语句超时为 15 秒；没有应答的服务器会从文件夹选择器中去掉，并在一条说明里点名。每台服务器自己的连接池至少有 16 个连接，数据库的 `max_connections` 要容得下所有这些连接，再加上每台其他服务器的 3 个。
+
+**组的故障排查。**
+
+- **`/servers` 是"未找到"。** 这台服务器不在登记表里，或者读不了登记表：运行 `timevault-server cluster list`，并查看启动时的日志（`this server is in a group of servers that share the database`，或读不了登记表的警告）。登记它，然后重启。
+- **一台服务器一直是 `waiting`。** 它没有报告：启动它，并在它的日志里找 `this server could not report to the register of the servers`（它的账号需要上面的 `GRANT UPDATE (...)`，而且登记表的 schema 名在每台服务器上必须相同）。
+- **`503` 或"目前无法读取那台服务器的历史"。** 这台服务器的账号不能读取那个 schema（上面的授权），或者那台服务器报告了这个程序不认识的读取契约（服务器页上显示"版本不兼容"）。
+- **这台服务器的页面显示某台服务器的文件夹无法列出的说明。** 那台服务器的 schema 在 15 秒内没有应答，或者读取失败；日志里有原因。
 
 ## 运维
 

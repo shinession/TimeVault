@@ -52,6 +52,10 @@ type Page struct {
 	Notice string
 	// AvatarURL is where the pictures of the accounts are (see Options.AvatarURL); empty when there are none.
 	AvatarURL string
+	// Scope is the name of the other server whose folders the page shows; empty on the pages of this server's own folders.
+	Scope string
+	// Group says that this server is in a group of servers that share the database, so the pages offer the servers.
+	Group bool
 
 	loc    *Locale
 	tz     *time.Location
@@ -65,8 +69,10 @@ type Page struct {
 // folder carry that level themselves, see access.go.
 func (p *Page) SignedIn() bool { return p.sess.SignedIn() }
 
-// CanRestore reports whether the visitor may restore from the folders they can browse: every signed-in account may.
-func (p *Page) CanRestore() bool { return p.sess.SignedIn() }
+// CanRestore reports whether the visitor may restore from the folders they can browse: every signed-in account may. A
+// restore is only made from the folders of this server in this version, so the pages of another server's folders do
+// not offer it.
+func (p *Page) CanRestore() bool { return p.Scope == "" && p.sess.SignedIn() }
 func (p *Page) CanAudit() bool   { return p.sess.Can(auth.PermAudit) }
 func (p *Page) CanManage() bool  { return p.sess.Can(auth.PermManage) }
 
@@ -74,8 +80,14 @@ func (p *Page) CanManage() bool  { return p.sess.Can(auth.PermManage) }
 func (p *Page) CanSite() bool { return p.sess.Can(auth.PermSite) }
 
 // ShowPhysical reports whether the visitor may see the folders of the server's own disk. Everybody else sees the
-// display folders, the paths people use over the network.
-func (p *Page) ShowPhysical() bool { return p.sess.Can(auth.PermManage) }
+// display folders, the paths people use over the network. On the pages of another server's folders only the
+// administrators of the user directory may: the local administrator of this server is not known there.
+func (p *Page) ShowPhysical() bool {
+	if p.Scope != "" {
+		return p.sess.Can(auth.PermManage) && !p.sess.Can(auth.PermSite)
+	}
+	return p.sess.Can(auth.PermManage)
+}
 
 // T translates a message key; extra arguments are formatted into it.
 func (p *Page) T(key string, args ...any) string { return p.loc.T(key, args...) }
@@ -382,7 +394,7 @@ func (s *Server) newPage(r *http.Request, sess auth.Session, titleKey, nav strin
 	p := &Page{
 		Nav: nav, Lang: loc.lang, User: sess.User, Name: sess.Name, CSRF: sess.CSRF, Version: s.opts.Version, AssetVer: s.assetVer,
 		AuthDisabled: sess.AuthDisabled, RequestURI: returnURI(r), loc: loc, tz: s.opts.Location, sess: sess,
-		Notice: s.updateNotice(sess, loc), AvatarURL: s.opts.AvatarURL, avatar: s.avatarID,
+		Notice: s.updateNotice(sess, loc), AvatarURL: s.opts.AvatarURL, avatar: s.avatarID, Group: s.opts.Group != nil,
 	}
 	if p.Name == "" {
 		p.Name = p.User

@@ -15,9 +15,9 @@ func TestHandlersReachFoldersThroughTheAccessChecks(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no source files: %v", err)
 	}
-	direct := []string{"svc.Source(", "svc.Sources(", ".cat().GetSource(", ".cat().ListSources(", "Catalog().GetSource(", "Catalog().ListSources("}
+	direct := []string{"svc.Source(", "svc.Sources(", "rd.Source(", "rd.Sources(", ".cat().GetSource(", ".cat().ListSources(", "Catalog().GetSource(", "Catalog().ListSources("}
 	// What lists the jobs or the audit events of many folders has to be limited to the folders the visitor may see.
-	limited := []string{"svc.Jobs(", "svc.AuditEvents("}
+	limited := []string{"svc.Jobs(", "svc.AuditEvents(", "rd.Jobs(", "rd.AuditEvents("}
 	for _, name := range files {
 		if strings.HasSuffix(name, "_test.go") || name == "access.go" {
 			continue

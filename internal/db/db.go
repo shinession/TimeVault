@@ -24,8 +24,15 @@ const migrationLockKey int64 = 0x54564D49
 // Options tunes the connection pool.
 type Options struct {
 	MaxConns int32
-	// SearchPath pins the schema, which lets tests run in a private schema.
+	// SearchPath pins the schema, which lets tests run in a private schema and lets several servers share a database,
+	// each in a schema of its own.
 	SearchPath string
+	// ReadOnly makes the transactions of the pool read-only unless one asks for more (default_transaction_read_only),
+	// which is how a server reads the schema of another one. It is a safeguard of the program, not a protection: that is
+	// the job of the privileges of the database account.
+	ReadOnly bool
+	// StatementTimeout ends a statement that runs longer than this; zero leaves the setting of the database.
+	StatementTimeout time.Duration
 }
 
 // Connect opens a pool and verifies that the server answers.
@@ -43,6 +50,12 @@ func Connect(ctx context.Context, url string, opts Options) (*pgxpool.Pool, erro
 	cfg.ConnConfig.RuntimeParams["application_name"] = "timevault"
 	if opts.SearchPath != "" {
 		cfg.ConnConfig.RuntimeParams["search_path"] = opts.SearchPath
+	}
+	if opts.ReadOnly {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	}
+	if opts.StatementTimeout > 0 {
+		cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(opts.StatementTimeout.Milliseconds(), 10)
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

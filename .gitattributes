@@ -3,3 +3,4 @@
 go.mod text eol=lf
 go.sum text eol=lf
 migrations/*.sql text eol=lf
+migrations/cluster/*.sql text eol=lf

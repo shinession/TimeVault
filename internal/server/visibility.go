@@ -30,15 +30,24 @@ type viewer struct {
 	s        *Server
 	ctx      context.Context
 	sess     auth.Session
-	paths    *service.PathMap
-	loaded   bool
+	// rc is the server whose folders the texts are about: this one, or another server of the group.
+	rc     reach
+	paths  *service.PathMap
+	loaded bool
 	// full is the folders the visitor has full control of, read on first use (fullLoaded).
 	full       map[int64]bool
 	fullLoaded bool
 }
 
 func (s *Server) viewerFor(ctx context.Context, sess auth.Session) *viewer {
-	return &viewer{physical: sess.Can(auth.PermManage), s: s, ctx: ctx, sess: sess}
+	return s.viewerAt(ctx, sess, s.localReach())
+}
+
+// viewerAt is the viewer for the texts about the folders of the server of a reach. On another server of the group the
+// real folders are shown to the administrators of the user directory only: the local administrator of this server is
+// not known there.
+func (s *Server) viewerAt(ctx context.Context, sess auth.Session, rc reach) *viewer {
+	return &viewer{physical: physicalAt(sess, rc), s: s, ctx: ctx, sess: sess, rc: rc}
 }
 
 // pathMap is nil when the map could not be built; the texts that need it are then left out rather than shown. It
@@ -48,7 +57,7 @@ func (s *Server) viewerFor(ctx context.Context, sess auth.Session) *viewer {
 func (v *viewer) pathMap() *service.PathMap {
 	if !v.loaded {
 		v.loaded = true
-		paths, err := v.s.svc.PathMapFor(v.ctx, func(src catalog.Source) bool { return levelOn(v.sess, src) >= access.Browse })
+		paths, err := v.rc.rd.PathMapFor(v.ctx, func(src catalog.Source) bool { return levelAt(v.sess, v.rc, src) >= access.Browse })
 		if err != nil {
 			v.s.log.Warn("the map of the server's folders could not be built; texts that may quote them are left out", "error", err)
 			return nil
@@ -87,10 +96,18 @@ func (p *Page) locate(src catalog.Source, rel string) {
 	p.LocationReal = real
 }
 
+// restoreRoots are the restore folder of the server of the reach on its disk, and the network path people reach it by.
+func (v *viewer) restoreRoots() (root, display string) {
+	if v.rc.local() {
+		return v.s.svc.RestoreRoot(), v.s.svc.RestoreDisplayRoot()
+	}
+	return v.rc.entry.RestoreRoot, v.rc.entry.RestoreDisplayRoot
+}
+
 // restoreRoot is the restore folder as the visitor may see it: the display root for everybody (empty when there is
 // none, so the page tells people to ask an administrator), and the real folder for administrators.
 func (v *viewer) restoreRoot() (shown, real string) {
-	root, display := v.s.svc.RestoreRoot(), v.s.svc.RestoreDisplayRoot()
+	root, display := v.restoreRoots()
 	switch {
 	case root == "":
 		return "", ""
@@ -107,9 +124,10 @@ func (v *viewer) restoreRoot() (shown, real string) {
 // destination is where a restore into the folder name below the restore folder writes: shown to everybody and,
 // for administrators who also see a display folder, the folder on the server's disk as well.
 func (v *viewer) destination(name string) (shown, real string) {
-	physical := filepath.Join(v.s.svc.RestoreRoot(), name)
+	root, displayRoot := v.restoreRoots()
+	physical := filepath.Join(root, name)
 	display := ""
-	if v.s.svc.RestoreDisplayRoot() != "" {
+	if displayRoot != "" {
 		if paths := v.pathMap(); paths != nil {
 			display = paths.RestoreDisplay(name)
 		}
@@ -226,14 +244,14 @@ func (v *viewer) mayReadAccess(source *int64) bool {
 	}
 	if !v.fullLoaded {
 		v.fullLoaded = true
-		visible, err := v.s.visibleSources(v.ctx, v.sess)
+		visible, err := v.s.visibleSourcesAt(v.ctx, v.sess, v.rc)
 		if err != nil {
 			v.s.log.Warn("the folders of the visitor could not be read; who may do what is left out of the audit details", "error", err)
 			return false
 		}
 		v.full = map[int64]bool{}
 		for _, src := range visible {
-			if levelOn(v.sess, src.Source) >= access.Full {
+			if levelAt(v.sess, v.rc, src.Source) >= access.Full {
 				v.full[src.ID] = true
 			}
 		}
@@ -287,7 +305,7 @@ func (v *viewer) visibleJobCounts() (queued, running int) {
 		v.s.log.Warn("the jobs of the visible folders could not be counted", "error", err)
 		return 0, 0
 	}
-	only, ids := restrictTo(v.sess, visible)
+	only, ids := restrictTo(isAdmin(v.sess), visible)
 	q, r, err := v.s.svc.JobCounts(v.ctx, jobs.Filter{OnlySources: only, SourceIDs: ids})
 	if err != nil {
 		v.s.log.Warn("the jobs of the visible folders could not be counted", "error", err)

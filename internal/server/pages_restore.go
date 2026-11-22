@@ -114,6 +114,11 @@ type auditData struct {
 	Action  string
 	Actions []string
 	NextURL string
+	// Server is the other server whose audit log the page shows; empty for this server. Tabs switch the page between
+	// the servers of a group (nil for a server on its own) and TabsPath is the path of the page.
+	Server   string
+	Tabs     []scopeTab
+	TabsPath string
 }
 
 var auditActions = []string{
@@ -136,9 +141,19 @@ func auditActionsFor(sess auth.Session) []string {
 }
 
 func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.Session) {
+	ctx := r.Context()
+	rc, err := s.reachOfRequest(r)
+	if err != nil {
+		s.handleErr(w, r, err)
+		return
+	}
 	action := r.FormValue("action")
 	known := false
 	actions := auditActionsFor(sess)
+	if !rc.local() {
+		// What was done to the Site settings of another server is for the local administrator of that server.
+		actions = auditActions
+	}
 	for _, a := range actions {
 		if a == action {
 			known = true
@@ -149,28 +164,29 @@ func (s *Server) handleAudit(w http.ResponseWriter, r *http.Request, sess auth.S
 	}
 	before := intParam(r, "before")
 	const pageSize = 50
-	filter := audit.Filter{Action: action, BeforeID: before, Limit: pageSize, WithoutSite: !sess.Can(auth.PermSite)}
-	if !isAdmin(sess) {
+	filter := audit.Filter{Action: action, BeforeID: before, Limit: pageSize, WithoutSite: !rc.local() || !sess.Can(auth.PermSite)}
+	if !physicalAt(sess, rc) {
 		// What happened to a folder is for the people who may see the folder; events that belong to no folder
 		// (sign-ins and the like) are for every account, as they always were.
-		visible, err := s.visibleSources(r.Context(), sess)
+		visible, err := s.visibleSourcesAt(ctx, sess, rc)
 		if err != nil {
 			s.handleErr(w, r, err)
 			return
 		}
-		filter.OnlySources, filter.SourceIDs = restrictTo(sess, visible)
+		filter.OnlySources, filter.SourceIDs = restrictTo(false, visible)
 	}
-	events, err := s.svc.AuditEvents(r.Context(), filter)
+	events, err := rc.rd.AuditEvents(ctx, filter)
 	if err != nil {
 		s.handleErr(w, r, err)
 		return
 	}
-	events = s.viewerFor(r.Context(), sess).audit(events)
-	d := &auditData{Events: events, Action: action, Actions: actions}
+	events = s.viewerAt(ctx, sess, rc).audit(events)
+	d := &auditData{Events: events, Action: action, Actions: actions, Server: rc.name, Tabs: s.scopeTabs(ctx, rc), TabsPath: "/audit"}
 	if len(events) == pageSize {
-		d.NextURL = buildURL("/audit", "action", action, "before", events[len(events)-1].ID)
+		d.NextURL = buildURL("/audit", "action", action, "before", events[len(events)-1].ID, "server", rc.name)
 	}
 	p := s.newPage(r, sess, "audit.title", "audit")
+	p.Scope = rc.name
 	p.Data = d
 	s.render(w, r, "audit", http.StatusOK, p)
 }

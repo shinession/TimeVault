@@ -160,15 +160,19 @@
     var active = root.querySelectorAll('[data-job-id][data-job-active="1"]');
     if (!active.length) { return; }
     var reload = !!root.querySelector('[data-job-reload]');
+    // A job of another server of the group is asked for with the name of that server (data-job-server).
     var ids = [];
     active.forEach(function (el) {
       var id = el.getAttribute('data-job-id');
-      if (ids.indexOf(id) < 0) { ids.push(id); }
+      var server = el.getAttribute('data-job-server') || '';
+      var query = server ? '?server=' + encodeURIComponent(server) : '';
+      var url = BASE + '/api/v1/jobs/' + encodeURIComponent(id) + query;
+      if (ids.indexOf(url) < 0) { ids.push(url); }
     });
 
     function tick() {
-      Promise.all(ids.map(function (id) {
-        return fetch(BASE + '/api/v1/jobs/' + encodeURIComponent(id), { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+      Promise.all(ids.map(function (url) {
+        return fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
           .then(function (res) {
             // An automatic backup that finds nothing changed is forgotten: no job any more means it has finished.
             if (res.status === 404) { return { job: { active: false } }; }

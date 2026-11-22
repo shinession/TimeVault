@@ -79,8 +79,10 @@ type Config struct {
 	WebLog weblog.Sink
 }
 
-// Service is the application facade.
+// Service is the application facade. It embeds the Reader of its own server, so the reads of the catalog, the jobs and the
+// audit trail (Sources, Points, ListHistory, Jobs, AuditEvents and the rest of reader.go) are its methods too.
 type Service struct {
+	*Reader
 	pool               *pgxpool.Pool
 	cat                *catalog.Store
 	repo               *repository.Store
@@ -122,6 +124,21 @@ func New(cfg Config) *Service {
 	if s.log == nil {
 		s.log = slog.New(slog.DiscardHandler)
 	}
+	s.Reader = &Reader{
+		pool: cfg.Pool, cat: cfg.Catalog, audit: cfg.Audit,
+		// The content of a version is looked for in the repository of this server.
+		present: func(sha []byte) bool {
+			hash, err := repository.HashFromBytes(sha)
+			if err != nil {
+				return false
+			}
+			_, err = s.repo.Stat(hash)
+			return err == nil
+		},
+		roots: func() Roots {
+			return Roots{Repository: s.repo.Root(), Restore: s.restore.Root(), RestoreDisplay: s.restoreDisplayRoot}
+		},
+	}
 	s.jobs.Handle(jobs.KindBackup, s.runBackup)
 	s.jobs.Handle(jobs.KindVerify, s.runVerify)
 	s.jobs.Handle(jobs.KindRestore, s.runRestore)
@@ -162,26 +179,7 @@ func (s *Service) recordTimed(ctx context.Context, a Actor, action, targetType, 
 // Audit writes an event on behalf of the HTTP layer (sign-ins, denials).
 func (s *Service) Audit(ctx context.Context, e audit.Event) { _ = s.audit.Record(ctx, e) }
 
-// AuditEvents lists audit events newest first.
-func (s *Service) AuditEvents(ctx context.Context, f audit.Filter) ([]audit.Event, error) {
-	return s.audit.List(ctx, f)
-}
-
 // --- Sources -------------------------------------------------------------
-
-// Sources lists the registered sources with their newest recovery point.
-func (s *Service) Sources(ctx context.Context) ([]catalog.SourceSummary, error) {
-	return s.cat.ListSources(ctx)
-}
-
-// Source returns one source.
-func (s *Service) Source(ctx context.Context, id int64) (catalog.Source, error) {
-	src, err := s.cat.GetSource(ctx, id)
-	if errors.Is(err, catalog.ErrNotFound) {
-		return src, ErrNotFound
-	}
-	return src, err
-}
 
 // AddSource validates and registers a source. See withDisplayPath for the rules of its display path.
 func (s *Service) AddSource(ctx context.Context, a Actor, req backup.SourceRequest) (catalog.Source, error) {
@@ -332,141 +330,6 @@ func sourceChanges(before, after catalog.Source) map[string]any {
 	return changes
 }
 
-// --- Points and browsing ---------------------------------------------------
-
-// Point returns a recovery point of a source and verifies it belongs to it.
-func (s *Service) Point(ctx context.Context, sourceID, pointID int64) (catalog.Point, error) {
-	p, err := s.cat.GetPoint(ctx, pointID)
-	if errors.Is(err, catalog.ErrNotFound) || (err == nil && p.SourceID != sourceID) {
-		return catalog.Point{}, ErrNotFound
-	}
-	return p, err
-}
-
-// Points lists committed recovery points, newest first.
-func (s *Service) Points(ctx context.Context, sourceID int64, limit, beforeSeq int) ([]catalog.Point, error) {
-	return s.cat.ListPoints(ctx, sourceID, limit, beforeSeq)
-}
-
-// Attempts lists backup attempts in any state, newest first.
-func (s *Service) Attempts(ctx context.Context, sourceID int64, limit int) ([]catalog.Point, error) {
-	return s.cat.ListAttempts(ctx, sourceID, limit)
-}
-
-// LatestPoint returns the newest committed point, or ErrNotFound.
-func (s *Service) LatestPoint(ctx context.Context, sourceID int64) (catalog.Point, error) {
-	p, err := s.cat.LatestCommitted(ctx, sourceID)
-	if errors.Is(err, catalog.ErrNotFound) {
-		return p, ErrNotFound
-	}
-	return p, err
-}
-
-// HistoryListing is one page of a folder at a recovery point.
-type HistoryListing struct {
-	Point   catalog.Point
-	Latest  catalog.Point
-	Rel     string
-	Entries []catalog.Entry
-	Next    string
-}
-
-// BrowseHistory lists a folder as it existed at a recovery point. Each entry
-// carries its status relative to the newest point.
-func (s *Service) BrowseHistory(ctx context.Context, src catalog.Source, point catalog.Point, rel, cursor string, limit int) (HistoryListing, error) {
-	rel, err := pathutil.CleanRel(rel)
-	if err != nil {
-		return HistoryListing{}, err
-	}
-	latest, err := s.cat.LatestCommitted(ctx, src.ID)
-	if err != nil {
-		return HistoryListing{}, ErrNotFound
-	}
-	dir, err := s.cat.ResolveAt(ctx, src.ID, point.Seq, rel)
-	if errors.Is(err, catalog.ErrNotFound) {
-		return HistoryListing{}, ErrNotFound
-	}
-	if err != nil {
-		return HistoryListing{}, err
-	}
-	if !dir.IsDir {
-		return HistoryListing{}, ErrNotFound
-	}
-	params := catalog.ListParams{Parent: dir.NodeID, Seq: point.Seq, LatestSeq: latest.Seq, Limit: limit}
-	if cursor != "" {
-		c, err := catalog.DecodeCursor(cursor)
-		if err != nil {
-			return HistoryListing{}, err
-		}
-		params.After = &c
-	}
-	page, err := s.cat.ListChildren(ctx, params)
-	if err != nil {
-		return HistoryListing{}, err
-	}
-	out := HistoryListing{Point: point, Latest: latest, Rel: rel, Entries: page.Entries}
-	if page.Next != nil {
-		out.Next = page.Next.Encode()
-	}
-	return out, nil
-}
-
-// FileHistory is every committed version of one path.
-type FileHistory struct {
-	Rel      string
-	Name     string
-	Versions []catalog.VersionInfo
-	Latest   catalog.Point
-	// Present maps a content hash (hex) to whether the repository still has it.
-	Present map[string]bool
-}
-
-// FileVersions lists the versions of a path across all recovery points.
-func (s *Service) FileVersions(ctx context.Context, src catalog.Source, rel string) (FileHistory, error) {
-	rel, err := pathutil.CleanRel(rel)
-	if err != nil {
-		return FileHistory{}, err
-	}
-	latest, err := s.cat.LatestCommitted(ctx, src.ID)
-	if err != nil {
-		return FileHistory{}, ErrNotFound
-	}
-	node, err := s.cat.ResolveNode(ctx, src.ID, rel)
-	if errors.Is(err, catalog.ErrNotFound) {
-		return FileHistory{}, ErrNotFound
-	}
-	if err != nil {
-		return FileHistory{}, err
-	}
-	versions, err := s.cat.Versions(ctx, node, latest.Seq)
-	if err != nil {
-		return FileHistory{}, err
-	}
-	if len(versions) == 0 {
-		return FileHistory{}, ErrNotFound
-	}
-	h := FileHistory{Rel: rel, Name: pathutil.BaseRel(rel), Versions: versions, Latest: latest, Present: map[string]bool{}}
-	if rel == "" {
-		h.Name = src.Name
-	}
-	for _, v := range versions {
-		if len(v.SHA256) == 0 {
-			continue
-		}
-		key := fmt.Sprintf("%x", v.SHA256)
-		if _, done := h.Present[key]; done {
-			continue
-		}
-		hash, err := repository.HashFromBytes(v.SHA256)
-		if err != nil {
-			continue
-		}
-		_, statErr := s.repo.Stat(hash)
-		h.Present[key] = statErr == nil
-	}
-	return h, nil
-}
-
 // --- Jobs --------------------------------------------------------------------
 
 type backupParams struct {
@@ -554,30 +417,6 @@ func (s *Service) CancelJob(ctx context.Context, a Actor, jobID int64) (bool, er
 		_ = s.record(ctx, a, audit.ActionJobCancel, "job", fmt.Sprint(jobID), job.SourceID, audit.ResultOK, nil)
 	}
 	return ok, nil
-}
-
-// Job returns one job.
-func (s *Service) Job(ctx context.Context, id int64) (jobs.Job, error) {
-	j, err := jobs.Get(ctx, s.pool, id)
-	if errors.Is(err, jobs.ErrNotFound) {
-		return j, ErrNotFound
-	}
-	return j, err
-}
-
-// Jobs lists recent jobs, newest first, as the filter says.
-func (s *Service) Jobs(ctx context.Context, f jobs.Filter) ([]jobs.Job, error) {
-	return jobs.List(ctx, s.pool, f)
-}
-
-// JobCounts counts the queued and the running jobs that the filter selects.
-func (s *Service) JobCounts(ctx context.Context, f jobs.Filter) (queued, running int, err error) {
-	return jobs.Counts(ctx, s.pool, f)
-}
-
-// JobEvents returns a job's log lines after afterID.
-func (s *Service) JobEvents(ctx context.Context, jobID, afterID int64, limit int) ([]jobs.Event, error) {
-	return jobs.Events(ctx, s.pool, jobID, afterID, limit)
 }
 
 type backupReporter struct{ rep *jobs.Reporter }
@@ -799,20 +638,6 @@ func (s *Service) runRestore(ctx context.Context, job jobs.Job, rep *jobs.Report
 	sourceID := p.Request.SourceID
 	_ = s.recordTimed(ctx, actor, audit.ActionRestoreFinish, "point", fmt.Sprint(p.Request.PointID), &sourceID, result, detail, time.Since(started))
 	return err
-}
-
-// RestoreItems lists the stored per-item outcomes of a restore job.
-func (s *Service) RestoreItems(ctx context.Context, jobID int64, status string, afterID int64, limit int) ([]restore.StoredItem, error) {
-	return s.restore.ListItems(ctx, jobID, status, afterID, limit)
-}
-
-// RestoreJobRequest decodes the request a restore job was started with.
-func (s *Service) RestoreJobRequest(job jobs.Job) (restore.Request, restore.Totals, bool) {
-	var p restoreParams
-	if job.Kind != jobs.KindRestore || json.Unmarshal(job.Params, &p) != nil {
-		return restore.Request{}, restore.Totals{}, false
-	}
-	return p.Request, p.Totals, true
 }
 
 func truncate(s string, n int) string {

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document lists the security controls that exist in TimeVault (version 1.0.1) and the gaps that remain. It describes the implementation, not an intention; where plan.md asks for more, the gap is listed.
+This document lists the security controls that exist in TimeVault (version 1.1.0) and the gaps that remain. It describes the implementation, not an intention; where plan.md asks for more, the gap is listed.
 
 ## Controls that exist
 
@@ -31,6 +31,18 @@ This document lists the security controls that exist in TimeVault (version 1.0.1
 | Pictures of the accounts | Optional (the Site setting `avatar_url`; by default the pictures on the server named in `server_host`). The browser reads each picture itself, with an image request of its own, from the host that keeps them, only for signed-in visitors (the places that name accounts are not shown to others). The `Content-Security-Policy` lists that host for images only (`img-src 'self' data: http://<host>`; for a host name with an underscore, which a policy cannot name, the wildcard of its domain, `http://*.<domain>`): scripts, styles, forms and connections are unchanged, and the host comes from the Site settings, never from a request. The address is checked when the settings are loaded (`http(s)`, no user name or password, a host of letters, digits, `-`, `_` and `.`, `{id}` once, no space, quote or `#`); the employee ID in it is validated (letters, digits and `. _ - @`) and encoded; the local administrator and the service's own names are never asked for. TimeVault fetches, stores and proxies nothing. |
 | Web log | On by default when `TIMEVAULT_REDIS_URL` is set (the Site setting `web_log`; [ADR 0016](./adr/0016-web-log-in-the-shared-redis-list.md)). The service appends lines to the Redis list `web_log` that the company's applications share, in the encoding they use. It is the only thing TimeVault writes to Redis, and it only appends (`RPUSH`): it never reads the list back, deletes a key, or trims or expires the list, and `internal/redisuser`, which reads the accounts and the sign-on results, still never writes. A line holds the address of the client, the time, the route that matched (never the address as it was typed), numbers (monitored folder, recovery point, job), the employee ID of the user (`guest` for a visitor who is not signed in, `-` for a failed sign-in, whose typed name may be a password), the status and the level. It never holds a path, the name of a file or a folder, a query string, text that somebody typed or an error text: an error line carries a reference, with which the log of the service holds the details. `web_log_key` is checked when the settings are saved and loaded: ASCII letters, digits and `_ . : -` only, at most 128 characters, and it may not start, in any case, like the keys of the accounts (`TIMEVAULT_REDIS_KEY_PREFIX`) or of the single sign-on results (`sso_login_`), so the setting cannot make the service write into those. The writer never waits for Redis (a queue of 1,024 lines, up to 100 per `RPUSH`), cuts a flood at the door (page lines 10 per second on average with a burst of 100, event lines 20 per second with a burst of 200) and leaves a Redis that fails alone for 30 seconds, then longer, up to 5 minutes; a line that is dropped is not written later. A failure shows as a warning in the log of the service, with the password of the URL masked, and nothing else stops. |
 | Secrets | Read only from environment variables or the `.env` file (the environment wins; the start-up log names, and never shows, the settings that the environment overrides), redacted when the configuration is logged, never stored in the repository. The startup log, the Site settings page and the Redis report show the database and Redis as `host:port/name` only; errors from the Redis client, also those in the warnings of the web log, have the password of the URL masked. `/.env` is git-ignored and, in development, the only file that holds secrets: the dev scripts write the generated database password, session key and administrator password hash there (the generated administrator password is in `data/dev/admin-password.txt`, also git-ignored). |
+
+## Several servers on one database (1.1.0)
+
+Servers that share a database form **one trust domain**, as the Redis user directory and the database already were ([ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md)). What the code does about it, and what it does not:
+
+- **What a server reads of another.** The catalog, the jobs, the restore results and the audit trail of the other server's schema, through a read-only pool (`default_transaction_read_only`, a statement timeout) of its own database account; the program has only read methods for it. Nothing of the other server's disk, repository or Site settings is read, and no file content crosses servers. That a server cannot **write** another one's schema is the job of the rights of the database account: with one account for all the servers there is no such protection (the runbook gives the grants for an account of each server, and a test checks that they are enough for every read and give nothing more).
+- **Who sees what.** Permissions are the grants stored in each folder's own schema and the visitor's account in the shared user directory, checked by the server the visitor is on for every list and page: a folder that may not be browsed is "not found". `admin` accounts have full reach on every server; the local administrator is not known on another server, may only browse there, never sees a real folder of it and never acts on it.
+- **Real folders.** The texts of another server (errors, job logs, audit details, the reasons files were not captured) have its folders replaced by display folders for everybody but the administrators of the user directory, using the folders that server reported; when the folder map cannot be made nothing is shown (the rule for the texts of this server).
+- **Nothing is changed on another server.** The live view, the search and every action are refused for another server (`501`) before any handler runs, in the API and on the pages, and no page offers them; so the number of a folder of another server cannot be taken for the folder of this server that has the same number.
+- **The register** can be written by the accounts of the servers only in its report columns (with the grants of the runbook) and by the account that registers servers. Any server that has the grant can change the report columns of any row, not only its own (no row-level security); nothing in it is a key or a secret in this version, but the keys of the server-to-server API of step 2 will need row-level protection.
+- **Names.** Server names and schema names are lower case, letters, digits and (for schemas) underscores, checked by the register (`CHECK` constraints) and by the program; a schema name is always quoted as an identifier in SQL, and the `server` parameter of a request is only compared with the names in the register, never used in a query.
+- **Gaps.** The server-to-server API does not exist yet (step 2). A server that is broken into can read the history (names, sizes, times, hashes, jobs, audit events) of every server of the group, and, with one shared database account, change it. The load of reading other servers is bounded by the size of the pool and the statement timeout, and was not tested at scale.
 
 ## Gaps and limits (do not rely on the MVP for these)
 
@@ -71,7 +83,7 @@ This document lists the security controls that exist in TimeVault (version 1.0.1
 
 ## 概述
 
-本文档列出 TimeVault（1.0.1 版）中已有的安全控制和仍然存在的缺口。它描述的是实际实现，而不是意图；plan.md 要求更多的地方，都列在缺口里。
+本文档列出 TimeVault（1.1.0 版）中已有的安全控制和仍然存在的缺口。它描述的是实际实现，而不是意图；plan.md 要求更多的地方，都列在缺口里。
 
 ## 已有的控制
 
@@ -100,6 +112,18 @@ This document lists the security controls that exist in TimeVault (version 1.0.1
 | 账号头像 | 可选（站点设置 `avatar_url`；默认是 `server_host` 所指服务器上的头像）。浏览器自己用图片请求从存放头像的主机读取每张头像，只针对已登录的访问者（显示账号名称的地方不会给其他人看）。`Content-Security-Policy` 只为图片列出该主机（`img-src 'self' data: http://<host>`；主机名带下划线时策略无法写出它，就改为其所在域的通配符 `http://*.<domain>`）：脚本、样式、表单和连接保持不变，而且这个主机来自站点设置，绝不来自请求。地址在加载设置时就会检查（`http(s)`、没有用户名或密码、主机只含字母、数字、`-`、`_` 和 `.`、`{id}` 恰好一次、没有空格、引号或 `#`）；地址中的工号经过校验（字母、数字和 `. _ - @`）并被编码；本地管理员和服务自己的名称从不请求。TimeVault 不获取、不存储也不代理任何东西。 |
 | Web 日志 | 设置了 `TIMEVAULT_REDIS_URL` 时默认开启（站点设置 `web_log`；[ADR 0016](./adr/0016-web-log-in-the-shared-redis-list.md)）。服务把行追加到公司各应用共用的 Redis 列表 `web_log`，使用它们所用的编码。这是 TimeVault 对 Redis 唯一的写入，而且只追加（`RPUSH`）：它从不把列表读回来、不删除任何键、不裁剪列表也不让它过期，而读取账号和单点登录结果的 `internal/redisuser` 仍然从不写入。一行中有客户端的地址、时间、匹配到的路由（绝不是输入时的地址）、数字（监控文件夹、恢复点、任务）、用户的工号（没有登录的访问者是 `guest`，登录失败时是 `-`，因为输入的名称可能是密码）、状态码和级别。它绝不包含路径、文件或文件夹的名称、查询串、有人输入的文本或错误文本：错误行带有一个参考编号，服务日志用它保存详情。`web_log_key` 在保存和加载设置时检查：只能包含 ASCII 字母、数字和 `_ . : -`，最多 128 个字符，并且无论大小写，都不能以账号的键（`TIMEVAULT_REDIS_KEY_PREFIX`）或单点登录结果的键（`sso_login_`）开头，所以这个设置不可能让服务写入它们。写入方从不等待 Redis（容量为 1,024 行的队列，每次 `RPUSH` 最多 100 行），在入口处截断大量涌入的行（页面行平均每秒 10 行、突发 100 行，事件行每秒 20 行、突发 200 行），并在 Redis 出故障后暂停访问它 30 秒，然后更久，最长 5 分钟；被丢弃的行以后不会再写。故障会表现为服务日志中的一条警告，其中 URL 的密码被遮盖，其他一切照常。 |
 | 机密信息 | 仅从环境变量或 `.env` 文件读取（环境变量优先；启动日志会点名、但绝不显示被环境变量覆盖的设置），记录配置日志时会脱敏，绝不存入代码仓库。启动日志、站点设置页和 Redis 报告只把数据库和 Redis 显示为 `host:port/name`；Redis 客户端的错误信息中（Web 日志的警告里的也一样），URL 的密码会被遮盖。`/.env` 已被 git 忽略，开发时它是唯一存放机密信息的文件：开发脚本把生成的数据库密码、会话密钥和管理员密码哈希写在这里（生成的管理员密码本身在同样被 git 忽略的 `data/dev/admin-password.txt` 中）。 |
+
+## 几台服务器共用一个数据库（1.1.0）
+
+共用一个数据库的服务器构成**同一个信任域**，Redis 用户目录和数据库原本就是如此（[ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md)）。代码对此做了什么，没有做什么：
+
+- **一台服务器读取另一台的什么。** 另一台服务器 schema 中的目录库、任务、恢复结果和审计日志，通过它自己数据库账号的只读连接池（`default_transaction_read_only`、语句超时）读取；程序对它只有读取方法。另一台服务器的磁盘、仓库和站点设置一概不读，文件内容也不会在服务器之间传输。一台服务器不能**写**另一台的 schema，这要靠数据库账号的权限：所有服务器用同一个账号时没有这层保护（运维手册给出了每台服务器各用一个账号时的授权，并且有一个测试检查这些授权足够支持每一次读取，又不多给任何权限）。
+- **谁能看到什么。** 权限是保存在每个文件夹自己 schema 中的授权，加上访问者在共用用户目录中的账号，由访问者所在的那台服务器在每个列表和页面上检查：不能浏览的文件夹是"未找到"。`admin` 账号对每台服务器都有完全的权限；本地管理员在另一台服务器上是不被认识的，只能浏览，看不到那里的任何真实文件夹，也不能在那里做任何操作。
+- **真实文件夹。** 另一台服务器的文本（错误、任务日志、审计详情、文件未被采集的原因）里的文件夹，除用户目录中的管理员外，对所有人都替换成显示文件夹，依据的是那台服务器所报告的文件夹；生成不了文件夹映射时，什么都不显示（与本服务器自己的文本相同的规则）。
+- **不会在另一台服务器上改变任何东西。** 实时视图、搜索和所有操作，对另一台服务器都会在任何处理函数运行之前被拒绝（`501`），API 和页面都一样，也没有页面提供它们；所以另一台服务器上文件夹的编号，不会被当成本服务器上编号相同的文件夹。
+- **登记表**只有各服务器的账号能写它的报告列（用运维手册里的授权时），以及登记服务器的账号。任何有授权的服务器都能修改任何一行的报告列，而不只是它自己的那一行（没有行级安全）；这个版本里它里面没有任何密钥或机密，但第 2 步中服务器间 API 的密钥，需要行级的保护。
+- **名称。** 服务器名称和 schema 名只能用小写字母、数字和（schema 还可以用）下划线，由登记表（`CHECK` 约束）和程序检查；SQL 中 schema 名总是作为标识符加引号，请求的 `server` 参数只和登记表里的名称比较，绝不用于查询。
+- **缺口。** 服务器间 API 还不存在（第 2 步）。被攻破的服务器可以读取组内每台服务器的历史（名称、大小、时间、哈希、任务、审计事件），在共用同一个数据库账号时还可以修改它们。读取其他服务器的负载受连接池大小和语句超时限制，没有做过大规模测试。
 
 ## 缺口与限制（这些方面请勿依赖 MVP）
 

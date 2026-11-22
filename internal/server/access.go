@@ -33,15 +33,33 @@ func levelOn(sess auth.Session, src catalog.Source) access.Level {
 	return src.Access.LevelFor(whoIs(sess))
 }
 
+// levelAt is the level the visitor has on a folder of the server of a reach. On another server of the group the visitor
+// is the account they are in the user directory, with the grants that are stored in that server's schema; the local
+// administrator of this server is not known there, so it may read (browse) what that server has and do nothing else.
+func levelAt(sess auth.Session, rc reach, src catalog.Source) access.Level {
+	if rc.local() {
+		return levelOn(sess, src)
+	}
+	if sess.Can(auth.PermSite) {
+		return access.Browse
+	}
+	return src.Access.LevelFor(whoIs(sess))
+}
+
 // loadSource returns a folder when the visitor has at least min on it. A folder that the visitor may not browse is
 // reported as service.ErrNotFound, the answer for a folder that does not exist, so that nobody can find out which
 // hidden folders there are; a folder they may browse but not use that way as service.ErrForbidden.
 func (s *Server) loadSource(ctx context.Context, sess auth.Session, id int64, min access.Level) (catalog.Source, error) {
-	src, err := s.svc.Source(ctx, id)
+	return s.loadSourceAt(ctx, sess, s.localReach(), id, min)
+}
+
+// loadSourceAt is loadSource for a folder of the server of a reach.
+func (s *Server) loadSourceAt(ctx context.Context, sess auth.Session, rc reach, id int64, min access.Level) (catalog.Source, error) {
+	src, err := rc.rd.Source(ctx, id)
 	if err != nil {
 		return catalog.Source{}, err
 	}
-	switch level := levelOn(sess, src); {
+	switch level := levelAt(sess, rc, src); {
 	case level < access.Browse:
 		return catalog.Source{}, service.ErrNotFound
 	case level < min:
@@ -78,14 +96,18 @@ func (s *Server) levelDenied(w http.ResponseWriter, r *http.Request, sess auth.S
 
 // visibleSources lists the folders the visitor may browse, with their newest recovery point.
 func (s *Server) visibleSources(ctx context.Context, sess auth.Session) ([]catalog.SourceSummary, error) {
-	all, err := s.svc.Sources(ctx)
+	return s.visibleSourcesAt(ctx, sess, s.localReach())
+}
+
+// visibleSourcesAt is visibleSources for the folders of the server of a reach.
+func (s *Server) visibleSourcesAt(ctx context.Context, sess auth.Session, rc reach) ([]catalog.SourceSummary, error) {
+	all, err := rc.rd.Sources(ctx)
 	if err != nil {
 		return nil, err
 	}
-	who := whoIs(sess)
 	visible := make([]catalog.SourceSummary, 0, len(all))
 	for _, src := range all {
-		if src.Access.LevelFor(who) >= access.Browse {
+		if levelAt(sess, rc, src.Source) >= access.Browse {
 			visible = append(visible, src)
 		}
 	}
@@ -93,9 +115,10 @@ func (s *Server) visibleSources(ctx context.Context, sess auth.Session) ([]catal
 }
 
 // restrictTo is the part of a job or audit filter that limits it to the folders the visitor may see: nothing for an
-// administrator, who sees everything, otherwise the visible folders.
-func restrictTo(sess auth.Session, visible []catalog.SourceSummary) (only bool, ids []int64) {
-	if isAdmin(sess) {
+// administrator, who sees everything, otherwise the visible folders. admin is isAdmin(sess) for this server, and
+// physicalAt(sess, rc) for the server of a reach.
+func restrictTo(admin bool, visible []catalog.SourceSummary) (only bool, ids []int64) {
+	if admin {
 		return false, nil
 	}
 	ids = make([]int64, 0, len(visible))
@@ -108,13 +131,18 @@ func restrictTo(sess auth.Session, visible []catalog.SourceSummary) (only bool, 
 // jobSource finds the folder of a job and checks the visitor's level on it, like loadSource. A job that belongs to
 // no folder (none is created today) is for administrators; they get a nil folder.
 func (s *Server) jobSource(ctx context.Context, sess auth.Session, job jobs.Job, min access.Level) (*catalog.Source, error) {
+	return s.jobSourceAt(ctx, sess, s.localReach(), job, min)
+}
+
+// jobSourceAt is jobSource for a job of the server of a reach.
+func (s *Server) jobSourceAt(ctx context.Context, sess auth.Session, rc reach, job jobs.Job, min access.Level) (*catalog.Source, error) {
 	if job.SourceID == nil {
-		if isAdmin(sess) {
+		if physicalAt(sess, rc) {
 			return nil, nil
 		}
 		return nil, service.ErrNotFound
 	}
-	src, err := s.loadSource(ctx, sess, *job.SourceID, min)
+	src, err := s.loadSourceAt(ctx, sess, rc, *job.SourceID, min)
 	if err != nil {
 		return nil, err
 	}

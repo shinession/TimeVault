@@ -6,6 +6,8 @@
 //	timevault-server check-redis-users  check that the user accounts in Redis can be read
 //	timevault-server check-config   check that the settings of the environment and .env are valid for the service and exit
 //	timevault-server settings       list, get, set or reset the Site settings stored in the database
+//	timevault-server cluster        register this server in the register of the servers that share the database, list them, remove one
+//	timevault-server move-schema    move the tables of this server into another schema of the database
 //	timevault-server version
 package main
 
@@ -31,6 +33,7 @@ import (
 	"timevault/internal/auth"
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
+	"timevault/internal/cluster"
 	"timevault/internal/config"
 	"timevault/internal/db"
 	"timevault/internal/jobs"
@@ -51,7 +54,7 @@ import (
 
 // version is the one place the program version is written. The build command in docs/runbook.md does not
 // set it: -ldflags "-X main.version=..." would replace it, and an old copy of that command stamps an old number.
-var version = "1.0.1"
+var version = "1.1.0"
 
 func main() {
 	cmd := "serve"
@@ -72,6 +75,10 @@ func main() {
 		err = runCheckConfig()
 	case "settings":
 		err = runSettings(os.Args[2:])
+	case "cluster":
+		err = runCluster(os.Args[2:])
+	case "move-schema":
+		err = runMoveSchema(os.Args[2:])
 	case "version", "-v", "--version":
 		fmt.Println("timevault-server", version)
 	case "help", "-h", "--help":
@@ -98,6 +105,9 @@ commands:
   settings            list | get <key> | set <key> <value> | reset <key>: the Site settings, which are stored in
                       the database and are normally edited on the Site settings page (a way back when the
                       page cannot be reached)
+  cluster             register | list | remove <name>: the register of the servers that share the database,
+                      each in a schema of its own (run "cluster help")
+  move-schema         move the tables of this server into another schema of the database (run "move-schema help")
   version             print the version
 
 The settings that the service needs before it can reach its database, and its secrets, are read from
@@ -569,6 +579,25 @@ func runServe(exe string, again *restart) error {
 	}
 	svc := service.New(serviceConfig)
 
+	// A server that is in the register of the servers joins the group: it reports that it is alive, and its pages show the
+	// history of the folders of the other servers. One that is not in it runs on its own, as it always did.
+	group, err := cluster.Open(ctx, cluster.Options{
+		Pool: pool, URL: cfg.DatabaseURL, Log: log,
+		Report: func() cluster.Report {
+			return cluster.Report{
+				Version: version, RepositoryID: repo.ID(), RepositoryRoot: repo.Root(),
+				RestoreRoot: restoreRoot, RestoreDisplayRoot: cfg.RestoreDisplayRoot,
+			}
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if group != nil {
+		defer group.Close()
+		log.Info("this server is in a group of servers that share the database", "name", group.Name(), "schema", group.Schema())
+	}
+
 	// A restart that the local administrator asks for on the Site settings page: it is only done while no job runs.
 	// Drain stops the runner from taking another job, so once it has returned the number of running jobs can only fall.
 	restartSite := make(chan struct{}, 1)
@@ -593,7 +622,7 @@ func runServe(exe string, again *restart) error {
 	handler, err := server.New(svc, am, web.FS, server.Options{
 		Version: version, Location: time.Local, CookieSecure: cfg.CookieSecure, Deployment: cfg.Describe(),
 		SSOHost: cfg.SSOHost, SSORequireSameIP: cfg.SSORequireSameIP, TrustedProxies: cfg.TrustedProxies, BasePath: cfg.BasePath,
-		AvatarURL: cfg.AvatarURL, Update: updates, Site: site, WebLog: webSink,
+		AvatarURL: cfg.AvatarURL, Update: updates, Site: site, WebLog: webSink, Group: group,
 	}, log)
 	if err != nil {
 		return err
@@ -619,6 +648,9 @@ func runServe(exe string, again *restart) error {
 		webLog.Write(weblog.Started(version))
 	}
 	runner.Start(ctx)
+	if group != nil {
+		go group.Run(ctx)
+	}
 	var scheduler sync.WaitGroup
 	scheduler.Add(1)
 	go func() {

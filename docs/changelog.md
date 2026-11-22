@@ -4,6 +4,46 @@
 
 What changed in each version of TimeVault, and what to do when upgrading. The newest comes first.
 
+## 1.1.0
+
+Several servers that run TimeVault can now **share one database, each in a schema of its own**, and show each other's history ([ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md), step 1 of 3). This version is the read-only part: from the pages of one server, people look at the Time Machine, the file versions, the Backups page, the jobs and the Audit log of the folders of the other servers. Their live view, their search and every action (back up, verify, cancel, restore, the settings of a folder) are still done on the server that owns the folder, and come to the pages of the other servers in the next versions. A server that is not put in a group runs exactly as before, and nothing changes in the schema of a server (there is no new migration of a server).
+
+### Added
+
+- **The register of the servers.** The schema `timevault_cluster` with the table `servers` (`migrations/cluster/0001_registry.sql`, applied by `timevault-server cluster register` and kept apart from the migrations of a server). For each server it holds the `name` (short, lower case), the `schema`, the `version` and the read `contract` of the program that last reported, the id of its repository, its repository and restore folders and the network path of its restore folder (they are there to hide the real folders in the texts that another server shows, and only administrators are shown them), when it was registered and by whom, and `last_seen` (by the clock of the database).
+- **`timevault-server cluster register <name>`, `list` and `remove <name>`.** `register` puts the server that `TIMEVAULT_DATABASE_URL` names (its schema is the first one of the search path of that URL) in the register, and makes the register when it does not exist; it refuses a schema that holds no TimeVault catalog yet. `list` shows the servers, how they look and when they were last heard of.
+- **A server in the register joins the group when it starts.** It reports every 30 seconds (its version, the read contract it speaks and its folders; the time is the clock of the database), and its pages show the history of the other servers. A server that is not in the register, or a database without a register, runs on its own and asks for nothing; a register that cannot be read is told in the log and the server runs on its own.
+- **The Servers page** (`GET /servers`, in the header when there is a group) and **`GET /api/v1/servers`**: every server of the group; whether it is online, offline (no report for 2 minutes), not reported yet, or not compatible (another read contract); its version; how many of its folders the visitor may browse; the newest recovery point among them; and when it was last heard of. Administrators also see its schema and read contract (in the API also its repository and restore folders).
+- **The history of the other servers' folders, in the pages and in the API.** The **Time Machine** folder selector lists the folders of every server, grouped by server. A folder of another server is addressed by its server and its number there (`server` and `source`, or `source=<server>:<number>`; the number alone is a folder of this server). The **versions**, **Backups** (a card for each folder, its recovery points, the jobs), **job** and **Audit** pages take the `server` parameter, and the Backups and Audit pages have tabs that switch between the servers. In the API `server` is accepted by `GET /api/v1/sources`, `/recovery-points`, `/history/tree`, `/history/versions`, `/jobs/{id}` and `/audit`, and the answer says which server it is about. What a visitor sees of another server is decided by the grants of that server's folders, which are stored in its schema, and by the account the visitor is in the user directory: a folder that may not be browsed is "not found", as on its own server. The history is read from the schema of the other server in the database, so it is there while that server is offline.
+- **The texts of another server hide its real folders.** Error texts, job logs, audit details and the reasons files were not captured are shown with the display folder instead of the real folder, using the folders that the other server reported. Administrators of the user directory see the real folders; the local administrator of this server does not (it is not known on the other server).
+- **Versions are "recorded", not "checked".** On the versions page of a folder of another server the content is shown as **Recorded** (what the catalog says) instead of Available or Content missing, and `GET /api/v1/history/versions` says `content_checked: false`: the repository is on the other server's disk and is not looked at from here.
+- **`timevault-server move-schema --to <schema> [--from <schema>] [--apply]`.** Moves the tables of a server (the 12 tables of the migrations with their indexes, identity sequences, constraints and the audit trigger, and the function of the audit log) into another schema of the database, in one transaction, with `ALTER TABLE ... SET SCHEMA`. It takes milliseconds whatever the size of the tables, the same command with the two names swapped moves everything back, and without `--apply` it only says what it would do. It refuses to run while a service holds the lock of the schema, when the schema moved from does not hold a whole catalog, when the target already holds a table of TimeVault, when the account does not own the tables or may not create the schema, and when the owner of the tables could not use the target (the foreign keys would fail); the messages say what the database administrator has to run. If the server is in the register, the register is changed to name the new schema. A test keeps the list of what it moves equal to what the migrations create.
+- **Tests.** `internal/db` (the move: preview, move and back, every refusal, the rights of a role, the list of objects against the migrations, the read-only pool and its statement timeout), `internal/cluster` (the register, the reports, offline, not reported, another read contract, the readers of the other servers, the hiding of their folders, and that the **grants of the runbook are enough** for every read of the pages and give nothing more), `cmd/timevault-server` (the commands) and `internal/server` (the pages and the API of a group, the permissions on the other server, what is refused, the states, and a server that is on its own).
+
+### Changed
+
+- **The reads of the catalog, the jobs and the audit trail are a `service.Reader`** that `Service` embeds; a server reads the schema of another server with a Reader on a read-only pool. `internal/db` pools can be read-only (`default_transaction_read_only`) and have a statement timeout.
+- **Everything that changes something, and the live view and the search, refuse a request that names another server:** `501` with the code `other_server` ("not available for the folders of other servers in this version") in the API, an error page on the pages. The name that this server has in the register is this server. So the number of a folder of another server is never taken for the folder of this server that has the same number.
+- **On the pages of another server's folders:** the "Now" point of the timeline is not a link (there is no live view of them here), the restore buttons are not offered and a note says that a restore is made on the server that owns the folder, the Explorer says where their history is, and the job page of another server's job offers no Cancel button.
+- **The audit log of another server** leaves out what was done to its Site settings, which only the local administrator of that server sees.
+- The version number is 1.1.0.
+
+### Upgrade notes
+
+1. **A server that is not registered needs nothing.** No setting, no migration of its schema, and nothing is asked of the database that it did not ask before. Update it like any other version.
+2. **To make a group,** follow [Several servers on one database](./runbook.md#several-servers-on-one-database): a schema for each server, `search_path` in the URL of the other servers, `timevault-server cluster register <name>` on every server, and a restart.
+3. **Update all the servers of a group together.** A server reports the read contract it speaks (1 in this version); a server that reports another one is shown as "version not compatible" and its history is not read, until the others have the same version.
+4. **Rights.** With one database account for all the servers the group works, but any server can then change the tables of the others. The runbook gives the grants for an account of each server: write its own schema, read nine tables of the others (the grants are checked by a test), and report in the register.
+5. **To release:** the version in `cmd\timevault-server\main.go` is already 1.1.0, so run `.\scripts\release.ps1` and copy `timevault.exe`, then `timevault.json`, to the release folder.
+
+### Known limits
+
+- **Only reading.** Another server's live view, its search, and every action on its folders (back up now, verify, cancel, restore, the settings of a folder) are not offered from this server in this version; they come in steps 2 and 3 of [ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md). The comparison of folders across servers is not there either.
+- **The register is not protected row by row.** With the grants of the runbook a server can change the report columns of every row of the register, not only its own (PostgreSQL cannot say otherwise without row-level security). Nothing in the register is a key or a secret in this version; the keys of the server-to-server API of step 2 will need more care.
+- **The content of another server's versions is not checked** from here: the page says "recorded".
+- **A page that lists the folders of other servers** asks each server's schema several queries per folder (a read-only pool of at most 3 connections each, 15 seconds per statement). That is fine for tens of folders per server and has not been measured for thousands.
+- **Not verified:** a group of more than two servers on separate computers, with separate database accounts, against the company's PostgreSQL and Redis. The tests use two schemas of one test database, a fake user directory and the grants of the runbook with a role made for the test.
+
 ## 1.0.1
 
 Two changes of how TimeVault is built and run, and nothing new in the pages that people use: TimeVault builds its own **NTFS index** instead of asking Everything ([ADR 0018](./adr/0018-native-ntfs-index-replaces-everything.md)), and the operating settings move from `.env` into the **database**, where only the local administrator edits them on a **Site settings** page ([ADR 0017](./adr/0017-site-settings-in-the-database.md)). The limits of [mvp-status.md](./mvp-status.md) stand otherwise (backups read the live disk, no VSS, no TLS of its own). **This is not a drop-in upgrade:** the settings that were in `.env` are not carried over, and the service has to run with administrator rights for search. Read the upgrade notes before a server is updated. Migration `0006_site_settings` creates one table.
@@ -453,6 +493,46 @@ A vertical slice on a local NTFS folder: browse, back up, keep history, verify a
 ## 概述
 
 TimeVault 每个版本改了什么，以及升级时要做什么。最新的在最前面。
+
+## 1.1.0
+
+几台运行 TimeVault 的服务器现在可以**共用同一个数据库，各用一个 schema**，并互相显示对方的历史（[ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md)，三步中的第 1 步）。这个版本是只读的部分：人们在一台服务器的页面里，就能查看其他服务器上文件夹的时间机器、文件版本、备份页、任务和审计日志。它们的实时视图、搜索和所有操作（备份、校验、取消、恢复、文件夹设置）仍然在拥有该文件夹的服务器上进行，要到后续版本才会出现在其他服务器的页面里。没有加入组的服务器，运行方式与以前完全一样，服务器自己的 schema 也没有变化（没有新增服务器的迁移）。
+
+### 新增
+
+- **服务器登记表。** schema `timevault_cluster` 及其中的表 `servers`（`migrations/cluster/0001_registry.sql`，由 `timevault-server cluster register` 应用，与服务器自己的迁移分开）。每台服务器一行：`name`（简短、小写）、`schema`、最近一次报告的程序的 `version` 和它所用的读取 `contract`、仓库 id、仓库文件夹和恢复文件夹以及恢复文件夹的网络路径（它们用来在其他服务器显示的文本中隐藏真实文件夹，并且只有管理员能看到）、登记时间和登记人，以及 `last_seen`（按数据库的时钟）。
+- **`timevault-server cluster register <名称>`、`list` 和 `remove <名称>`。** `register` 把 `TIMEVAULT_DATABASE_URL` 所指的服务器（它的 schema 是该 URL 的搜索路径中的第一个）登记到登记表里，登记表不存在时会先建立；如果这个 schema 里还没有 TimeVault 的目录库，就拒绝。`list` 显示各服务器、它们的状态以及最近一次有它们消息的时间。
+- **登记表里的服务器在启动时加入组。** 它每 30 秒报告一次（它的版本、它所用的读取契约和它的文件夹；时间是数据库的时钟），它的页面会显示其他服务器的历史。不在登记表里的服务器，或者没有登记表的数据库，独自运行，也不会去查询任何东西；读不了登记表时会写进日志，服务器独自运行。
+- **服务器页**（`GET /servers`，有组时出现在页眉中）和 **`GET /api/v1/servers`**：组内的每台服务器；它是在线、离线（2 分钟没有报告）、尚未报告还是不兼容（读取契约不同）；它的版本；访问者有权浏览它的多少个文件夹；其中最新的恢复点；以及最近一次有它消息的时间。管理员还能看到它的 schema 和读取契约（API 中还有它的仓库文件夹和恢复文件夹）。
+- **页面和 API 中其他服务器文件夹的历史。** **时间机器**的文件夹选择器按服务器分组，列出每台服务器的文件夹。其他服务器的文件夹用它所在的服务器加上它在那里的编号来指定（`server` 和 `source`，或 `source=<服务器>:<编号>`；只有编号，就是本服务器的文件夹）。**版本**页、**备份**页（每个文件夹一张卡片、它的恢复点、任务）、**任务**页和**审计**页都接受 `server` 参数，备份页和审计页有在各服务器之间切换的标签。在 API 里，`GET /api/v1/sources`、`/recovery-points`、`/history/tree`、`/history/versions`、`/jobs/{id}` 和 `/audit` 接受 `server`，应答会说明它是关于哪台服务器的。访问者能看到另一台服务器的什么，由那台服务器文件夹的授权（保存在它的 schema 中）和访问者在用户目录中的账号决定：不能浏览的文件夹是"未找到"，与它自己的服务器上一样。历史是在数据库里从那台服务器的 schema 读取的，所以它离线时也看得到。
+- **其他服务器的文本会隐藏它的真实文件夹。** 错误文本、任务日志、审计详情和文件未被采集的原因，用显示文件夹代替真实文件夹，依据的是那台服务器报告的文件夹。用户目录中的管理员能看到真实文件夹；本服务器的本地管理员看不到（它在那台服务器上是不被认识的）。
+- **版本是"已记录"，不是"已检查"。** 在其他服务器文件夹的版本页上，内容显示为**已记录**（目录库所说的），而不是"可用"或"内容缺失"，`GET /api/v1/history/versions` 会说 `content_checked: false`：仓库在另一台服务器的磁盘上，不会从这里去检查。
+- **`timevault-server move-schema --to <schema> [--from <schema>] [--apply]`。** 把一台服务器的表（迁移所建立的 12 张表及其索引、自增序列、约束和审计触发器，以及审计日志的那个函数）在一个事务里用 `ALTER TABLE ... SET SCHEMA` 搬进数据库的另一个 schema。无论表有多大，只要几毫秒；同一个命令把两个名字对调，就能搬回去；不带 `--apply` 时只说明它会做什么。有服务持有被搬出 schema 的锁时、被搬出的 schema 里没有完整的目录库时、目标里已经有 TimeVault 的表时、账号不拥有这些表或不能建立 schema 时、以及这些表的拥有者在搬动后无法使用目标 schema 时（外键会失败），它都会拒绝；提示信息会说明数据库管理员要执行什么。如果这台服务器在登记表里，登记表会改为记录新的 schema。有一个测试保证它要搬的清单和迁移所建立的对象一致。
+- **测试。** `internal/db`（搬动：预览、搬过去再搬回来、每一种拒绝、角色的权限、对象清单与迁移的对照、只读连接池及其语句超时）、`internal/cluster`（登记表、报告、离线、尚未报告、另一个读取契约、其他服务器的读取器、对它们文件夹的隐藏，以及**运维手册里的授权足够**支持页面的每一次读取，并且不多给任何权限）、`cmd/timevault-server`（命令）和 `internal/server`（一个组的页面和 API、在另一台服务器上的权限、被拒绝的操作、各种状态，以及独自运行的服务器）。
+
+### 变更
+
+- **目录库、任务和审计日志的读取成为一个 `service.Reader`**，由 `Service` 内嵌；一台服务器用只读连接池上的 Reader 读取另一台服务器的 schema。`internal/db` 的连接池可以是只读的（`default_transaction_read_only`），并且可以设置语句超时。
+- **凡是会修改东西的操作，以及实时视图和搜索，都会拒绝指明另一台服务器的请求：** API 返回 `501`，代码为 `other_server`（"在这个版本里，这对其他服务器的文件夹不可用"），页面显示错误页。这台服务器在登记表里的名字就是这台服务器。所以另一台服务器上文件夹的编号，绝不会被当成本服务器上编号相同的文件夹。
+- **在其他服务器文件夹的页面上：** 时间轴上的"现在"点不是链接（这里没有它们的实时视图），不提供恢复按钮，并有说明提示恢复要在拥有该文件夹的服务器上进行；文件浏览页会说明它们的历史在哪里；另一台服务器任务的页面不提供"取消"按钮。
+- **另一台服务器的审计日志**不显示对它的站点设置所做的事，那只有那台服务器的本地管理员才能看到。
+- 版本号是 1.1.0。
+
+### 升级说明
+
+1. **没有登记的服务器什么都不需要。** 没有新的设置，没有它的 schema 的迁移，也不会向数据库多问任何东西。像任何其他版本一样更新它即可。
+2. **要组成一个组，**请按[几台服务器共用一个数据库](./runbook.md#几台服务器共用一个数据库)操作：每台服务器一个 schema，其他服务器的 URL 里加 `search_path`，在每台服务器上运行 `timevault-server cluster register <名称>`，然后重启。
+3. **同一个组的所有服务器要一起更新。** 一台服务器会报告它所用的读取契约（这个版本是 1）；报告了另一个契约的服务器会显示为"版本不兼容"，它的历史不会被读取，直到其他服务器也更新到同一个版本。
+4. **权限。** 所有服务器用同一个数据库账号，组也能工作，但这样任何一台服务器都能修改其他服务器的表。运维手册给出了每台服务器各用一个账号时的授权：可写自己的 schema，可读其他服务器的九张表（这些授权由一个测试检查），并可以在登记表里报告。
+5. **发布：** `cmd\timevault-server\main.go` 中的版本已经是 1.1.0，运行 `.\scripts\release.ps1`，把 `timevault.exe`，然后是 `timevault.json`，复制到发布文件夹。
+
+### 已知限制
+
+- **只有读取。** 在这个版本里，其他服务器的实时视图、搜索，以及对它们文件夹的所有操作（立即备份、校验、取消、恢复、文件夹设置），都不能从本服务器进行；它们在 [ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md) 的第 2、3 步中提供。跨服务器的文件夹对比也还没有。
+- **登记表没有按行保护。** 用运维手册里的授权时，一台服务器可以修改登记表中每一行的报告列，而不只是它自己的那一行（没有行级安全，PostgreSQL 做不到别的）。这个版本里，登记表里没有任何密钥或机密；第 2 步中服务器间 API 的密钥，需要更谨慎的处理。
+- **其他服务器版本的内容不会从这里检查：** 页面显示"已记录"。
+- **列出其他服务器文件夹的页面，**会对每台服务器的 schema 为每个文件夹做几次查询（每台服务器最多 3 个连接的只读连接池，每条语句 15 秒）。每台服务器几十个文件夹没有问题，几千个的情况没有测量过。
+- **未验证：** 分别在不同电脑上、用不同数据库账号、连接公司 PostgreSQL 和 Redis 的、多于两台服务器的组。测试用的是同一个测试数据库里的两个 schema、一个模拟的用户目录，以及为测试建立的角色所用的运维手册里的授权。
 
 ## 1.0.1
 

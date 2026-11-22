@@ -16,6 +16,7 @@
       <li><a href="#jobs">Jobs</a></li>
       <li><a href="#automatic">Automatic backups and versions kept</a></li>
       <li><a href="#audit">Audit</a></li>
+      <li><a href="#servers">Several servers</a></li>
       <li><a href="#settings">Settings</a></li>
       <li><a href="#status">Status</a></li>
       <li><a href="#faq">Problems and answers</a></li>
@@ -341,6 +342,16 @@
       </div>
     </section>
 
+    <section id="servers" class="tv-doc-section">
+      <h2>Several servers</h2>
+      <p>When your company runs TimeVault on more than one server, the servers can share one database and show each other's history. The header then has a <strong>Servers</strong> page, and the <strong>Time Machine</strong>, <strong>Backups</strong> and <strong>Audit</strong> pages can show the folders of the other servers too.</p>
+      <ul>
+        <li><strong>Servers</strong> lists every server of the group: whether it is <em>Online</em>, <em>Offline</em> (it has not reported for a couple of minutes; its history can still be read), <em>Not reported yet</em> or <em>Version not compatible</em> (it runs a version that this server cannot read yet), how many of its folders you may browse, and its newest backup.</li>
+        <li>In the <strong>Time Machine</strong> the folder list is grouped by server. The <strong>Backups</strong> and <strong>Audit</strong> pages have a tab for each server. What you see is what the permissions of that server's folders allow you to see, as on its own pages.</li>
+        <li>The folders of another server show their history only: recovery points, the files as they were, every version of a file (marked <em>Recorded</em>: the backup storage of the other server is not checked from here), its backups and jobs, and its audit log. The <em>Now</em> point, the Explorer, the search, <strong>Back up now</strong>, <strong>Verify</strong>, <strong>Cancel</strong> and <strong>Restore</strong> are not available for them yet: do those on the server that owns the folder. A restore is always made on that server, into its own restore folder.</li>
+      </ul>
+    </section>
+
     <section id="settings" class="tv-doc-section">
       <h2>Settings</h2>
       <p>Any signed-in account can open Settings. It describes the monitored folders you may browse and how the service is set up; what you can change depends on your level.</p>
@@ -520,6 +531,7 @@
       <li><a href="#jobs">任务</a></li>
       <li><a href="#automatic">自动备份与保留的版本</a></li>
       <li><a href="#audit">审计</a></li>
+      <li><a href="#servers">多台服务器</a></li>
       <li><a href="#settings">设置</a></li>
       <li><a href="#status">状态</a></li>
       <li><a href="#faq">常见问题</a></li>
@@ -843,6 +855,16 @@
           </tbody>
         </table>
       </div>
+    </section>
+
+    <section id="servers" class="tv-doc-section">
+      <h2>多台服务器</h2>
+      <p>公司在不止一台服务器上运行 TimeVault 时，这些服务器可以共用一个数据库，并互相显示对方的历史。这时页眉里会有一个<strong>服务器</strong>页，<strong>时间机器</strong>、<strong>备份</strong>和<strong>审计</strong>页也能显示其他服务器的文件夹。</p>
+      <ul>
+        <li><strong>服务器</strong>页列出组内的每台服务器：它是<em>在线</em>、<em>离线</em>（有几分钟没有报告了，它的历史仍然可以读取）、<em>尚未报告</em>还是<em>版本不兼容</em>（它运行的版本，本服务器暂时读不了），你有权浏览它的多少个文件夹，以及它最新的备份。</li>
+        <li>在<strong>时间机器</strong>里，文件夹列表按服务器分组。<strong>备份</strong>页和<strong>审计</strong>页为每台服务器各有一个标签。你能看到什么，由那台服务器上各文件夹的权限决定，与在它自己的页面上一样。</li>
+        <li>其他服务器的文件夹只显示历史：恢复点、文件当时的样子、文件的每个版本（标为<em>已记录</em>：不会从这里检查另一台服务器的备份存储）、它的备份和任务以及它的审计日志。"现在"点、文件浏览、搜索、<strong>立即备份</strong>、<strong>校验</strong>、<strong>取消</strong>和<strong>恢复</strong>对它们暂时都不可用：请在拥有该文件夹的服务器上进行。恢复总是在那台服务器上进行，写入它自己的恢复文件夹。</li>
+      </ul>
     </section>
 
     <section id="settings" class="tv-doc-section">

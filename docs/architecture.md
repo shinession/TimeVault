@@ -131,6 +131,18 @@ The UI labels every point *Live scan* so nobody mistakes it for a snapshot.
 
 Restores only write below `TIMEVAULT_RESTORE_ROOT`, into a folder named by the requester (created when it does not exist; when it already exists, for example for a repeated restore, the conflict policy decides what happens to files that are already there). The destination folder must be a plain folder: if it already exists as a junction or symbolic link the restore is refused, and the restore root is compared with the repository and every source by its real location. Nothing in a restore deletes or overwrites source data or repository content.
 
+## Several servers on one database
+
+Since 1.1.0 several servers can share one database, each in a schema of its own ([ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md), step 1 of 3). Nothing in the write path of a server changes: its jobs, objects, recovery points, audit events and Site settings stay in its own schema, and its repository stays on its own disk. What is added is the way a server **reads** the others.
+
+- **The register** (`internal/cluster`, the schema `timevault_cluster`, the table `servers`, `migrations/cluster/`): the servers of the group with their schema, version, read contract and the folders they report. A server finds itself in it by its own schema (`current_schema()`), so no setting says "this is the server alpha"; a server that is not in it, or a database without a register, runs on its own and asks for nothing.
+- **Reports.** `cluster.Group.Run` reports every 30 seconds (`Registry.Heartbeat`: version, read contract, repository id and folders; `last_seen` is `now()` of the database). A server is *online* when its last report is at most 2 minutes old, *offline* when it is older, *waiting* when it never reported (contract 0) and *incompatible* when its contract is not the one of the program (`cluster.Contract`, 1).
+- **Readers.** `service.Reader` holds the reads of the catalog, the jobs, the audit trail, the restore results and the map of the folders in texts (`PathMapFor`); `Service` embeds the Reader of its own server. For another server `cluster.Group.Reader` gives a Reader on a read-only pool (`default_transaction_read_only`, a statement timeout of 15 seconds, at most 3 connections) whose `search_path` is that server's schema; the pool is opened when it is first needed and kept. A Reader of another server has no repository, so its versions are "recorded" (`FileHistory.Checked` is false), and its folder map is made from the folders that server reported.
+- **The HTTP layer.** A request is about one server, named by the `server` parameter (`reach`, `internal/server/reach.go`): this one, or another one with a Reader. `access.go` decides what the visitor may see of a folder of that server (`levelAt`: the account's grants stored in that server's schema; the local administrator only browses), `visibility.go` hides the real folders in the texts of that server (`viewerAt`), `pickFolder` makes the folder selector of the Time Machine from all the readable servers, and `scope.go` the tabs of the Backups and Audit pages. Everything that changes something, the live view and the search are wrapped in `thisServerOnly`: a request that names another server is refused with `501` before the handler runs, so a folder number of another server is never used on this one.
+- **`move-schema`** (`internal/db/schema.go`) moves the tables of a server into another schema in one transaction, and the register follows (`Registry.MoveSchema`). A test keeps its list of tables and functions equal to what the migrations create.
+
+Not built yet (steps 2 and 3 of the ADR): the signed server-to-server API (the live view, the search, the check of a version's content and the comparison across servers) and the actions on the owner. The data of another server is only ever read.
+
 ---
 
 # 中文
@@ -265,3 +277,15 @@ MVP 读取的是在线文件系统（`consistency = live_scan`），不使用 VS
 3. **执行**（后台任务）：再次生成计划，如果存在被阻止的项目（内容缺失、未备份成功、名称不安全），除非选择了*允许部分恢复*，否则不会写入任何内容。每个文件从仓库流式写入目标文件夹中的临时文件，校验 SHA-256 和大小，应用修改时间和属性，最后才重命名到位。所有路径都通过针对目标文件夹的 `os.Root` 访问。逐项结果会保存下来，供任务页面查看。
 
 恢复只会写入 `TIMEVAULT_RESTORE_ROOT` 之下、由请求者命名的文件夹（不存在时创建；已存在时，例如重复恢复，由冲突策略决定如何处理已有的文件）。目标文件夹必须是普通文件夹：如果它已经作为联接点或符号链接存在，恢复会被拒绝；恢复根目录与仓库以及每个备份源比较的是它们的真实位置。恢复操作不会删除或覆盖源数据和仓库内容。
+
+## 几台服务器共用一个数据库
+
+自 1.1.0 起，几台服务器可以共用一个数据库，各用一个 schema（[ADR 0019](./adr/0019-several-servers-one-database-one-schema-each.md)，三步中的第 1 步）。一台服务器的写入路径没有任何变化：它的任务、对象、恢复点、审计事件和站点设置仍然在它自己的 schema 中，它的仓库仍然在它自己的磁盘上。新增的，是一台服务器**读取**其他服务器的方式。
+
+- **登记表**（`internal/cluster`，schema `timevault_cluster`，表 `servers`，`migrations/cluster/`）：组内的各服务器，以及它们的 schema、版本、读取契约和它们所报告的文件夹。一台服务器用它自己的 schema（`current_schema()`）在登记表里找到自己，所以不需要任何设置来说明"这是服务器 alpha"；不在登记表里的服务器，或者没有登记表的数据库，独自运行，也不会去查询任何东西。
+- **报告。** `cluster.Group.Run` 每 30 秒报告一次（`Registry.Heartbeat`：版本、读取契约、仓库 id 和文件夹；`last_seen` 是数据库的 `now()`）。最近一次报告不超过 2 分钟的服务器是*在线*，更久的是*离线*，从未报告（契约为 0）的是*尚未报告*，契约与程序所用的（`cluster.Contract`，即 1）不同的是*不兼容*。
+- **读取器。** `service.Reader` 包含目录库、任务、审计日志、恢复结果以及文本中文件夹映射（`PathMapFor`）的读取；`Service` 内嵌它自己服务器的 Reader。对于另一台服务器，`cluster.Group.Reader` 给出一个建立在只读连接池上的 Reader（`default_transaction_read_only`，语句超时 15 秒，最多 3 个连接），连接池的 `search_path` 是那台服务器的 schema；连接池在第一次需要时打开，之后保留。另一台服务器的 Reader 没有仓库，所以它的版本是"已记录"（`FileHistory.Checked` 为 false），它的文件夹映射由那台服务器所报告的文件夹生成。
+- **HTTP 层。** 一个请求是关于一台服务器的，由 `server` 参数指定（`reach`，`internal/server/reach.go`）：本服务器，或者另一台有 Reader 的服务器。`access.go` 决定访问者能看到那台服务器的文件夹的什么（`levelAt`：账号在那台服务器 schema 中保存的授权；本地管理员只能浏览），`visibility.go` 在那台服务器的文本里隐藏真实文件夹（`viewerAt`），`pickFolder` 用所有可读的服务器生成时间机器的文件夹选择器，`scope.go` 生成备份页和审计页的标签。凡是会改变东西的操作、实时视图和搜索都包在 `thisServerOnly` 里：指明另一台服务器的请求，在处理函数运行之前就以 `501` 拒绝，所以另一台服务器上的文件夹编号绝不会用在本服务器上。
+- **`move-schema`**（`internal/db/schema.go`）在一个事务里把一台服务器的表搬进另一个 schema，登记表随之更新（`Registry.MoveSchema`）。有一个测试保证它的表和函数清单与迁移所建立的一致。
+
+尚未构建（ADR 的第 2、3 步）：带签名的服务器间 API（实时视图、搜索、版本内容检查和跨服务器的对比）以及在拥有者上的操作。另一台服务器的数据只会被读取。

@@ -26,6 +26,7 @@
         <a class="tv-nav-link{{if eq .Nav "explorer"}} is-active{{end}}" data-nav="explorer" href="{{url "/explorer"}}">{{template "icon" "folder"}}<span>{{.T "nav.explorer"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "history"}} is-active{{end}}" data-nav="history" href="{{url "/history"}}">{{template "icon" "history"}}<span>{{.T "nav.history"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "backups"}} is-active{{end}}" data-nav="backups" href="{{url "/backups"}}">{{template "icon" "backup"}}<span>{{.T "nav.backups"}}</span></a>
+        {{if .Group}}<a class="tv-nav-link{{if eq .Nav "servers"}} is-active{{end}}" data-nav="servers" href="{{url "/servers"}}">{{template "icon" "servers"}}<span>{{.T "nav.servers"}}</span></a>{{end}}
         {{if .CanAudit}}
         <a class="tv-nav-link{{if eq .Nav "audit"}} is-active{{end}}" data-nav="audit" href="{{url "/audit"}}">{{template "icon" "audit"}}<span>{{.T "nav.audit"}}</span></a>
         <a class="tv-nav-link{{if eq .Nav "settings"}} is-active{{end}}" data-nav="settings" href="{{url "/settings"}}">{{template "icon" "settings"}}<span>{{.T "nav.settings"}}</span></a>

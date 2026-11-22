@@ -6,6 +6,7 @@
   {{template "icon" "folder"}}
   <h2>{{$.T "explorer.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
+  {{if .OtherServers}}<p class="tv-muted tv-small">{{$.T "explorer.other_servers_note"}} <a href="{{url "/servers"}}">{{$.T "nav.servers"}}</a></p>{{end}}
   <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
@@ -25,6 +26,8 @@
     <button class="tv-btn" type="submit">{{$.T "explorer.search"}}</button>
   </form>
 </div>
+
+{{if .OtherServers}}<p class="tv-muted tv-small" role="note">{{$.T "explorer.other_servers_note"}} <a href="{{url "/servers"}}">{{$.T "nav.servers"}}</a></p>{{end}}
 
 <nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}" {{$.Tour "crumbs"}}>
   <a class="tv-crumb" href="{{url "/explorer" "source" .Source.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>

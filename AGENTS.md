@@ -474,6 +474,12 @@ How to confirm in production: open the popups in the same order as the user, do 
 
 Ruled out, so do not spend time on them first: the Plan settings content and the Process select options (a fresh page does not reproduce it), `plan_table_setting_onclick`, the CSS of `.modal` (the inline style of the element itself changed), and the browser or display scaling.
 
+## 15. Git Commits and GitHub Sync
+
+Commit only when the user explicitly asks for a commit in that request. Do not commit on your own initiative, when a task is finished, or because an earlier commit in the same session was requested. Without such a request, leave the changes in the working tree and say that they are not committed.
+
+When the user asks for a commit, sync it with GitHub as part of the same request: fetch the remote, integrate any new remote commits (rebase, so that the history stays linear), then push the current branch to `origin`, and report the commit hash and the result of the push. If the sync cannot be completed (a conflict, a rejected push, no access, a history that has diverged), stop, report what happened and ask; never force-push, and never push a branch other than the one that was committed to.
+
 ---
 
 # 中文
@@ -943,3 +949,9 @@ Agent 在任务过程中创建任何文档时，即使用户没有在该任务�
 ```
 
 已排除，所以不要优先在这些方向上花时间：Plan settings 的内容和 Process 下拉框选项（全新页面不会复现）、`plan_table_setting_onclick`、`.modal` 的 CSS（变化的是元素自身的 inline style），以及浏览器或显示缩放。
+
+## 15. Git 提交与 GitHub 同步
+
+只有在用户于该次请求中明确要求提交（commit）时才提交。不要自行决定提交，不要在任务完成时顺手提交，也不要因为同一会话中之前应要求提交过就再次提交。没有这样的要求时，把修改留在工作区，并说明它们尚未提交。
+
+用户要求提交时，把同步到 GitHub 作为同一请求的一部分：先 fetch 远程，整合远程的新提交（用 rebase，让历史保持线性），再把当前分支 push 到 `origin`，并报告提交哈希和 push 的结果。如果同步无法完成（冲突、push 被拒绝、没有权限、历史已分叉），就停下来，说明发生了什么并询问用户；绝不 force-push，也绝不推送被提交的分支之外的其他分支。

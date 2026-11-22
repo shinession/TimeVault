@@ -1,37 +1,42 @@
 {{define "content"}}
 {{template "flash" .}}
 {{with .Data}}
+{{if .Groups}}
+<div class="tv-toolbar">
+  <form class="tv-source-form" method="get" action="{{url "/history"}}" data-autosubmit>
+    <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
+    <select id="source-select" name="source" class="tv-select" {{$.Tour "source"}}>
+      {{range .Groups}}{{if $.Group}}<optgroup label="{{if .Server}}{{.Server}}{{else}}{{$.T "scope.this"}}{{end}}">{{end}}
+      {{range .Options}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+      {{if $.Group}}</optgroup>{{end}}{{end}}
+    </select>
+    <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
+  </form>
+</div>
+{{end}}
+{{range .Unavailable}}<p class="tv-alert tv-alert-warn" role="note">{{template "icon" "alert"}} {{$.T "servers.unavailable_note" .}}</p>{{end}}
 {{if .NoSources}}
 <section class="tv-card tv-empty" {{$.Tour "empty"}}>
   {{template "icon" "history"}}
   <h2>{{$.T "explorer.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
-  <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
+  <a class="tv-btn tv-btn-primary" href="{{url "/backups" "server" .Server}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
-<div class="tv-toolbar">
-  <form class="tv-source-form" method="get" action="{{url "/history"}}" data-autosubmit>
-    <label class="tv-sr-only" for="source-select">{{$.T "common.source"}}</label>
-    <select id="source-select" name="source" class="tv-select" {{$.Tour "source"}}>
-      {{range .Sources}}<option value="{{.ID}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
-    </select>
-    <noscript><button class="tv-btn" type="submit">{{$.T "common.go"}}</button></noscript>
-  </form>
-</div>
 
 {{if .NoPoints}}
 <section class="tv-card tv-empty">
   {{template "icon" "history"}}
   <h2>{{$.T "history.no_points_title"}}</h2>
   <p class="tv-muted">{{$.T "history.no_points_text"}}</p>
-  <a class="tv-btn tv-btn-primary" href="{{url "/backups"}}">{{$.T "explorer.go_backups"}}</a>
+  <a class="tv-btn tv-btn-primary" href="{{url "/backups" "server" .Server}}">{{$.T "explorer.go_backups"}}</a>
 </section>
 {{else}}
 <section class="tv-timeline" aria-label="{{$.T "history.timeline"}}" {{$.Tour "history.timeline"}}>
   <div class="tv-timeline-track" data-timeline>
     {{range .Chips}}
     <a class="tv-point{{if .Selected}} is-selected{{end}}{{if not .Point.Restorable}} is-warning{{end}}"
-       href="{{url "/history" "source" $.Data.Source.ID "point" .Point.ID "path" $.Data.Rel}}"
+       href="{{url "/history" "source" $.Data.Source.ID "server" $.Data.Server "point" .Point.ID "path" $.Data.Rel}}"
        {{if .Selected}}aria-current="true" data-selected{{end}}
        title="{{$.T "history.point_title" .Point.Seq (printf "%d" .Point.FileCount) (bytes .Point.TotalBytes)}}">
       <span class="tv-point-dot"></span>
@@ -39,11 +44,19 @@
       <span class="tv-point-meta">#{{.Point.Seq}} · {{$.VerifyLabel .Point.Verification}}</span>
     </a>
     {{end}}
+    {{if .Server}}
+    <span class="tv-point tv-point-now is-disabled" title="{{$.T "history.now_other_title"}}">
+      <span class="tv-point-dot"></span>
+      <span class="tv-point-time">{{$.T "history.now"}}</span>
+      <span class="tv-point-meta">{{$.T "history.now_other_hint"}}</span>
+    </span>
+    {{else}}
     <a class="tv-point tv-point-now" href="{{url "/explorer" "source" $.Data.Source.ID "path" $.Data.Rel}}">
       <span class="tv-point-dot"></span>
       <span class="tv-point-time">{{$.T "history.now"}}</span>
       <span class="tv-point-meta">{{$.T "history.now_hint"}}</span>
     </a>
+    {{end}}
   </div>
 </section>
 
@@ -55,15 +68,16 @@
   {{if not .IsLatest}}<span class="tv-chip tv-chip-old">{{$.T "history.older_point"}}</span>{{end}}
   {{if not .Point.Restorable}}<span class="tv-chip tv-chip-failed">{{$.T "history.not_restorable"}}</span>{{end}}
   {{if .Point.Partial}}<span class="tv-chip tv-chip-warn" title="{{$.T "points.partial_hint"}}">{{$.T "points.partial"}}</span>{{end}}
+  {{if .Server}}<span class="tv-chip tv-chip-server" title="{{$.T "history.on_server_hint"}}">{{$.T "history.on_server" .Server}}</span>{{end}}
 </div>
 {{if .Point.Partial}}<p class="tv-alert tv-alert-warn" role="note">{{template "icon" "alert"}} {{$.T "points.partial_hint"}}</p>{{end}}
 
 <nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}" {{$.Tour "crumbs"}}>
-  <a class="tv-crumb" href="{{url "/history" "source" .Source.ID "point" .Point.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
+  <a class="tv-crumb" href="{{url "/history" "source" .Source.ID "server" .Server "point" .Point.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
   {{range .Crumbs}}
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
   {{if .Last}}<span class="tv-crumb is-current" aria-current="page">{{.Name}}</span>
-  {{else}}<a class="tv-crumb" href="{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" .Rel}}">{{.Name}}</a>{{end}}
+  {{else}}<a class="tv-crumb" href="{{url "/history" "source" $.Data.Source.ID "server" $.Data.Server "point" $.Data.Point.ID "path" .Rel}}">{{.Name}}</a>{{end}}
   {{end}}
 </nav>
 {{template "location" $}}
@@ -84,7 +98,8 @@
 {{else}}<div class="tv-restore-form">{{end}}
 
   <div class="tv-actionbar" {{$.Tour "history.actions"}}>
-    {{if not $.CanRestore}}
+    {{if .Server}}<span class="tv-muted tv-small">{{$.T "history.restore_other_server"}}</span>
+    {{else if not $.CanRestore}}
     <a class="tv-btn" data-no-boost href="{{url "/login" "next" $.RequestURI}}">{{template "icon" "user"}} {{$.T "history.sign_in_to_restore"}}</a>
     {{else if and .RestoreEnabled .Point.Restorable}}
     <button class="tv-btn tv-btn-primary" type="submit" name="scope" value="selected" data-needs-selection disabled>{{template "icon" "restore"}} {{$.T "history.restore_selected"}} <span class="tv-count" data-selection-count>0</span></button>
@@ -109,7 +124,7 @@
       {{range .Listing.Entries}}
       <div class="tv-row{{if $.CanRestore}} tv-row-select{{end}}" role="listitem">
         {{if $.CanRestore}}<label class="c-check"><input type="checkbox" name="paths" value="{{joinRel $.Data.Rel .Name}}" data-select-item aria-label="{{.Name}}"></label>{{end}}
-        <a class="c-name" href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "path" (joinRel $.Data.Rel .Name) "back" (route "/history" "source" $.Data.Source.ID "point" $.Data.Point.ID "path" $.Data.Rel)}}{{end}}">
+        <a class="c-name" href="{{if .IsDir}}{{url "/history" "source" $.Data.Source.ID "server" $.Data.Server "point" $.Data.Point.ID "path" (joinRel $.Data.Rel .Name)}}{{else}}{{url "/versions" "source" $.Data.Source.ID "server" $.Data.Server "path" (joinRel $.Data.Rel .Name) "back" (route "/history" "source" $.Data.Source.ID "server" $.Data.Server "point" $.Data.Point.ID "path" $.Data.Rel)}}{{end}}">
           {{if .IsDir}}{{template "icon" "folder"}}{{else if eq .State "skipped"}}{{template "icon" "alert"}}{{else}}{{template "icon" "file"}}{{end}}<span class="tv-name">{{.Name}}</span>
         </a>
         <span class="c-type">{{$.TypeOf .Name .IsDir false}}</span>

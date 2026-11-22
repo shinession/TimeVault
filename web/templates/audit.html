@@ -2,8 +2,10 @@
 {{template "flash" .}}
 {{with .Data}}
 <h1 class="tv-page-title">{{template "icon" "audit"}} {{$.T "audit.title"}}</h1>
+{{template "scopetabs" $}}
 <section class="tv-card">
   <form method="get" action="{{url "/audit"}}" class="tv-toolbar" data-autosubmit {{$.Tour "audit.filter"}}>
+    {{if .Server}}<input type="hidden" name="server" value="{{.Server}}">{{end}}
     <label class="tv-sr-only" for="audit-action">{{$.T "audit.filter"}}</label>
     <select id="audit-action" name="action" class="tv-select">
       <option value="">{{$.T "audit.all_actions"}}</option>

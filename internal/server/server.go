@@ -26,6 +26,7 @@ import (
 	"timevault/internal/auth"
 	"timevault/internal/backup"
 	"timevault/internal/catalog"
+	"timevault/internal/cluster"
 	"timevault/internal/config"
 	"timevault/internal/pathutil"
 	"timevault/internal/restore"
@@ -75,6 +76,9 @@ type Options struct {
 	WebLog weblog.Sink
 	// Now is the clock of the single sign-on flows; nil means time.Now.
 	Now func() time.Time
+	// Group is this server as a member of a group of servers that share the database: the pages then show the history of
+	// the folders of the other servers too. Nil when this server is on its own, which is how it behaves as it always did.
+	Group *cluster.Group
 }
 
 // Server serves the web UI and the JSON API.
@@ -185,29 +189,33 @@ func (s *Server) routes() {
 	// directory (openChecked): a deactivated account or one that lost its role must not keep what only it could see.
 	m.HandleFunc("GET /{$}", s.openChecked(s.handleHome))
 	m.HandleFunc("/", s.handleNotFound)
-	m.HandleFunc("GET /explorer", s.openChecked(s.handleExplorer))
+	m.HandleFunc("GET /servers", s.openChecked(s.handleServers))
+	// The live view reads the disk of this server, so it is only for this server's folders in this version.
+	m.HandleFunc("GET /explorer", s.openChecked(s.thisServerOnly(s.handleExplorer)))
 	m.HandleFunc("GET /history", s.openChecked(s.handleHistory))
 	m.HandleFunc("GET /versions", s.openChecked(s.handleVersions))
 	m.HandleFunc("GET /backups", s.openChecked(s.handleBackups))
 	m.HandleFunc("GET /jobs/{id}", s.openChecked(s.handleJob))
 
 	// Everything that works on data needs an account; the folder-level check is made by the handler.
-	m.HandleFunc("POST /backups/run", s.need(auth.PermAccount, s.handleRunBackup))
-	m.HandleFunc("POST /backups/verify", s.need(auth.PermAccount, s.handleVerify))
-	m.HandleFunc("POST /jobs/{id}/cancel", s.need(auth.PermAccount, s.handleCancelJob))
-	m.HandleFunc("POST /restore/preview", s.need(auth.PermAccount, s.handleRestorePreview))
-	m.HandleFunc("POST /restore/start", s.need(auth.PermAccount, s.handleRestoreStart))
+	// What changes something is done on this server only in this version: s.local refuses a request that names another
+	// server, so that a folder of another server is never taken for the folder of this one that has the same number.
+	m.HandleFunc("POST /backups/run", s.need(auth.PermAccount, s.thisServerOnly(s.handleRunBackup)))
+	m.HandleFunc("POST /backups/verify", s.need(auth.PermAccount, s.thisServerOnly(s.handleVerify)))
+	m.HandleFunc("POST /jobs/{id}/cancel", s.need(auth.PermAccount, s.thisServerOnly(s.handleCancelJob)))
+	m.HandleFunc("POST /restore/preview", s.need(auth.PermAccount, s.thisServerOnly(s.handleRestorePreview)))
+	m.HandleFunc("POST /restore/start", s.need(auth.PermAccount, s.thisServerOnly(s.handleRestoreStart)))
 	m.HandleFunc("GET /audit", s.need(auth.PermAudit, s.handleAudit))
 	m.HandleFunc("GET /status", s.need(auth.PermAudit, s.handleStatus))
 	m.HandleFunc("GET /settings", s.need(auth.PermAudit, s.handleSettings))
-	m.HandleFunc("POST /settings/sources", s.need(auth.PermManage, s.handleAddSource))
+	m.HandleFunc("POST /settings/sources", s.need(auth.PermManage, s.thisServerOnly(s.handleAddSource)))
 	m.HandleFunc("POST /settings/update/check", s.need(auth.PermManage, s.handleUpdateCheck))
 	// The Site settings are for the local administrator alone; anybody else is told there is no such page.
 	m.HandleFunc("GET /settings/site", s.needSite(s.handleSite))
 	m.HandleFunc("POST /settings/site", s.needSite(s.handleSiteSave))
 	m.HandleFunc("POST /settings/site/restart", s.needSite(s.handleSiteRestart))
 	// Whoever has full control of a folder may change its settings; the handler checks that.
-	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermAccount, s.handleUpdateSource))
+	m.HandleFunc("POST /settings/sources/{id}", s.need(auth.PermAccount, s.thisServerOnly(s.handleUpdateSource)))
 
 	s.apiRoutes()
 }
@@ -593,6 +601,16 @@ func classify(err error) (int, string) {
 		return http.StatusConflict, "errors.source_disabled"
 	case errors.Is(err, service.ErrPruneRunning):
 		return http.StatusConflict, "errors.prune_running"
+	case errors.Is(err, cluster.ErrUnknownServer):
+		return http.StatusNotFound, "errors.not_found"
+	case errors.Is(err, cluster.ErrUnreachable):
+		return http.StatusServiceUnavailable, "errors.server_unreachable"
+	case errors.Is(err, errOtherServer):
+		return http.StatusNotImplemented, "errors.other_server"
+	}
+	var notReadable *cluster.NotReadableError
+	if errors.As(err, &notReadable) {
+		return http.StatusServiceUnavailable, "errors.server_not_readable"
 	}
 	var unconfirmed *service.PruneNotConfirmedError
 	if errors.As(err, &unconfirmed) {
@@ -638,6 +656,13 @@ func publicMessage(err error, key string) string {
 	case errors.Is(err, service.ErrSourceUnavailable):
 		// The error text names the folder and the system's reason; the API is open to everyone.
 		return "the monitored folder cannot be read right now"
+	case errors.Is(err, cluster.ErrUnreachable):
+		// The error text is the database's, with its address.
+		return "the history of that server cannot be read right now"
+	}
+	var notReadable *cluster.NotReadableError
+	if errors.As(err, &notReadable) {
+		return "the history of that server is not available: it has not reported yet, or it runs a version whose data this server does not read"
 	}
 	return err.Error()
 }

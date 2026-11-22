@@ -3,11 +3,15 @@
 {{with .Data}}
 {{$actionsTagged := false}}{{$runningTagged := false}}{{$verifyTagged := false}}
 <h1 class="tv-page-title">{{template "icon" "backup"}} {{$.T "backups.title"}}</h1>
+{{template "scopetabs" $}}
 
 {{if not .Sources}}
 <section class="tv-card tv-empty" {{$.Tour "empty"}}>
   {{template "icon" "folder"}}
-  {{if $.CanManage}}
+  {{if $.Scope}}
+  <h2>{{$.T "servers.no_folders_title"}}</h2>
+  <p class="tv-muted">{{$.T "servers.no_folders_text"}}</p>
+  {{else if $.CanManage}}
   <h2>{{$.T "backups.no_sources_title"}}</h2>
   <p class="tv-muted">{{$.T "backups.no_sources_text"}}</p>
   <a class="tv-btn tv-btn-primary" href="{{url "/settings"}}">{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a>
@@ -16,7 +20,7 @@
   <p class="tv-muted">{{$.T "explorer.no_sources_text"}}</p>
   {{end}}
 </section>
-{{else if $.CanAudit}}
+{{else if and $.CanAudit (not $.Scope)}}
 <p><a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/settings"}}" {{$.Tour "backups.manage"}}>{{template "icon" "settings"}} {{$.T "backups.manage_sources"}}</a></p>
 {{end}}
 
@@ -50,8 +54,8 @@
   </div>
 
   {{if .Active}}
-  <div class="tv-job-inline" data-job-id="{{.Active.Job.ID}}" data-job-active="1"{{if not $runningTagged}} {{$.Tour "backups.running"}}{{$runningTagged = true}}{{end}}>
-    <a href="{{url (printf "/jobs/%d" .Active.Job.ID)}}">{{$.T "backups.running_job" .Active.Job.ID}}</a>
+  <div class="tv-job-inline" data-job-id="{{.Active.Job.ID}}" data-job-active="1"{{if $.Scope}} data-job-server="{{$.Scope}}"{{end}}{{if not $runningTagged}} {{$.Tour "backups.running"}}{{$runningTagged = true}}{{end}}>
+    <a href="{{url (printf "/jobs/%d" .Active.Job.ID) "server" $.Scope}}">{{$.T "backups.running_job" .Active.Job.ID}}</a>
     <span class="tv-chip tv-chip-{{.Active.Job.State}}" data-job-field="state">{{$.StateLabel .Active.Job.State}}</span>
     <span class="tv-muted" data-job-field="phase">{{$.PhaseLabel .Active.Phase}}</span>
     <progress class="tv-progress" max="100"></progress>
@@ -91,7 +95,7 @@
           <td>{{if eq .State "committed"}}<span class="tv-chip tv-chip-{{.Verification}}">{{$.VerifyLabel .Verification}}</span>{{if .Partial}} <span class="tv-chip tv-chip-warn" title="{{$.T "points.partial_hint"}}">{{$.T "points.partial"}}</span>{{end}}{{else}}-{{end}}</td>
           <td class="tv-actions">
             {{if and (eq .State "committed") $card.CanBackup}}
-            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "server" $.Scope "point" .ID}}">{{$.T "points.browse"}}</a>
             <form method="post" action="{{url "/backups/verify"}}" class="tv-inline-form">
               {{template "csrf" $}}
               <input type="hidden" name="source_id" value="{{.SourceID}}">
@@ -100,7 +104,7 @@
               <button class="tv-btn tv-btn-small" type="submit" title="{{$.T "points.verify_hint"}}"{{if not $verifyTagged}} {{$.Tour "backups.verify"}}{{$verifyTagged = true}}{{end}}>{{template "icon" "check"}} {{$.T "points.verify"}}</button>
             </form>
             {{else if eq .State "committed"}}
-            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "point" .ID}}">{{$.T "points.browse"}}</a>
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" .SourceID "server" $.Scope "point" .ID}}">{{$.T "points.browse"}}</a>
             {{end}}
           </td>
         </tr>
@@ -120,8 +124,8 @@
       <thead><tr><th>#</th><th>{{$.T "jobs.kind"}}</th><th>{{$.T "common.source"}}</th><th>{{$.T "jobs.state"}}</th><th>{{$.T "jobs.created"}}</th><th>{{$.T "jobs.duration"}}</th><th>{{$.T "jobs.by"}}</th></tr></thead>
       <tbody>
         {{range .Jobs}}
-        <tr data-job-id="{{.Job.ID}}"{{if .Active}} data-job-active="1"{{end}}>
-          <td><a href="{{url (printf "/jobs/%d" .Job.ID)}}">{{.Job.ID}}</a></td>
+        <tr data-job-id="{{.Job.ID}}"{{if .Active}} data-job-active="1"{{end}}{{if $.Scope}} data-job-server="{{$.Scope}}"{{end}}>
+          <td><a href="{{url (printf "/jobs/%d" .Job.ID) "server" $.Scope}}">{{.Job.ID}}</a></td>
           <td>{{$.JobKindLabel .Job.Kind}}</td>
           <td>{{.SourceName}}</td>
           <td><span class="tv-chip tv-chip-{{.Job.State}}" data-job-field="state">{{$.StateLabel .Job.State}}</span>
@@ -137,7 +141,7 @@
   {{else}}<p class="tv-empty-text">{{$.T "backups.no_jobs"}}</p>{{end}}
 </section>
 
-{{if $.SignedIn}}
+{{if and $.SignedIn (not $.Scope)}}
 <section class="tv-card" {{$.Tour "backups.restore"}}>
   <div class="tv-card-head"><h2>{{template "icon" "restore"}} {{$.T "backups.restore_settings"}}</h2></div>
   {{if .RestoreEnabled}}<p>{{$.T "backups.restore_root"}}:

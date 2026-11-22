@@ -1,0 +1,38 @@
+{{define "content"}}
+{{template "flash" .}}
+{{with .Data}}
+<h1 class="tv-page-title">{{template "icon" "servers"}} {{$.T "servers.title"}}</h1>
+<p class="tv-muted">{{$.T "servers.intro"}}</p>
+<section class="tv-card" {{$.Tour "servers.table"}}>
+  <div class="tv-table-wrap">
+    <table class="tv-table">
+      <thead><tr>
+        <th>{{$.T "servers.name"}}</th><th>{{$.T "servers.state"}}</th><th>{{$.T "servers.version"}}</th>
+        <th class="num">{{$.T "servers.folders"}}</th><th>{{$.T "servers.latest"}}</th><th>{{$.T "servers.seen"}}</th>
+        {{if $.ShowPhysical}}<th>{{$.T "servers.schema"}}</th>{{end}}<th></th>
+      </tr></thead>
+      <tbody>
+        {{range .Rows}}
+        <tr>
+          <td><strong>{{.Name}}</strong>{{if .Self}} <span class="tv-chip tv-chip-same">{{$.T "servers.this"}}</span>{{end}}</td>
+          <td><span class="tv-chip tv-chip-server-{{.State}}" title="{{$.T (printf "servers.hint.%s" .State)}}">{{$.T (printf "servers.state.%s" .State)}}</span></td>
+          <td>{{if .Version}}{{.Version}}{{else}}-{{end}}</td>
+          <td class="num">{{if .Counted}}{{.Folders}}{{else}}-{{end}}</td>
+          <td>{{$.TimeP .Latest}}</td>
+          <td>{{if .Self}}-{{else}}{{$.TimeP .LastSeen}}{{end}}</td>
+          {{if $.ShowPhysical}}<td><code>{{.Schema}}</code> <span class="tv-muted tv-small">{{$.T "servers.contract" .Contract}}</span></td>{{end}}
+          <td class="tv-actions">
+            {{if .Readable}}
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "server" .Name}}">{{$.T "nav.history"}}</a>
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/backups" "server" .Name}}">{{$.T "nav.backups"}}</a>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </div>
+  <p class="tv-muted tv-small">{{$.T "servers.note"}}</p>
+</section>
+{{end}}
+{{end}}

@@ -88,3 +88,14 @@
   {{if .LocationReal}}<span class="tv-muted tv-small">{{.T "location.on_server"}}: <code>{{.LocationReal}}</code></span>{{end}}
 </p>
 {{end}}{{end}}
+
+{{/* The tabs that switch a page between this server and the other servers of the group. The page passes itself; Data has
+     Tabs and TabsPath (see scopeTab). A server whose history is not read is a tab that does not lead anywhere. */}}
+{{define "scopetabs"}}{{with .Data}}{{if .Tabs}}
+<nav class="tv-tabs tv-scope" aria-label="{{$.T "scope.label"}}" {{$.Tour "scope"}}>
+  {{range .Tabs}}
+  {{if .Link}}<a class="tv-tab{{if .Active}} is-active{{end}}" href="{{url $.Data.TabsPath "server" .Name}}"{{if .Active}} aria-current="page"{{end}}>{{if .Name}}{{.Name}}{{else}}{{$.T "scope.this"}}{{end}}</a>
+  {{else}}<span class="tv-tab is-disabled" title="{{$.T (printf "servers.hint.%s" .State)}}">{{.Name}}</span>{{end}}
+  {{end}}
+</nav>
+{{end}}{{end}}{{end}}

@@ -2,11 +2,11 @@
 {{template "flash" .}}
 {{with .Data}}
 <nav class="tv-crumbs" aria-label="{{$.T "common.breadcrumb"}}" {{$.Tour "crumbs"}}>
-  <a class="tv-crumb" href="{{url "/explorer" "source" .Source.ID}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
+  <a class="tv-crumb" href="{{if .Server}}{{url "/history" "source" .Source.ID "server" .Server}}{{else}}{{url "/explorer" "source" .Source.ID}}{{end}}">{{template "icon" "home"}}<span>{{.Source.Name}}</span></a>
   {{range .Crumbs}}
   <span class="tv-crumb-sep" aria-hidden="true">/</span>
   {{if .Last}}<span class="tv-crumb is-current" aria-current="page">{{.Name}}</span>
-  {{else}}<a class="tv-crumb" href="{{url "/explorer" "source" $.Data.Source.ID "path" .Rel}}">{{.Name}}</a>{{end}}
+  {{else}}<a class="tv-crumb" href="{{if $.Data.Server}}{{url "/history" "source" $.Data.Source.ID "server" $.Data.Server "path" .Rel}}{{else}}{{url "/explorer" "source" $.Data.Source.ID "path" .Rel}}{{end}}">{{.Name}}</a>{{end}}
   {{end}}
 </nav>
 {{template "location" $}}
@@ -37,6 +37,7 @@
           <td>
             {{if .IsDir}}<span class="tv-chip">{{$.T "versions.folder"}}</span>
             {{else if eq .State "skipped"}}<span class="tv-chip tv-chip-warn" title="{{.SkipReason}}">{{$.T "live.not_captured"}}</span>
+            {{else if not $.Data.Hist.Checked}}<span class="tv-chip tv-chip-validated tv-chip-available" title="{{$.T "versions.recorded_hint"}}">{{$.T "versions.recorded"}}</span>
             {{else if not (index $.Data.Hist.Present (hex .SHA256))}}<span class="tv-chip tv-chip-failed">{{$.T "versions.content_missing"}}</span>
             {{else}}<span class="tv-chip tv-chip-validated tv-chip-available">{{$.T "versions.available"}}</span>{{end}}
           </td>
@@ -51,7 +52,7 @@
               <button class="tv-btn tv-btn-small" type="submit">{{template "icon" "restore"}} {{$.T "versions.restore"}}</button>
             </form>
             {{end}}
-            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" $.Data.Source.ID "point" .FirstPointID "path" $.Data.ParentRel}}">{{$.T "versions.browse_point"}}</a>
+            <a class="tv-btn tv-btn-small tv-btn-ghost" href="{{url "/history" "source" $.Data.Source.ID "server" $.Data.Server "point" .FirstPointID "path" $.Data.ParentRel}}">{{$.T "versions.browse_point"}}</a>
           </td>
         </tr>
         {{end}}

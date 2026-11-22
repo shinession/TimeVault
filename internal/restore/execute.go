@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"timevault/internal/platform"
 	"timevault/internal/repository"
@@ -381,10 +382,16 @@ type StoredItem struct {
 // ListItems returns the stored outcomes of a restore job in order. status may
 // be "" for all, or ok, skipped or failed.
 func (m *Manager) ListItems(ctx context.Context, jobID int64, status string, afterID int64, limit int) ([]StoredItem, error) {
+	return ListStoredItems(ctx, m.pool, jobID, status, afterID, limit)
+}
+
+// ListStoredItems is ListItems for any pool on a schema of a server, such as the read-only pool on the schema of another
+// server: it only reads.
+func ListStoredItems(ctx context.Context, pool *pgxpool.Pool, jobID int64, status string, afterID int64, limit int) ([]StoredItem, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := m.pool.Query(ctx,
+	rows, err := pool.Query(ctx,
 		`SELECT id, rel_path, is_dir, action, status, bytes, coalesce(message, '')
 		 FROM restore_items
 		 WHERE job_id = $1 AND ($2 = '' OR status = $2) AND id > $3

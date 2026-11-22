@@ -779,6 +779,11 @@ a.tv-crumb:active { transform: scale(.95); }
 }
 .tv-tab:hover { color: var(--text); }
 .tv-tab.is-active { background: color-mix(in srgb, var(--accent) 20%, transparent); color: var(--accent-ink); }
+/* A server of the group whose history is not read: the tab is there but leads nowhere. */
+.tv-tab.is-disabled { opacity: .55; cursor: not-allowed; }
+.tv-scope { margin-bottom: 1rem; max-width: 100%; overflow-x: auto; }
+/* The "now" point of a folder of another server: there is no live view of it here. */
+.tv-point.is-disabled { opacity: .6; cursor: not-allowed; }
 
 .tv-actionbar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
 .tv-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
@@ -1031,17 +1036,17 @@ a.tv-row:focus-visible { outline-offset: -2px; }
 }
 
 .tv-chip-protected, .tv-chip-verified, .tv-chip-succeeded, .tv-chip-committed, .tv-chip-ok, .tv-chip-same,
-.tv-chip-audit-ok, .tv-chip-status-ok, .tv-chip-action-create, .tv-chip-update-idle { --chip: var(--green); }
+.tv-chip-audit-ok, .tv-chip-status-ok, .tv-chip-action-create, .tv-chip-update-idle, .tv-chip-server-online { --chip: var(--green); }
 
-.tv-chip-new, .tv-chip-running, .tv-chip-building, .tv-chip-live, .tv-chip-level,
+.tv-chip-new, .tv-chip-running, .tv-chip-building, .tv-chip-live, .tv-chip-level, .tv-chip-server,
 .tv-chip-action-rename, .tv-chip-action-mkdir, .tv-chip-update-checking, .tv-chip-update-downloading,
 .tv-chip-update-applying { --chip: var(--blue); }
 
 .tv-chip-changed, .tv-chip-modified, .tv-chip-warn, .tv-chip-not_captured, .tv-chip-validated, .tv-chip-queued,
-.tv-chip-status-degraded, .tv-chip-action-overwrite, .tv-chip-update-waiting { --chip: var(--amber); }
+.tv-chip-status-degraded, .tv-chip-action-overwrite, .tv-chip-update-waiting, .tv-chip-server-offline, .tv-chip-server-waiting { --chip: var(--amber); }
 
 .tv-chip-failed, .tv-chip-deleted, .tv-chip-audit-denied, .tv-chip-audit-failed, .tv-chip-status-failed,
-.tv-chip-action-blocked, .tv-chip-update-error { --chip: var(--red); }
+.tv-chip-action-blocked, .tv-chip-update-error, .tv-chip-server-incompatible { --chip: var(--red); }
 
 .tv-chip-skipped, .tv-chip-pending, .tv-chip-canceled, .tv-chip-aborted, .tv-chip-old, .tv-chip-status-disabled,
 .tv-chip-action-skip_same, .tv-chip-action-skip_exists, .tv-chip-action-dir_exists { --chip: var(--gray); }
